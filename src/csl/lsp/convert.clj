@@ -22,8 +22,11 @@
   [path]
   (str (.toUri (.toPath (File. ^String path)))))
 
-(defn uri->path [uri]
-  (.getPath (URI. (str/replace uri #"^file:(?!//)" "file://"))))
+(defn uri->path
+  "The path of a file: URI; nil for other URIs (e.g. jar: entries)."
+  [uri]
+  (when (and uri (str/starts-with? uri "file:"))
+    (.getPath (URI. (str/replace uri #"^file:(?!//)" "file://")))))
 
 (defn location-uri
   "The URI of a location's file: a file, or {:path jar :entry} inside a jar."

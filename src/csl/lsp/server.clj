@@ -33,7 +33,7 @@
   "The project a path belongs to: the one with the longest root that
   contains it."
   [{:keys [projects]} path]
-  (->> @projects
+  (->> (when path @projects)
        (filter #(or (= (:root %) path) (str/starts-with? path (str (:root %) File/separator))))
        (sort-by (comp - count :root))
        first))
@@ -59,7 +59,7 @@
 (defn- text-position
   "The request's document path and indexed [row col], or nil."
   [{:keys [buffers]} {:keys [textDocument position]}]
-  (let [path (convert/uri->path (:uri textDocument))]
+  (when-let [path (convert/uri->path (:uri textDocument))]
     (when-let [[row col] (buffers/->indexed buffers path (convert/->kondo position))]
       [path row col])))
 
@@ -261,7 +261,9 @@
       (catch Exception e (log "progress reporting stopped:" (ex-message e))))))
 
 (defn- handle-notification [{:keys [buffers] :as state} {:keys [method params]}]
-  (let [doc-path #(convert/uri->path (get-in params [:textDocument :uri]))]
+  (let [doc-path #(convert/uri->path (get-in params [:textDocument :uri]))
+        ;; documents that aren't files (jar: entries) aren't tracked yet
+        method (if (and (str/starts-with? method "textDocument/") (nil? (doc-path))) ::ignored method)]
     (case method
       "initialized" (do (watch-files! state)
                         (when (:progress? (:opts state)) (report-progress! state)))

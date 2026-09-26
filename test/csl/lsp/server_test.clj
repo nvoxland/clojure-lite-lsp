@@ -159,3 +159,19 @@
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))
+
+(deftest requests-inside-jar-files-answer-nothing-yet
+  ;; library files opened from a definition have jar: URIs; until they get
+  ;; full analysis, requests there answer empty rather than failing
+  (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)"})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
+        in-jar {:textDocument {:uri "jar:file:///m2/clojure.jar!/clojure/core.clj"} :position {:line 10 :character 3}}]
+    (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {}})
+    (notify! "textDocument/didOpen" {:textDocument {:uri "jar:file:///m2/clojure.jar!/clojure/core.clj" :text "(ns clojure.core)"}})
+    (is (= [] (request! "textDocument/definition" in-jar)))
+    (is (= [] (request! "textDocument/references" (assoc in-jar :context {:includeDeclaration true}))))
+    (is (nil? (request! "textDocument/hover" in-jar)))
+    (is (= [] (request! "textDocument/documentSymbol" {:textDocument (:textDocument in-jar)})))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))
