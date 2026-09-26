@@ -92,3 +92,10 @@
                        "src/api.clj" "(ns api (:require [potemkin :refer [import-vars]] [impl]))\n(import-vars [impl f])"
                        "src/b.clj" "(ns b (:require [api]))\n(api/f)"}]
     (is (= (loc proj "src/impl.clj" "f [") (definition proj "src/b.clj" "api/f")))))
+
+(deftest java-classes-are-left-to-the-server
+  ;; the query layer only names the class; finding its source is file work
+  (with-project [proj {"src/a.clj" "(ns a (:import [java.io File]))\n(defn f [] (File. \"x\"))"}]
+    (let [[row col] (f/at proj "src/a.clj" "File. ")]
+      (is (= [{:java-class "java.io.File"}]
+             (q/definition (:c proj) (:p proj) (f/path proj "src/a.clj") row col))))))

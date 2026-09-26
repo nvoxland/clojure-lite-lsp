@@ -207,3 +207,18 @@
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))
+
+(deftest navigating-to-java-sources
+  (when (csl.java/jdk-src)
+    (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a (:import [java.io File]))\n(defn f [] (File. \"x\"))\n"})
+          {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))]
+      (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {}})
+      (notify! "initialized" {})
+      (wait-indexed! client)
+      (let [[{:keys [uri range]}] (request! "textDocument/definition" (at root "src/app/a.clj" "File. "))
+            path (convert/uri->path uri)]
+        (is (str/ends-with? path "/java/io/File.java"))
+        (is (str/includes? (nth (str/split-lines (slurp path)) (get-in range [:start :line])) "class File")))
+      (request! "shutdown" nil)
+      (notify! "exit" nil)
+      (deref (:server client) 10000 :timeout))))

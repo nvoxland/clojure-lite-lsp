@@ -86,16 +86,17 @@
 
 (defn- located
   "Locations for things in project `p`: things with a :unit-id and :pos
-  (placed through the unit's files and jar entries), or already located
-  ones with a :path."
+  (placed through the unit's files and jar entries), already located ones
+  with a :path, and Java classes ({:java-class}) as they are."
   [c p things]
   (let [seen (java.util.HashSet.)
-        things (filterv #(.add seen [(or (:path %) (:unit-id %)) (:pos %)]) things)
-        where (units-locations c p (keep #(when-not (:path %) (:unit-id %)) things))]
-    (into [] (mapcat (fn [{:keys [path unit-id pos]}]
-                       (if path
-                         [{:path path :pos pos}]
-                         (map #(assoc % :pos pos) (where unit-id)))))
+        things (filterv #(.add seen [(or (:java-class %) (:path %) (:unit-id %)) (:pos %)]) things)
+        where (units-locations c p (keep #(when-not (or (:path %) (:java-class %)) (:unit-id %)) things))]
+    (into [] (mapcat (fn [{:keys [path unit-id pos java-class]}]
+                       (cond
+                         java-class [{:java-class java-class}]
+                         path [{:path path :pos pos}]
+                         :else (map #(assoc % :pos pos) (where unit-id)))))
           things)))
 
 ;;;; definitions
@@ -182,7 +183,8 @@
     :protocol-impl (best (definitions c p :var-def ns name))
     (:ns-usage :ns-alias) (best (definitions c p :ns-def nil ns))
     :ns-def [el]
-    :java-class-usage []
+    ;; finding a class's source is file work, left to the server (csl.java)
+    :java-class-usage [{:java-class name}]
     []))
 
 (defn definition
@@ -269,6 +271,8 @@
                    unit-id local-id (kinds/code :local-usage)
                    (kinds/code (if include-declaration? :local :local-usage)))
          (map row->element))
+
+    :java-class-usage (usage-rows c p nil name [:java-class-usage])
 
     (:ns-def :ns-usage :ns-alias)
     (let [target (if (= :ns-def kind) name ns)]
@@ -454,3 +458,14 @@
        (mapv (fn [[[callee-ns callee-name] calls]]
                {:callee (var-item c p callee-ns callee-name)
                 :calls (located c p calls)}))))
+
+;;;; java classes
+
+(defn java-class-jars
+  "The jars on project `p`'s classpath that contain class `class-name`."
+  [c p class-name]
+  (mapv first (db/query c "SELECT DISTINCT pj.path FROM java_class jc
+                           JOIN project_jar pj ON pj.jar_id = jc.jar_id AND pj.project_id = ?
+                           WHERE jc.name = ? ORDER BY pj.ord"
+                        ;; every .class is recorded, nested ones (Outer$Inner) too
+                        p (sym-id c class-name))))

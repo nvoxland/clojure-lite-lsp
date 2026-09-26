@@ -75,3 +75,17 @@
   (with-project [proj {"src/a.clj" "(ns a)\n(defmulti mm :type)\n(defmethod mm :x [_] 1)\n(defmethod mm :y [_] 2)\n(mm {})"}]
     (is (= (locs proj ["src/a.clj" "mm :x"] ["src/a.clj" "mm :y"])
            (implementations proj "src/a.clj" "mm :type")))))
+
+(deftest java-class-references
+  ;; who uses a class, across the project's Clojure code
+  (with-project [proj {"src/a.clj" "(ns a (:import [java.io File]))\n(defn f [] (File. \"x\"))"
+                       "src/b.clj" "(ns b)\n(defn g [] (java.io.File. \"y\") (str \"z\"))"}]
+    (is (= (locs proj ["src/a.clj" "File]"] ["src/a.clj" "File. \"x"] ["src/b.clj" "java.io.File."])
+           (references proj "src/a.clj" "File. \"x")) "the import counts too")))
+
+(deftest java-class-jars-include-nested-classes
+  ;; clj-kondo records every .class file, nested ones (Outer$Inner) included
+  (with-project [proj {"src/a.clj" "(ns a)"}]
+    (is (seq (q/java-class-jars (:c proj) (:p proj) "clojure.lang.Compiler")))
+    (is (= (q/java-class-jars (:c proj) (:p proj) "clojure.lang.Compiler")
+           (q/java-class-jars (:c proj) (:p proj) "clojure.lang.Compiler$C")))))

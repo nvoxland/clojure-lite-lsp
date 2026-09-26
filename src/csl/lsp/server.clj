@@ -12,6 +12,7 @@
    [csl.client :as client]
    [csl.daemon :as daemon]
    [csl.db :as db]
+   [csl.java :as java]
    [csl.lsp.buffers :as buffers]
    [csl.lsp.convert :as convert]
    [csl.lsp.jsonrpc :as rpc]
@@ -90,8 +91,34 @@
 (defn- lsp-location [{:keys [opts] :as state} loc]
   (convert/location (as-file state loc) opts))
 
-(defn- lsp-locations [state locs]
-  (->> locs (map #(as-file state %)) (keep #(in-buffer state %)) (mapv #(lsp-location state %))))
+(defn- java-source-dirs
+  "Where a project's .java files may be: its classpath dirs, and the usual
+  places (they are often compiled separately, off the classpath)."
+  [{:keys [reader]} p]
+  (let [root (db/query-value @reader "SELECT root FROM project WHERE id = ?" p)
+        memo (db/query-value @reader "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
+    (distinct (concat (->> (str/split (or memo "") (re-pattern File/pathSeparator))
+                           (remove #(str/ends-with? % ".jar"))
+                           (map #(if (.isAbsolute (io/file ^String %)) % (str root "/" %))))
+                      (map #(str root "/" %) ["java" "src/main/java" "src/java" "src"])))))
+
+(defn- resolve-java
+  "A {:java-class} result as the location of its source, or nil."
+  [{:keys [reader opts] :as state} p {:keys [java-class] :as loc}]
+  (if java-class
+    (java/source-location {:home (:home opts)
+                           :source-dirs (java-source-dirs state p)
+                           :class-jars (q/java-class-jars @reader p java-class)
+                           :jdk-src (java/jdk-src)}
+                          java-class)
+    loc))
+
+(defn- lsp-locations [state p locs]
+  (->> locs
+       (keep #(resolve-java state p %))
+       (map #(as-file state %))
+       (keep #(in-buffer state %))
+       (mapv #(lsp-location state %))))
 
 (defn- with-project
   "Call (f c p path row col) for a text-position request, or return `none`."
@@ -132,23 +159,23 @@
       {:name (or name ns) :kind (if name 12 3) :detail ns :uri uri
        :range range :selectionRange range :data {:ns ns :name name}})))
 
-(defn- ranges-in [state calls]
-  (mapv :range (lsp-locations state calls)))
+(defn- ranges-in [state p calls]
+  (mapv :range (lsp-locations state p calls)))
 
 (defn- handle-request [{:keys [opts reader projects] :as state} {:keys [method params]}]
   (case method
     "textDocument/definition"
-    (with-project state params [] #(lsp-locations state (q/definition %1 %2 %3 %4 %5)))
+    (with-project state params [] #(lsp-locations state %2 (q/definition %1 %2 %3 %4 %5)))
 
     "textDocument/declaration"
-    (with-project state params [] #(lsp-locations state (q/definition %1 %2 %3 %4 %5)))
+    (with-project state params [] #(lsp-locations state %2 (q/definition %1 %2 %3 %4 %5)))
 
     "textDocument/implementation"
-    (with-project state params [] #(lsp-locations state (q/implementations %1 %2 %3 %4 %5)))
+    (with-project state params [] #(lsp-locations state %2 (q/implementations %1 %2 %3 %4 %5)))
 
     "textDocument/references"
     (with-project state params []
-      #(lsp-locations state (q/references %1 %2 %3 %4 %5
+      #(lsp-locations state %2 (q/references %1 %2 %3 %4 %5
                                           {:include-declaration? (get-in params [:context :includeDeclaration])})))
 
     "textDocument/hover"
@@ -178,7 +205,7 @@
       (if-let [{:keys [p]} (project-of state path)]
         (vec (keep (fn [{:keys [caller calls]}]
                      (when-let [item (call-item state caller)]
-                       {:from item :fromRanges (ranges-in state calls)}))
+                       {:from item :fromRanges (ranges-in state p calls)}))
                    (q/incoming-calls @reader p ns name)))
         []))
 
@@ -188,7 +215,7 @@
       (if-let [{:keys [p]} (project-of state path)]
         (vec (keep (fn [{:keys [callee calls]}]
                      (when-let [item (call-item state callee)]
-                       {:to item :fromRanges (ranges-in state calls)}))
+                       {:to item :fromRanges (ranges-in state p calls)}))
                    (q/outgoing-calls @reader p ns name)))
         []))
 
