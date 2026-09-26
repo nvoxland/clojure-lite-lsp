@@ -365,37 +365,53 @@
 (def ^:private trigram-min 3)
 
 (defn- matching-name-ids
-  "Sym ids of definition names matching `query`: a trigram substring search,
-  or a prefix range for queries too short for trigrams."
+  "Sym ids of up to `limit` definition names matching `query`, best first:
+  the exact name, then prefixes, then shortest. A trigram substring search,
+  or a prefix range for queries too short for trigrams. Ranking here keeps
+  the definitions join small: joining every match was the slow part."
   [c query limit]
   (map first
        (if (>= (count query) trigram-min)
-         (db/query c "SELECT rowid FROM name_fts WHERE name_fts MATCH ? LIMIT ?"
-                   (str "\"" (str/replace query "\"" "\"\"") "\"") limit)
-         (db/query c "SELECT id FROM sym WHERE text >= ? AND text < ? LIMIT ?"
-                   query (str query "￿") limit))))
+         (db/query c "SELECT s.id FROM name_fts f JOIN sym s ON s.id = f.rowid
+                      WHERE name_fts MATCH ?
+                      ORDER BY (s.text = ?) DESC, (substr(s.text, 1, ?) = ?) DESC, length(s.text)
+                      LIMIT ?"
+                   (str "\"" (str/replace query "\"" "\"\"") "\"") query (count query) query limit)
+         (db/query c "SELECT s.id FROM sym s
+                      WHERE s.text >= ? AND s.text < ? AND EXISTS (SELECT 1 FROM name_fts WHERE rowid = s.id)
+                      ORDER BY (s.text = ?) DESC, length(s.text)
+                      LIMIT ?"
+                   query (str query "\uffff") query limit))))
 
 (defn workspace-symbols
   "Definitions project `p` can see whose name matches `query`, the exact
   name first, then prefixes, then the project's own before dependencies:
   [{:kind :ns :name :location}]."
   [c p query {:keys [limit] :or {limit 100}}]
-  (let [ids (matching-name-ids c query (* 20 limit))]
+  (let [ids (matching-name-ids c query (* 3 limit))]
     (when (seq ids)
+      ;; driven by the names (definition_name), not by every unit the
+      ;; project sees
       (->> (apply db/query c (str "SELECT d.kind, ns.text, nm.text, d.unit_id,
                                     d.name_row, d.name_col, d.name_end_row, d.name_end_col, pu.ord
-                             FROM definition d
-                             JOIN project_unit pu ON pu.unit_id = d.unit_id AND pu.project_id = ?
+                             FROM definition d INDEXED BY definition_name
+                             JOIN project_unit pu ON pu.project_id = ? AND pu.unit_id = d.unit_id
                              LEFT JOIN sym ns ON ns.id = d.ns JOIN sym nm ON nm.id = d.name
-                             WHERE d.kind IN (?, ?, ?) AND d.name IN ("
-                            (str/join "," (repeat (count ids) "?")) ")")
-                  (concat [p] (map kinds/code document-symbol-kinds) ids))
+                             WHERE d.name IN (" (str/join "," (repeat (count ids) "?")) ")
+                             AND d.kind IN (?, ?, ?)")
+                  (concat [p] ids (map kinds/code document-symbol-kinds)))
            (sort-by (fn [[_ _ nm _ _ _ _ _ ord]]
                       [(if (= nm query) 0 1) (if (str/starts-with? nm query) 0 1) ord (count nm) nm]))
            (take limit)
-           (mapv (fn [[kind ns nm u nr nc ner nec]]
-                   {:kind (kinds/kind kind) :ns ns :name nm
-                    :location (first (located c p [{:unit-id u :pos [nr nc ner nec]}]))}))))))
+           ((fn [rows]
+              ;; locate them all at once: one lookup per result was the
+              ;; slowest part left
+              (let [where (units-locations c p (map #(nth % 3) rows))]
+                (vec (for [[kind ns nm u nr nc ner nec] rows
+                           :let [loc (first (where u))]
+                           :when loc]
+                       {:kind (kinds/kind kind) :ns ns :name nm
+                        :location (assoc loc :pos [nr nc ner nec])})))))))))
 
 ;;;; call hierarchy
 

@@ -4,7 +4,7 @@
 
 (def version
   "Bump on any change to the DDL below or to the meaning of stored values."
-  3)
+  4)
 
 (def ddl
   ["CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"
@@ -77,6 +77,8 @@
       extra TEXT)"
    "CREATE INDEX definition_ns_name ON definition (ns, name)"
    "CREATE INDEX definition_unit ON definition (unit_id)"
+   ;; workspace symbols: definitions by name alone
+   "CREATE INDEX definition_name ON definition (name, kind)"
 
    "CREATE TABLE usage (
       to_ns INTEGER NOT NULL, name INTEGER NOT NULL, unit_id INTEGER NOT NULL,
