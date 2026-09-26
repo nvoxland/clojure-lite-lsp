@@ -51,20 +51,23 @@
     (.execute s (str "PRAGMA " p))))
 
 (defmacro with-tx
-  "Run body in a transaction on `c`, committing on success."
+  "Run body in a transaction on `c`, committing on success. Inside another
+  `with-tx` on the same connection, body joins the outer transaction."
   [c & body]
-  `(let [^Connection c# ~c
-         auto# (.getAutoCommit c#)]
-     (.setAutoCommit c# false)
-     (try
-       (let [r# (do ~@body)]
-         (.commit c#)
-         r#)
-       (catch Throwable t#
-         (.rollback c#)
-         (throw t#))
-       (finally
-         (.setAutoCommit c# auto#)))))
+  `(let [^Connection c# ~c]
+     (if-not (.getAutoCommit c#)
+       (do ~@body)
+       (do
+         (.setAutoCommit c# false)
+         (try
+           (let [r# (do ~@body)]
+             (.commit c#)
+             r#)
+           (catch Throwable t#
+             (.rollback c#)
+             (throw t#))
+           (finally
+             (.setAutoCommit c# true)))))))
 
 (defn- stored-version [c]
   (when (query-value c "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'")
