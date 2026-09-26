@@ -6,6 +6,7 @@
   file inside the jar at :path."
   (:require
    [clojure.edn :as edn]
+   [clojure.string :as str]
    [csl.db :as db]
    [csl.kinds :as kinds]))
 
@@ -81,15 +82,15 @@
   precedence first."
   [c p kind ns name]
   (->> (db/query c "SELECT d.unit_id, d.lang, d.name_row, d.name_col, d.name_end_row, d.name_end_col,
-                           d.flags, db.text, pu.ord, d.extra
+                           d.flags, db.text, pu.ord, d.extra, d.id
                     FROM definition d
                     JOIN project_unit pu ON pu.unit_id = d.unit_id AND pu.project_id = ?
                     LEFT JOIN sym db ON db.id = d.defined_by
                     WHERE d.ns = ? AND d.name = ? AND d.kind = ?
                     ORDER BY pu.ord"
                  p (sym-id c ns) (sym-id c name) (kinds/code kind))
-       (mapv (fn [[u lang nr nc ner nec flags defined-by ord extra]]
-               (cond-> {:unit-id u :kind kind :ns ns :name name :lang (kinds/bits->langs lang)
+       (mapv (fn [[u lang nr nc ner nec flags defined-by ord extra id]]
+               (cond-> {:id id :unit-id u :kind kind :ns ns :name name :lang (kinds/bits->langs lang)
                         :pos [nr nc ner nec] :flags (kinds/bits->flags flags)
                         :defined-by defined-by :ord ord}
                  extra (assoc :extra (edn/read-string extra)))))))
@@ -175,7 +176,7 @@
                          JOIN project_unit pu ON pu.unit_id = u.unit_id AND pu.project_id = ?
                          LEFT JOIN sym fns ON fns.id = u.from_ns LEFT JOIN sym fv ON fv.id = u.from_var
                          WHERE u.to_ns = ? AND u.name = ? AND u.kind IN ("
-                        (clojure.string/join "," (map kinds/code kinds)) ")"
+                        (str/join "," (map kinds/code kinds)) ")"
                         (when project-only? " AND pu.ord = 0"))
                    p (sym-id c ns) (sym-id c name))
        (mapv (fn [[u nr nc ner nec from-ns from-var flags]]
@@ -268,3 +269,147 @@
   locations."
   [c p path row col]
   (located c p (mapcat #(implementations-of c p %) (elements-at c p path row col))))
+
+;;;; hover
+
+(defn- doc-of [c id] (db/query-value c "SELECT docstring FROM doc WHERE definition_id = ?" id))
+
+(defn- with-definition-rows
+  "Definitions (as from `definitions`, with ids) for the targets of
+  `el`: what hover describes."
+  [c p el]
+  (->> (definition-of c p el)
+       (mapcat (fn [{:keys [kind ns name id pos] :as d}]
+                 (cond
+                   id [d]
+                   ;; an element (e.g. the definition under the cursor): its row
+                   (#{:var-def :ns-def :keyword-def} kind)
+                   (filter #(= pos (:pos %)) (definitions c p kind ns name))
+                   :else [d])))))
+
+(defn hover
+  "What to show on hover at a position: for each thing it means,
+  {:kind :ns :name :doc :arglists :flags :location}."
+  [c p path row col]
+  (->> (elements-at c p path row col)
+       (mapcat #(with-definition-rows c p %))
+       (map (fn [{:keys [id kind ns name flags extra] :as d}]
+              (let [doc (when id (doc-of c id))
+                    arglists (:arglist-strs extra)]
+                (cond-> {:kind kind :ns ns :name name :flags (or flags #{})
+                         :location (first (located c p [d]))}
+                  doc (assoc :doc doc)
+                  arglists (assoc :arglists arglists)))))
+       distinct
+       vec))
+
+;;;; symbols
+
+(def ^:private document-symbol-kinds [:ns-def :var-def :keyword-def])
+
+(defn document-symbols
+  "The definitions in project `p`'s file at `path`, in position order:
+  [{:kind :ns :name :pos :form}]."
+  [c p path]
+  (when-let [u (file-unit c p path)]
+    (->> (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                          " WHERE fe.unit_id = ? AND fe.kind IN ("
+                          (str/join "," (map kinds/code document-symbol-kinds)) ")
+                          ORDER BY fe.name_row, fe.name_col")
+                   u)
+         (mapv #(dissoc (row->element %) :unit-id)))))
+
+(def ^:private trigram-min 3)
+
+(defn- matching-name-ids
+  "Sym ids of definition names matching `query`: a trigram substring search,
+  or a prefix range for queries too short for trigrams."
+  [c query limit]
+  (map first
+       (if (>= (count query) trigram-min)
+         (db/query c "SELECT rowid FROM name_fts WHERE name_fts MATCH ? LIMIT ?"
+                   (str "\"" (str/replace query "\"" "\"\"") "\"") limit)
+         (db/query c "SELECT id FROM sym WHERE text >= ? AND text < ? LIMIT ?"
+                   query (str query "￿") limit))))
+
+(defn workspace-symbols
+  "Definitions project `p` can see whose name matches `query`, the exact
+  name first, then prefixes, then the project's own before dependencies:
+  [{:kind :ns :name :location}]."
+  [c p query {:keys [limit] :or {limit 100}}]
+  (let [ids (matching-name-ids c query (* 20 limit))]
+    (when (seq ids)
+      (->> (apply db/query c (str "SELECT d.kind, ns.text, nm.text, d.unit_id,
+                                    d.name_row, d.name_col, d.name_end_row, d.name_end_col, pu.ord
+                             FROM definition d
+                             JOIN project_unit pu ON pu.unit_id = d.unit_id AND pu.project_id = ?
+                             LEFT JOIN sym ns ON ns.id = d.ns JOIN sym nm ON nm.id = d.name
+                             WHERE d.kind IN (?, ?, ?) AND d.name IN ("
+                            (str/join "," (repeat (count ids) "?")) ")")
+                  (concat [p] (map kinds/code document-symbol-kinds) ids))
+           (sort-by (fn [[_ _ nm _ _ _ _ _ ord]]
+                      [(if (= nm query) 0 1) (if (str/starts-with? nm query) 0 1) ord (count nm) nm]))
+           (take limit)
+           (mapv (fn [[kind ns nm u nr nc ner nec]]
+                   {:kind (kinds/kind kind) :ns ns :name nm
+                    :location (first (located c p [{:unit-id u :pos [nr nc ner nec]}]))}))))))
+
+;;;; call hierarchy
+
+(defn call-hierarchy-items
+  "The functions a position means, for call hierarchy: [{:ns :name
+  :locations}]."
+  [c p path row col]
+  (->> (elements-at c p path row col)
+       (mapcat #(var-targets c p %))
+       (filter :unit-id)
+       (map (fn [{:keys [ns name] :as d}] {:ns ns :name name :locations (located c p [d])}))
+       distinct
+       vec))
+
+(defn- var-item [c p ns name]
+  {:ns ns :name name
+   :locations (located c p (best (definitions c p :var-def ns name)))})
+
+(defn incoming-calls
+  "Who calls `ns`/`name`: [{:caller {:ns :name :locations} :calls
+  [locations of the calls]}]. Top-level calls have the namespace as
+  caller (:name nil)."
+  [c p ns name]
+  (->> (usage-rows c p ns name [:var-usage])
+       (group-by (juxt :from-ns :from-var))
+       (mapv (fn [[[from-ns from-var] calls]]
+               {:caller (if from-var
+                          (var-item c p from-ns from-var)
+                          {:ns from-ns :name nil
+                           :locations (located c p (definitions c p :ns-def nil from-ns))})
+                :calls (located c p calls)}))))
+
+(defn- form-contains? [[fr fc fer fec] [r col]]
+  (and (or (> r fr) (and (= r fr) (>= col fc)))
+       (or (< r fer) (and (= r fer) (< col fec)))))
+
+(defn outgoing-calls
+  "What `ns`/`name` calls: [{:callee {:ns :name :locations} :calls
+  [locations of the calls]}], from the usages inside its definition's
+  form."
+  [c p ns name]
+  (->> (best (definitions c p :var-def ns name))
+       (mapcat (fn [{:keys [unit-id pos defined-by]}]
+                 (let [[{:keys [form]}] (->> (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                                                              " WHERE fe.unit_id = ? AND fe.name_row = ? AND fe.name_col = ? AND fe.kind = ?")
+                                                         unit-id (first pos) (second pos) (kinds/code :var-def))
+                                              (map row->element))]
+                   (when form
+                     (->> (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                                           " WHERE fe.unit_id = ? AND fe.kind = ? AND fe.name_row BETWEEN ? AND ?")
+                                    unit-id (kinds/code :var-usage) (first form) (nth form 2))
+                          (map row->element)
+                          (filter #(form-contains? form (:pos %)))
+                          ;; the form's head (defn, defmacro, ...) defines it; not a call
+                          (remove #(and (= defined-by (str (:ns %) "/" (:name %)))
+                                        (= (take 2 (:pos %)) [(first form) (inc (second form))]))))))))
+       (group-by (juxt :ns :name))
+       (mapv (fn [[[callee-ns callee-name] calls]]
+               {:callee (var-item c p callee-ns callee-name)
+                :calls (located c p calls)}))))
