@@ -195,14 +195,27 @@
             [u] (writer/write-units! w [[unit-key elements]])]
         (snapshot/set-dep-file-unit! w path jar-hash u)))))
 
+(defn- environment-failure?
+  "Did the machine fail, rather than the input: a full disk or an I/O
+  error? Retrying later can succeed."
+  [^Throwable e]
+  (some (fn [^Throwable t]
+          (when (instance? org.sqlite.SQLiteException t)
+            (contains? #{org.sqlite.SQLiteErrorCode/SQLITE_FULL org.sqlite.SQLiteErrorCode/SQLITE_IOERR}
+                       (.getResultCode ^org.sqlite.SQLiteException t))))
+        (take-while some? (iterate #(.getCause ^Throwable %) e))))
+
 (defn step!
-  "Process one batch from the queue. Returns the batch, or nil when the
-  queue is empty."
+  "Process one batch from the queue. Returns the batch, nil when the queue
+  is empty, or :retry when the machine failed (a full disk): the batch
+  stays queued, to try again later."
   [{:keys [c] :as ix}]
   (let [batch (queue/next-batch c {})]
     (when (seq batch)
       (let [{:keys [project-id kind]} (first batch)
-            paths (mapv :path batch)]
+            paths (mapv :path batch)
+            log #(binding [*out* *err*]
+                   (println "csl:" % kind (count paths) "item(s) of project" project-id ":" (ex-message %2)))]
         (try
           (case kind
             :sync (sync-project! ix project-id)
@@ -210,14 +223,22 @@
             :delete (delete-files! ix project-id paths)
             :jar (index-jars! ix project-id paths)
             :dep-file (index-dep-files! ix project-id paths))
+          (queue/done! c batch)
+          batch
           (catch Exception e
-            ;; a failing batch must not stop the daemon or be retried forever
-            (binding [*out* *err*]
-              (println "csl: failed" kind (count paths) "item(s) of project" project-id ":" (ex-message e)))))
-        (queue/done! c batch)
-        batch))))
+            (if (environment-failure? e)
+              (do (log "will retry" e) :retry)
+              ;; the input itself fails: drop it, so it can't stop the
+              ;; daemon or be retried forever
+              (do (log "dropped" e)
+                  (queue/done! c batch)
+                  batch))))))))
 
 (defn run-until-idle!
-  "Process batches until the queue is empty."
+  "Process batches until the queue is empty (nil), or the machine fails
+  (:retry)."
   [ix]
-  (while (step! ix)))
+  (loop []
+    (let [r (step! ix)]
+      (cond (= :retry r) :retry
+            r (recur)))))

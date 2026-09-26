@@ -32,7 +32,9 @@
   {:poll-ms 150
    :gc-after-idle-ms (* 30 1000)
    :idle-exit-ms (* 10 60 1000)
-   :heartbeat-ms 5000})
+   :heartbeat-ms 5000
+   ;; after the machine failed (a full disk), before trying the queue again
+   :retry-ms 5000})
 
 (defn- pid [] (.pid (java.lang.ProcessHandle/current)))
 
@@ -55,7 +57,7 @@
 
 (defn- work-loop
   "Run until asked to stop or idle long enough. Returns :stopped or :idle."
-  [{:keys [c w] :as ix} {:keys [poll-ms gc-after-idle-ms idle-exit-ms heartbeat-ms]}]
+  [{:keys [c w] :as ix} {:keys [poll-ms gc-after-idle-ms idle-exit-ms heartbeat-ms retry-ms]}]
   (loop [last-work (System/currentTimeMillis)
          collected? true
          seen-version nil
@@ -64,22 +66,30 @@
           dv (data-version c)]
       (when (> (- now last-beat) heartbeat-ms)
         (db/execute! c "UPDATE daemon SET heartbeat_at = ? WHERE id = 1" now))
-      (cond
-        (stop-requested? c) :stopped
+      (if (stop-requested? c)
+        :stopped
+        (let [beat (if (> (- now last-beat) heartbeat-ms) now last-beat)
+              ;; something changed (or we just started): work the queue
+              worked (when (not= dv seen-version) (indexer/step! ix))]
+          (cond
+            (= :retry worked)
+            (do (Thread/sleep (long retry-ms))
+                (recur (System/currentTimeMillis) collected? nil beat))
 
-        ;; something changed (or we just started): work the queue
-        (and (not= dv seen-version) (indexer/step! ix))
-        (recur (System/currentTimeMillis) false nil (if (> (- now last-beat) heartbeat-ms) now last-beat))
+            worked
+            (recur (System/currentTimeMillis) false nil beat)
 
-        (and (not collected?) (> (- now last-work) gc-after-idle-ms))
-        (do (gc/collect! w {})
-            (recur last-work true (data-version c) now))
+            (and (not collected?) (> (- now last-work) gc-after-idle-ms))
+            (do (try (gc/collect! w {})
+                     (catch Exception e
+                       (binding [*out* *err*] (println "csl: garbage collection failed:" (ex-message e)))))
+                (recur last-work true (data-version c) now))
 
-        (> (- now last-work) idle-exit-ms) :idle
+            (> (- now last-work) idle-exit-ms) :idle
 
-        :else
-        (do (Thread/sleep (long poll-ms))
-            (recur last-work collected? dv (if (> (- now last-beat) heartbeat-ms) now last-beat)))))))
+            :else
+            (do (Thread/sleep (long poll-ms))
+                (recur last-work collected? dv beat))))))))
 
 (def ^:private lock-patience-ms
   "How long a starting daemon keeps trying daemon.lock. Clients probe

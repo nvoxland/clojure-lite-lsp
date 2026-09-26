@@ -83,5 +83,5 @@
                    {:projects projects :jars jars :units (count dead)}))]
     ;; the writer caches searchable names: forget the ones just deleted
     (writer/reload-state! w)
-    (db/execute! c "PRAGMA incremental_vacuum")
+    (db/pragma! c "incremental_vacuum")
     result))

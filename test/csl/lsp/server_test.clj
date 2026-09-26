@@ -222,3 +222,26 @@
       (request! "shutdown" nil)
       (notify! "exit" nil)
       (deref (:server client) 10000 :timeout))))
+
+(deftest two-editors-on-one-project
+  ;; two csl lsp processes, one project: one daemon, both answer
+  (let [home (str (tu/temp-dir))
+        root (project! {"deps.edn" "{:paths [\"src\"]}"
+                        "src/app/a.clj" "(ns app.a)\n(defn f [] 1)\n"
+                        "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/f)\n"})
+        daemons (atom 0)
+        real-run daemon/run!]
+    (with-redefs [daemon/run! (fn [opts] (swap! daemons inc) (real-run opts))]
+      (let [editors [(start! home) (start! home)]]
+        (doseq [{:keys [request! notify!]} editors]
+          (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {}})
+          (notify! "initialized" {}))
+        (wait-indexed! (first editors))
+        (doseq [{:keys [request!]} editors]
+          (is (= [(uri root "src/app/a.clj")]
+                 (map :uri (request! "textDocument/definition" (at root "src/app/b.clj" "a/f"))))))
+        (is (= 1 @daemons))
+        (doseq [{:keys [request! notify! server]} editors]
+          (request! "shutdown" nil)
+          (notify! "exit" nil)
+          (deref server 10000 :timeout))))))

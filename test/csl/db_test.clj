@@ -61,3 +61,16 @@
           (db/execute! daemon "INSERT INTO sym (id, text) VALUES (2, 'daemon')"))
         (is (= 1 (deref @other-write 10000 :timeout)))
         (is (= 2 (db/query-value daemon "SELECT count(*) FROM sym")))))))
+
+(deftest a-failed-rollback-does-not-hide-the-error
+  ;; SQLite rolls some failures back itself (a full disk); rolling back
+  ;; again then fails, and must not replace the error that matters
+  (with-open [c (db/open-writer (tu/temp-db-path))]
+    (db/query c (str "PRAGMA max_page_count = " (db/query-value c "PRAGMA page_count")))
+    (let [e (try (db/with-tx c
+                   (doseq [i (range 2000)]
+                     (db/execute! c "INSERT INTO sym (id, text) VALUES (?, ?)" i (apply str i (repeat 200 "x")))))
+                 nil
+                 (catch Exception e e))]
+      (is (instance? org.sqlite.SQLiteException e))
+      (is (= org.sqlite.SQLiteErrorCode/SQLITE_FULL (.getResultCode ^org.sqlite.SQLiteException e))))))

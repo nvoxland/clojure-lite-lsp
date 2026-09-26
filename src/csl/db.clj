@@ -46,7 +46,10 @@
   [c sql & params]
   (ffirst (apply query c sql params)))
 
-(defn- pragma! [^Connection c ^String p]
+(defn pragma!
+  "Run `PRAGMA p`, whether or not it returns rows (incremental_vacuum
+  returns a row per page it frees, and none when there are none)."
+  [^Connection c ^String p]
   (with-open [^Statement s (.createStatement c)]
     (.execute s (str "PRAGMA " p))))
 
@@ -59,15 +62,20 @@
        (do ~@body)
        (do
          (.setAutoCommit c# false)
-         (try
-           (let [r# (do ~@body)]
-             (.commit c#)
-             r#)
-           (catch Throwable t#
-             (.rollback c#)
-             (throw t#))
-           (finally
-             (.setAutoCommit c# true)))))))
+         (let [r# (try
+                    (let [r# (do ~@body)]
+                      (.commit c#)
+                      r#)
+                    (catch Throwable t#
+                      ;; SQLite rolls some failures back itself (a full
+                      ;; disk); cleaning up then fails too, and must not
+                      ;; hide the error that matters. (Restoring autocommit
+                      ;; makes sqlite-jdbc commit, which fails likewise.)
+                      (try (.rollback c#) (catch Throwable x# (.addSuppressed t# x#)))
+                      (try (.setAutoCommit c# true) (catch Throwable x# (.addSuppressed t# x#)))
+                      (throw t#)))]
+           (.setAutoCommit c# true)
+           r#)))))
 
 (defn- stored-version [c]
   (when (query-value c "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'")
