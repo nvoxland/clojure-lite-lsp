@@ -175,3 +175,35 @@
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))
+
+(deftest navigating-into-library-code
+  ;; a definition in a jar comes back as an extracted, read-only file
+  ;; (every editor opens file:// URIs); opened, it gets full analysis, so
+  ;; navigation continues inside it
+  (let [home (str (tu/temp-dir))
+        root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)\n(defn f [xs] (keep identity xs))\n"})
+        {:keys [request! notify!] :as client} (start! home)]
+    (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {}})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (let [[{:keys [uri range]}] (request! "textDocument/definition" (at root "src/app/a.clj" "keep"))
+          core (convert/uri->path uri)
+          core-text (slurp core)]
+      (is (str/starts-with? core (str home "/sources/")))
+      (is (str/ends-with? core "/clojure/core.clj"))
+      (is (str/includes? (nth (str/split-lines core-text) (get-in range [:start :line])) "keep"))
+      (testing "opened, the library file is analyzed fully"
+        (notify! "textDocument/didOpen" {:textDocument {:uri uri :languageId "clojure" :version 1 :text core-text}})
+        (wait-indexed! client)
+        (let [keep-line (get-in range [:start :line])
+              body (str/join "\n" (drop keep-line (str/split-lines core-text)))
+              ;; a call to lazy-seq inside keep's body
+              {:keys [line character]} (pos-of body "lazy-seq")
+              [target] (request! "textDocument/definition" {:textDocument {:uri uri}
+                                                            :position {:line (+ keep-line line) :character character}})]
+          (is (= uri (:uri target)) "lazy-seq is defined in clojure/core.clj too")
+          (is (str/includes? (nth (str/split-lines core-text) (get-in target [:range :start :line])) "lazy-seq"))
+          (is (seq (request! "textDocument/documentSymbol" {:textDocument {:uri uri}}))))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))

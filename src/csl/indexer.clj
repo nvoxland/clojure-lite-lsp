@@ -9,6 +9,8 @@
   - :file   analyze project or external-dir files (skipping unchanged ones)
   - :delete forget files
   - :jar    analyze jars
+  - :dep-file fully analyze library files someone opened (extracted by
+            csl.sources)
 
   Analysis is sharded across concurrent clj-kondo runs (csl.analyze); the
   single writer connection is used from the loop thread only."
@@ -22,6 +24,7 @@
    [csl.kondo-config :as kc]
    [csl.queue :as queue]
    [csl.snapshot :as snapshot]
+   [csl.sources :as sources]
    [csl.writer :as writer])
   (:import
    [java.io Closeable File]))
@@ -178,6 +181,20 @@
     (doseq [{:keys [path ord jar-id]} todo]
       (snapshot/link-jar! w p ord (or jar-id (written path))))))
 
+(defn- index-dep-files!
+  [{:keys [c w cache-dir shards] :as ix} p paths]
+  (let [{:keys [jar-context]} (context ix p)]
+    (doseq [path paths
+            :let [jar-hash (some-> (sources/source-of cache-dir path) :jar-hash-hex sources/unhex)
+                  jar-path (when jar-hash
+                             (db/query-value c "SELECT pj.path FROM project_jar pj JOIN jar j ON j.id = pj.jar_id
+                                                WHERE pj.project_id = ? AND j.jar_hash = ?" p jar-hash))]
+            :when (and jar-path (.isFile (io/file path)))]
+      (let [config (kc/jar-config! cache-dir jar-context jar-path)
+            [{:keys [unit-key elements]}] (analyze/analyze-files [path] {:config config :mode :dep-file :shards shards})
+            [u] (writer/write-units! w [[unit-key elements]])]
+        (snapshot/set-dep-file-unit! w path jar-hash u)))))
+
 (defn step!
   "Process one batch from the queue. Returns the batch, or nil when the
   queue is empty."
@@ -191,7 +208,8 @@
             :sync (sync-project! ix project-id)
             :file (index-files! ix project-id paths)
             :delete (delete-files! ix project-id paths)
-            :jar (index-jars! ix project-id paths))
+            :jar (index-jars! ix project-id paths)
+            :dep-file (index-dep-files! ix project-id paths))
           (catch Exception e
             ;; a failing batch must not stop the daemon or be retried forever
             (binding [*out* *err*]

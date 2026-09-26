@@ -94,3 +94,22 @@
         (is (not (searchable? c "frobnicate")))
         (file! w p "/a/b.clj" "(ns b) (defn frobnicate [] 2)")
         (is (searchable? c "frobnicate") "the writer must not remember the collected entry")))))
+
+(deftest opened-library-files-live-as-long-as-their-jar
+  (with-writer
+    (fn [w c]
+      (let [p (snapshot/ensure-project! c "/a")
+            hash-bytes (.getBytes "j")
+            j (snapshot/write-jar! w {:jar-hash hash-bytes :config-hash (byte-array 1)
+                                      :kondo-version "t" :options-hash (byte-array 1)}
+                                   [["lib/core.clj" (unit-key "lib" :external? true) (analyzed "(ns lib.core) (defn lf [] 1)" "lib/core.clj")]])
+            [u] (writer/write-units! w [[(unit-key "full lib" :external? true) (analyzed "(ns lib.core) (defn lf [] (inc 1))" "lib/core.clj")]])
+            extracted (str (tu/temp-dir) "/sources/6a/lib/core.clj")]
+        (snapshot/set-project-jars! w p [[1 "/m2/lib.jar" j]])
+        (snapshot/set-dep-file-unit! w extracted hash-bytes u)
+        (gc/collect! w {})
+        (is (= 1 (count-of c "unit WHERE id = ?" u)) "not visible to any project, but opened")
+        (snapshot/set-project-jars! w p [])
+        (gc/collect! w {})
+        (is (zero? (count-of c "dep_file")))
+        (is (zero? (count-of c "unit")))))))

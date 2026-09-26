@@ -139,3 +139,12 @@
   [c p]
   (into {} (map (fn [[path u ext ord]] [path {:unit-id u :external? (= 1 ext) :ord ord}]))
         (db/query c "SELECT path, unit_id, external, ord FROM project_file WHERE project_id = ?" p)))
+
+(defn set-dep-file-unit!
+  "Record that the extracted library file at `path` (from the jar with
+  `jar-hash`) is fully analyzed as unit `u`."
+  [w path jar-hash u]
+  (writer/with-write-tx w
+    (db/execute! (:c w) "INSERT INTO dep_file (path, jar_hash, unit_id) VALUES (?, ?, ?)
+                         ON CONFLICT (path) DO UPDATE SET jar_hash = excluded.jar_hash, unit_id = excluded.unit_id"
+                 path jar-hash u)))

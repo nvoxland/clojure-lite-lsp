@@ -27,9 +27,10 @@
     fr (assoc :form [fr fc fer fec])))
 
 (defn file-unit
-  "The unit of project `p`'s file at `path`."
+  "The unit of project `p`'s file at `path`, or of an opened library file."
   [c p path]
-  (db/query-value c "SELECT unit_id FROM project_file WHERE project_id = ? AND path = ?" p path))
+  (or (db/query-value c "SELECT unit_id FROM project_file WHERE project_id = ? AND path = ?" p path)
+      (db/query-value c "SELECT unit_id FROM dep_file WHERE path = ?" path)))
 
 (defn- contains-pos? [{[nr nc ner nec] :pos} row col]
   (and (<= nr row ner)
@@ -67,11 +68,14 @@
                                                WHERE project_id = ? AND unit_id IN " in)
                               p batch)
                        (fn [[path]] {:path path}))
-                  (add (apply db/query c (str "SELECT je.unit_id, pj.path, je.entry_path FROM project_jar pj
+                  (add (apply db/query c (str "SELECT je.unit_id, pj.path, je.entry_path, j.jar_hash FROM project_jar pj
                                                JOIN jar_entry je ON je.jar_id = pj.jar_id
+                                               JOIN jar j ON j.id = pj.jar_id
                                                WHERE pj.project_id = ? AND je.unit_id IN " in)
                               p batch)
-                       (fn [[path entry]] {:path path :entry entry})))))
+                       (fn [[path entry jar-hash]] {:path path :entry entry :jar-hash jar-hash}))
+                  (add (apply db/query c (str "SELECT unit_id, path FROM dep_file WHERE unit_id IN " in) batch)
+                       (fn [[path]] {:path path})))))
           {}
           (partition-all units-per-query (distinct us))))
 

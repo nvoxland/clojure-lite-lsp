@@ -18,6 +18,7 @@
    [csl.query :as q]
    [csl.queue :as queue]
    [csl.snapshot :as snapshot]
+   [csl.sources :as sources]
    [csl.version :as version])
   (:import
    [java.io File]))
@@ -31,12 +32,19 @@
 
 (defn- project-of
   "The project a path belongs to: the one with the longest root that
-  contains it."
-  [{:keys [projects]} path]
-  (->> (when path @projects)
-       (filter #(or (= (:root %) path) (str/starts-with? path (str (:root %) File/separator))))
-       (sort-by (comp - count :root))
-       first))
+  contains it. An extracted library file belongs to a project with its jar
+  on the classpath."
+  [{:keys [projects reader opts]} path]
+  (if-let [{:keys [jar-hash-hex]} (sources/source-of (:home opts) path)]
+    (let [ps (set (map first (db/query @reader "SELECT pj.project_id FROM project_jar pj JOIN jar j ON j.id = pj.jar_id
+                                                WHERE j.jar_hash = ?" (sources/unhex jar-hash-hex))))]
+      (first (filter #(ps (:p %)) @projects)))
+    (->> (when path @projects)
+         (filter #(or (= (:root %) path) (str/starts-with? path (str (:root %) File/separator))))
+         (sort-by (comp - count :root))
+         first)))
+
+(defn- dep-file? [{:keys [opts]} path] (some? (sources/source-of (:home opts) path)))
 
 (defn- enqueue!
   "Queue work, and make sure a daemon is there to do it (it exits when
@@ -71,8 +79,19 @@
     loc
     (some->> (buffers/->buffer buffers path pos) (assoc loc :pos))))
 
-(defn- lsp-locations [{:keys [opts] :as state} locs]
-  (->> locs (keep #(in-buffer state %)) (mapv #(convert/location % opts))))
+(defn- as-file
+  "A location in a jar as its extracted file, unless the client asked for
+  jar: or zipfile: URIs."
+  [{:keys [opts]} {:keys [entry] :as loc}]
+  (if (and entry (= "file" (:dependency-scheme opts "file")))
+    (assoc (dissoc loc :entry :jar-hash) :path (sources/extract! (:home opts) loc))
+    loc))
+
+(defn- lsp-location [{:keys [opts] :as state} loc]
+  (convert/location (as-file state loc) opts))
+
+(defn- lsp-locations [state locs]
+  (->> locs (map #(as-file state %)) (keep #(in-buffer state %)) (mapv #(lsp-location state %))))
 
 (defn- with-project
   "Call (f c p path row col) for a text-position request, or return `none`."
@@ -107,9 +126,9 @@
       (into [(assoc (->sym (first nss)) :children (mapv ->sym defs))] (map ->sym (rest nss)))
       (mapv ->sym defs))))
 
-(defn- call-item [{:keys [opts]} {:keys [ns name locations]}]
+(defn- call-item [state {:keys [ns name locations]}]
   (when-let [loc (first locations)]
-    (let [{:keys [uri range]} (convert/location loc opts)]
+    (let [{:keys [uri range]} (lsp-location state loc)]
       {:name (or name ns) :kind (if name 12 3) :detail ns :uri uri
        :range range :selectionRange range :data {:ns ns :name name}})))
 
@@ -147,7 +166,7 @@
                {:keys [kind ns name location]} (q/workspace-symbols @reader p (:query params) {:limit 200})
                :when location]
            {:name name :kind (symbol-kinds kind 13) :containerName ns
-            :location (convert/location location opts)}))
+            :location (lsp-location state location)}))
 
     "textDocument/prepareCallHierarchy"
     (with-project state params [] (fn [c p path row col]
@@ -269,11 +288,13 @@
                         (when (:progress? (:opts state)) (report-progress! state)))
       "textDocument/didOpen" (let [path (doc-path)]
                                (buffers/open! buffers path (get-in params [:textDocument :text]))
-                               (when-let [{:keys [p]} (project-of state path)] (enqueue! state p :file path 0)))
+                               (when-let [{:keys [p]} (project-of state path)]
+                                 (enqueue! state p (if (dep-file? state path) :dep-file :file) path 0)))
       "textDocument/didChange" (buffers/change! buffers (doc-path) (:contentChanges params))
       "textDocument/didSave" (let [path (doc-path)]
                                (buffers/saved! buffers path)
-                               (when-let [{:keys [p]} (project-of state path)] (enqueue! state p :file path 0)))
+                               (when-let [{:keys [p]} (project-of state path)]
+                                 (enqueue! state p (if (dep-file? state path) :dep-file :file) path 0)))
       "textDocument/didClose" (buffers/close! buffers (doc-path))
       "workspace/didChangeWatchedFiles" (doseq [{:keys [uri type]} (:changes params)
                                                 :when (str/starts-with? uri "file:")]

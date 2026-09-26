@@ -24,7 +24,9 @@
 
 (def ^:private modes
   {:project {:external? false :skip-lint false :analysis normalize/project-analysis-options}
-   :dependency {:external? true :skip-lint true :analysis normalize/dependency-analysis-options}})
+   :dependency {:external? true :skip-lint true :analysis normalize/dependency-analysis-options}
+   ;; a library file someone opened: everything, as for project files
+   :dep-file {:external? true :skip-lint true :analysis normalize/project-analysis-options}})
 
 (defn- sha256 ^bytes [^String s]
   (.digest (MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8")))

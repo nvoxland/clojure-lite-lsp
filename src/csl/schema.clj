@@ -4,7 +4,7 @@
 
 (def version
   "Bump on any change to the DDL below or to the meaning of stored values."
-  2)
+  3)
 
 (def ddl
   ["CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"
@@ -45,6 +45,11 @@
       jar_id INTEGER,
       PRIMARY KEY (project_id, ord)) WITHOUT ROWID"
    "CREATE INDEX project_jar_jar ON project_jar (jar_id)"
+
+   ;; library files someone opened (extracted by csl.sources), fully
+   ;; analyzed; not part of any project, alive while their jar exists
+   "CREATE TABLE dep_file (
+      path TEXT PRIMARY KEY, jar_hash BLOB NOT NULL, unit_id INTEGER NOT NULL) WITHOUT ROWID"
 
    ;; derived: every unit visible to a project, with its precedence
    "CREATE TABLE project_unit (

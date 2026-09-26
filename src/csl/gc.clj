@@ -60,6 +60,15 @@
       (db/execute! c (str "DELETE FROM " t " WHERE " col " = ?") j))
     (count ids)))
 
+(defn- drop-orphan-dep-files!
+  "Opened library files whose jar is gone: their rows and extracted files."
+  [c]
+  (let [rows (db/query c "SELECT path FROM dep_file WHERE jar_hash NOT IN (SELECT jar_hash FROM jar)")]
+    (doseq [[path] rows]
+      (db/execute! c "DELETE FROM dep_file WHERE path = ?" path)
+      (.delete (java.io.File. ^String path)))
+    (count rows)))
+
 (defn collect!
   "Collect garbage through writer `w`. Returns what was dropped:
   {:projects :jars :units}."
@@ -67,7 +76,9 @@
   (let [result (writer/with-write-tx w
                  (let [projects (drop-stale-projects! c project-max-age-ms)
                        jars (drop-dead-jars! c)
-                       dead (map first (db/query c "SELECT id FROM unit WHERE id NOT IN (SELECT unit_id FROM project_unit)"))]
+                       _ (drop-orphan-dep-files! c)
+                       dead (map first (db/query c "SELECT id FROM unit WHERE id NOT IN (SELECT unit_id FROM project_unit)
+                                                    AND id NOT IN (SELECT unit_id FROM dep_file)"))]
                    (doseq [us (partition-all batch dead)] (delete-units! c us))
                    {:projects projects :jars jars :units (count dead)}))]
     ;; the writer caches searchable names: forget the ones just deleted

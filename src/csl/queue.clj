@@ -3,14 +3,14 @@
   takes batches and marks them done.
 
   Kinds: :sync (recompute a project's classpath, config and file list;
-  path \"\"), :file, :delete, :jar. Lower priority runs first:
+  path \"\"), :file, :delete, :jar, :dep-file (an opened library file). Lower priority runs first:
   0 files open in an editor, 1 project work, 2 jars."
   (:require
    [csl.db :as db]))
 
 (def default-batch-sizes
   "How many requests of a kind one batch takes (DESIGN.md §5.3)."
-  {:file 100 :delete 1000 :jar 8 :sync 1})
+  {:file 100 :delete 1000 :jar 8 :sync 1 :dep-file 20})
 
 (defn enqueue!
   "Ask for `kind` work on `path` of project `p`. Re-enqueueing only ever
