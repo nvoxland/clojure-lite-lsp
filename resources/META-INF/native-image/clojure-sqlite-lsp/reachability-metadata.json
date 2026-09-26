@@ -1,0 +1,1480 @@
+{
+ "reflection": [
+  {
+   "type": "com.github.javaparser.JavaParser"
+  },
+  {
+   "type": "com.github.javaparser.Range"
+  },
+  {
+   "type": "com.github.javaparser.ast.CompilationUnit",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Modifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Modifier$Keyword",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node",
+   "fields": [
+    {
+     "name": "comment"
+    }
+   ],
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.PackageDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.BodyDeclaration",
+   "fields": [
+    {
+     "name": "annotations"
+    }
+   ],
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.CallableDeclaration",
+   "fields": [
+    {
+     "name": "modifiers"
+    },
+    {
+     "name": "name"
+    },
+    {
+     "name": "parameters"
+    },
+    {
+     "name": "receiverParameter"
+    },
+    {
+     "name": "thrownExceptions"
+    },
+    {
+     "name": "typeParameters"
+    }
+   ],
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.ClassOrInterfaceDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.ConstructorDeclaration",
+   "fields": [
+    {
+     "name": "body"
+    }
+   ],
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.EnumConstantDeclaration",
+   "fields": [
+    {
+     "name": "arguments"
+    },
+    {
+     "name": "classBody"
+    },
+    {
+     "name": "name"
+    }
+   ],
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.FieldDeclaration",
+   "fields": [
+    {
+     "name": "modifiers"
+    },
+    {
+     "name": "variables"
+    }
+   ],
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.MethodDeclaration",
+   "fields": [
+    {
+     "name": "body"
+    },
+    {
+     "name": "type"
+    }
+   ],
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.Parameter",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.TypeDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.VariableDeclarator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.comments.Comment",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.ArrayCreationExpr",
+   "fields": [
+    {
+     "name": "levels"
+    }
+   ],
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.SimpleName",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.VariableDeclarationExpr",
+   "fields": [
+    {
+     "name": "variables"
+    }
+   ],
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.Type",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.metamodel.PropertyMetaModel"
+  },
+  {
+   "type": "com.github.javaparser.ast.AccessSpecifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.AllFieldsConstructor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.ArrayCreationLevel",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.CompilationUnit$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.CompilationUnit$Storage",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.DataKey",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Generated",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.ImportDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$2",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$3",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$4",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$5",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$BreadthFirstIterator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$DirectChildrenIterator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$ObserverRegistrationMode",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$ParentsVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$Parsedness",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$PostOrderIterator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$PreOrderIterator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.Node$TreeTraversal",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.NodeList",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.NodeList$NodeListIterator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.AnnotationDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.AnnotationMemberDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.CallableDeclaration$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.CallableDeclaration$Signature",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.CompactConstructorDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.EnumDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.InitializerDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.ReceiverParameter",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.RecordDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.body.VariableDeclarator$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.comments.BlockComment",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.comments.CommentsCollection",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.comments.JavadocComment",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.comments.LineComment",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.AnnotationExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.ArrayAccessExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.ArrayInitializerExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.AssignExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.AssignExpr$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.AssignExpr$Operator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.BinaryExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.BinaryExpr$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.BinaryExpr$Operator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.BooleanLiteralExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.CastExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.CharLiteralExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.ClassExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.ConditionalExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.DoubleLiteralExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.EnclosedExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.Expression",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.FieldAccessExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.InstanceOfExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.IntegerLiteralExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.LambdaExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.LiteralExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.LiteralStringValueExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.LongLiteralExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.MarkerAnnotationExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.MemberValuePair",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.MethodCallExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.MethodReferenceExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.Name",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.NameExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.NormalAnnotationExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.NullLiteralExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.ObjectCreationExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.PatternExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.RecordPatternExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.SingleMemberAnnotationExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.StringLiteralExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.SuperExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.SwitchExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.TextBlockLiteralExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.ThisExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.TypeExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.TypePatternExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.UnaryExpr",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.expr.UnaryExpr$Operator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.modules.ModuleDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.modules.ModuleDirective",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.modules.ModuleExportsDirective",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.modules.ModuleOpensDirective",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.modules.ModuleProvidesDirective",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.modules.ModuleRequiresDirective",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.modules.ModuleUsesDirective",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithAnnotations",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithArguments",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithBlockStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithBody",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithCondition",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithDeclaration",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithExpression",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithExtends",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithIdentifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithImplements",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithJavadoc",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithMembers",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithModifiers",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithModifiers$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithName",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithOptionalBlockStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithOptionalLabel",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithOptionalScope",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithParameters",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithRange",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithScope",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithSimpleName",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithStatements",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithThrownExceptions",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithTokenRange",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithTraversableScope",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithTypeArguments",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithTypeParameters",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithVariables",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.NodeWithVariables$1Helper",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.SwitchNode",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.modifiers.NodeWithAbstractModifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.modifiers.NodeWithAccessModifiers",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.modifiers.NodeWithFinalModifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.modifiers.NodeWithPrivateModifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.modifiers.NodeWithProtectedModifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.modifiers.NodeWithPublicModifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.modifiers.NodeWithStaticModifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.nodeTypes.modifiers.NodeWithStrictfpModifier",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.observer.AstObserver",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.observer.AstObserver$ListChangeType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.observer.AstObserverAdapter",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.observer.Observable",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.observer.ObservableProperty",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.observer.ObservableProperty$Type",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.observer.PropagatingAstObserver",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.observer.PropagatingAstObserver$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.AssertStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.BlockStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.BreakStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.CatchClause",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.ContinueStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.DoStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.EmptyStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.ExplicitConstructorInvocationStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.ExpressionStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.ForEachStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.ForStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.IfStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.LabeledStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.LocalClassDeclarationStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.LocalRecordDeclarationStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.ReturnStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.Statement",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.SwitchEntry",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.SwitchEntry$Type",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.SwitchStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.SynchronizedStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.ThrowStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.TryStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.UnparsableStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.WhileStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.stmt.YieldStmt",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.ArrayType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.ArrayType$ArrayBracketPair",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.ArrayType$Origin",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.ClassOrInterfaceType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.ConvertibleToUsage",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.IntersectionType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.PrimitiveType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.PrimitiveType$Primitive",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.ReferenceType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.TypeParameter",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.UnionType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.UnknownType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.VarType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.VoidType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.type.WildcardType",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.ProblemReporter",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.RecordAsTypeIdentifierNotAllowed",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.ReservedKeywordValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.SimpleValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.SingleNodeTypeValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.TreeVisitorValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.TypedValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.TypedValidator$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.Validators",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.VisitorValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java10PreviewValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java10Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java11PreviewValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java11Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java12PreviewValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java12Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java13PreviewValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java13Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java14PreviewValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java14Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java15PreviewValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java15Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java16PreviewValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java16Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java17PreviewValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java17Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java18Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java19Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java1_0Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java1_1Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java1_2Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java1_3Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java1_4Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java20Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java21Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java5Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java6Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java7Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java8Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.Java9Validator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.UpgradeJavaMessage",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.chunks.CommonValidators",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.chunks.ModifierValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.chunks.NoBinaryIntegerLiteralsValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.chunks.NoUnderscoresInIntegerLiteralsValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.chunks.RecordDeclarationValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.chunks.UnderscoreKeywordValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.language_level_validations.chunks.VarValidator",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java10PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java10PostProcessor$1",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java11PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java12PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java13PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java14PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java15PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java16PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java17PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java18PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java19PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java20PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.Java21PostProcessor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.validator.postprocessors.PostProcessors",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.CloneVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.EqualsVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.GenericListVisitorAdapter",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.GenericVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.GenericVisitorAdapter",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.GenericVisitorWithDefaults",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.HashCodeVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.ModifierVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.NoCommentEqualsVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.NoCommentHashCodeVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.NodeFinderVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.ObjectIdentityEqualsVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.ObjectIdentityHashCodeVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.TreeVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.Visitable",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.VoidVisitor",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.VoidVisitorAdapter",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  },
+  {
+   "type": "com.github.javaparser.ast.visitor.VoidVisitorWithDefaults",
+   "allDeclaredFields": true,
+   "allDeclaredMethods": true
+  }
+ ]
+}

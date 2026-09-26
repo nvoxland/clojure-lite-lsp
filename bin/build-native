@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Build the csl native binary into target/csl.
+#
+# Needs GraalVM (native-image) as JAVA_HOME or on the PATH.
+# CSL_MARCH picks the CPU target (default: native, the build machine's; on
+# Apple silicon that is the M-series feature set). Portable builds can use
+# e.g. armv8.1-a or x86-64-v2, at the cost of slower content hashing (no SHA
+# instructions).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+NATIVE_IMAGE="${JAVA_HOME:+$JAVA_HOME/bin/}native-image"
+command -v "$NATIVE_IMAGE" >/dev/null || { echo "native-image not found (set JAVA_HOME to a GraalVM)" >&2; exit 1; }
+
+rm -rf classes && mkdir -p classes target
+# clj-kondo's native config expects dynaload's AOT mode
+clojure -J-Dborkdude.dynaload.aot=true -M:native -e "(compile 'csl.main)"
+
+"$NATIVE_IMAGE" \
+  -cp "$(clojure -Spath -A:native)" \
+  --no-fallback \
+  --features=clj_easy.graal_build_time.InitClojureClasses \
+  --enable-native-access=ALL-UNNAMED \
+  -H:+ReportExceptionStackTraces \
+  -R:MaxHeapSize=64m \
+  -march="${CSL_MARCH:-native}" \
+  -o target/csl \
+  csl.main
