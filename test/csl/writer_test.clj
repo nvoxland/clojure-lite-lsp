@@ -51,14 +51,6 @@
             (is (every? (kinds-at 1) [:ns-def :ns-usage :ns-alias]))
             (is (every? (kinds-at 2) [:var-def :local :local-usage :var-usage]))))))))
 
-(deftest java-classes-have-their-own-table
-  (with-writer
-    (fn [w c]
-      (writer/write-units! w [[(unit-key "cls" :external? true)
-                               [{:kind :java-class-def :name "java.io.File" :lang #{:clj}}]]])
-      (is (= ["java.io.File"] (map #(sym c (first %)) (db/query c "SELECT name FROM java_class"))))
-      (is (zero? (db/query-value c "SELECT count(*) FROM definition"))))))
-
 (deftest units-are-content-addressed
   (with-writer
     (fn [w c]

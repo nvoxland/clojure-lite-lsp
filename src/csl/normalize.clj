@@ -203,8 +203,12 @@
                             :when (valid? raw el)]
                         (assoc el :filename (:filename raw)))
         from-findings (when-not external? (mapcat finding->elements findings))]
-    (-> (group-by :filename (concat from-analysis from-findings))
-        (update-vals #(merge-langs (map (fn [el] (dissoc el :filename)) %))))))
+    (into {}
+          (map (fn [[filename els]]
+                 (let [els (mapv #(dissoc % :filename) els)]
+                   ;; only a .cljc file is analyzed once per language
+                   [filename (if (str/ends-with? filename ".cljc") (merge-langs els) els)])))
+          (group-by :filename (concat from-analysis from-findings)))))
 
 (defn file-extension [filename]
   (some-> (re-find #"\.([^./:]+)$" filename) second str/lower-case))

@@ -2,14 +2,16 @@
   "The daemon's writer: projects normalized elements into the index.
 
   It is the only process that writes analysis, so it assigns ids itself from
-  in-memory counters and interns symbols through an in-memory cache, and it
-  inserts in multi-row statements (per-statement overhead, not disk, limited
-  the writer in Phase 0.2)."
+  in-memory counters, keeps every symbol in memory (no lookup per new
+  symbol), and inserts in multi-row statements (per-statement overhead, not
+  disk, limited the writer in Phase 0.2)."
   (:require
    [clojure.string :as str]
    [csl.db :as db]
    [csl.kinds :as kinds])
   (:import
+   [java.nio.charset StandardCharsets]
+   [java.security MessageDigest]
    [java.sql Connection PreparedStatement]
    [java.util ArrayList HashMap HashSet]))
 
@@ -41,57 +43,82 @@
                    (exec! ps)))
                (when (realized? full) (.close ^PreparedStatement @full)))}))
 
-(defn- seed-ids [c]
-  {:sym (db/query-value c "SELECT coalesce(max(id), 0) FROM sym")
-   :unit (db/query-value c "SELECT coalesce(max(id), 0) FROM unit")
-   :definition (db/query-value c "SELECT coalesce(max(id), 0) FROM definition")})
+(defn unit-key-hash
+  "The unit key: a SHA-256 over every input to a file's analysis."
+  ^bytes [{:keys [content-hash lang-key kondo-version config-hash options-hash]}]
+  (let [md (MessageDigest/getInstance "SHA-256")
+        text (fn [^String s] (.update md (.getBytes (str s "\u0000") StandardCharsets/UTF_8)))]
+    (.update md ^bytes content-hash)
+    (text lang-key)
+    (text kondo-version)
+    (.update md ^bytes config-hash)
+    (.update md ^bytes options-hash)
+    (.digest md)))
+
+(defn reload-state!
+  "Load ids, symbols and searchable names from the database: everything
+  the writer keeps in memory."
+  [{:keys [c ids ^HashMap syms ^HashSet searchable]}]
+  (reset! ids {:sym (db/query-value c "SELECT coalesce(max(id), 0) FROM sym")
+               :unit (db/query-value c "SELECT coalesce(max(id), 0) FROM unit")
+               :definition (db/query-value c "SELECT coalesce(max(id), 0) FROM definition")})
+  (.clear syms)
+  (doseq [[id text] (db/query c "SELECT id, text FROM sym")] (.put syms text id))
+  (.clear searchable)
+  (doseq [[id] (db/query c "SELECT rowid FROM name_fts")] (.add searchable id)))
 
 (defn writer
   "A writer for connection `c`, which must be the only writer of analysis."
   [c]
-  {:c c
-   :ids (atom (seed-ids c))
-   :syms (HashMap.)
-   :searchable (HashSet.)})
+  (doto {:c c :ids (atom nil) :syms (HashMap.) :searchable (HashSet.)}
+    (reload-state!)))
+
+(defmacro with-write-tx
+  "Run body in a transaction on the writer's connection (joining an outer
+  one), reloading the writer's in-memory state if it rolls back."
+  [w & body]
+  `(let [w# ~w]
+     (try
+       (db/with-tx (:c w#) ~@body)
+       (catch Throwable t#
+         (reload-state! w#)
+         (throw t#)))))
 
 (defn- next-id! [{:keys [ids]} k]
   (get (swap! ids update k inc) k))
 
 (defn- intern-sym
   "The id of `text`, 0 for nil; new symbols are added through `sym-batch`."
-  [{:keys [c ^HashMap syms] :as w} sym-batch text]
+  [{:keys [^HashMap syms] :as w} sym-batch text]
   (if (nil? text)
     0
     (or (.get syms text)
-        (let [id (or (db/query-value c "SELECT id FROM sym WHERE text = ?" text)
-                     (let [id (next-id! w :sym)]
-                       ((:add! sym-batch) [id text])
-                       id))]
+        (let [id (next-id! w :sym)]
+          ((:add! sym-batch) [id text])
           (.put syms text id)
           id))))
 
-(defn- existing-unit [c {:keys [content-hash lang-key kondo-version config-hash options-hash]}]
-  (db/query-value c "SELECT id FROM unit WHERE content_hash = ? AND lang_key = ? AND kondo_version = ?
-                     AND config_hash = ? AND options_hash = ?"
-                  content-hash lang-key kondo-version config-hash options-hash))
-
-(defn- insert-unit! [w {:keys [content-hash lang-key kondo-version config-hash options-hash external?]}]
-  (let [id (next-id! w :unit)]
-    (db/execute! (:c w) "INSERT INTO unit VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-                 id content-hash lang-key kondo-version config-hash options-hash
-                 (if external? 1 0) (System/currentTimeMillis))
-    id))
+(defn- new-searchable-name?
+  "True the first time `name-id` needs a workspace-symbol search entry."
+  [{:keys [^HashSet searchable]} name-id]
+  (.add searchable name-id))
 
 (defn- extra [{:keys [kind extra impl-ns]}]
   (let [m (cond-> (or extra {})
             (= :protocol-impl kind) (assoc :impl-ns impl-ns))]
     (when (seq m) (pr-str m))))
 
-(defn- new-searchable-name?
-  "True the first time `name-id` needs a workspace-symbol search entry."
-  [{:keys [c ^HashSet searchable]} name-id]
-  (and (.add searchable name-id)
-       (nil? (db/query-value c "SELECT rowid FROM name_fts WHERE rowid = ?" name-id))))
+(defn- batches [c]
+  {:sym (batcher c "sym" 2)
+   :definition (batcher c "definition" 14)
+   :doc (batcher c "doc" 2)
+   :fts (batcher c "name_fts(rowid, text)" 2)
+   :usage (batcher c "usage" 12)
+   :file-element (batcher c "file_element" 15)
+   :java-class (batcher c "java_class" 3)})
+
+(defn- flush-all! [batches]
+  (doseq [b (vals batches)] ((:flush! b))))
 
 (defn- write-elements! [w batches unit-id elements]
   (let [sym #(intern-sym w (:sym batches) %)]
@@ -103,9 +130,6 @@
                   ns-id (sym (:ns el))
                   name-id (sym (:name el))]]
       (cond
-        (= :java-class-def kind)
-        ((:add! (:java-class batches)) [name-id unit-id 0])
-
         (kinds/definition-kinds kind)
         (let [id (next-id! w :definition)]
           ((:add! (:definition batches))
@@ -119,49 +143,42 @@
         ((:add! (:usage batches))
          [ns-id name-id unit-id nr nc lang-bits code ner nec
           (sym (:from-ns el)) (sym (:from-var el)) (kinds/flags->bits (:flags el))]))
-      (when (and nr (not= :java-class-def kind))
+      (when nr
         ((:add! (:file-element batches))
          [unit-id nr nc code lang-bits ner nec ns-id name-id (sym (:alias el)) (:local-id el)
           fr fc fer fec])))))
 
-(defn reset-caches!
-  "After a rollback, forget ids and symbols that were never committed."
-  [{:keys [c ids ^HashMap syms ^HashSet searchable]}]
-  (reset! ids (seed-ids c))
-  (.clear syms)
-  (.clear searchable))
-
-(defmacro with-write-tx
-  "Run body in a transaction on the writer's connection (joining an outer
-  one), resetting the writer's caches if it rolls back."
-  [w & body]
-  `(let [w# ~w]
-     (try
-       (db/with-tx (:c w#) ~@body)
-       (catch Throwable t#
-         (reset-caches! w#)
-         (throw t#)))))
+(defn- existing-unit [c key-hash]
+  (db/query-value c "SELECT id FROM unit WHERE key = ?" key-hash))
 
 (defn write-units!
   "Write a chunk of units in one transaction. `units` is a seq of
   [unit-key elements], where unit-key has :content-hash :lang-key
   :kondo-version :config-hash :options-hash :external?. A unit whose key
-  already exists is not written again. Returns the unit ids, in order."
+  already exists is not written again. Returns the unit ids, in order.
+
+  Java class definitions are not unit data: jars record theirs with
+  `write-java-classes!`, and they are ignored here."
   [{:keys [c] :as w} units]
   (with-write-tx w
-    (let [batches {:sym (batcher c "sym" 2)
-                   :definition (batcher c "definition" 14)
-                   :doc (batcher c "doc" 2)
-                   :fts (batcher c "name_fts(rowid, text)" 2)
-                   :usage (batcher c "usage" 12)
-                   :file-element (batcher c "file_element" 15)
-                   :java-class (batcher c "java_class" 3)}
+    (let [bs (batches c)
           ids (mapv (fn [[k elements]]
-                      (or (existing-unit c k)
-                          (let [id (insert-unit! w k)]
-                            (write-elements! w batches id elements)
-                            id)))
+                      (let [key-hash (unit-key-hash k)]
+                        (or (existing-unit c key-hash)
+                            (let [id (next-id! w :unit)]
+                              (db/execute! c "INSERT INTO unit (id, key, external, created_at) VALUES (?, ?, ?, ?)"
+                                           id key-hash (if (:external? k) 1 0) (System/currentTimeMillis))
+                              (write-elements! w bs id (remove #(= :java-class-def (:kind %)) elements))
+                              id))))
                     units)]
-      (doseq [b [:sym :definition :doc :fts :usage :file-element :java-class]]
-        ((:flush! (batches b))))
+      (flush-all! bs)
       ids)))
+
+(defn write-java-classes!
+  "Record jar `jar-id`'s Java classes, a seq of [class-name entry-path]."
+  [{:keys [c] :as w} jar-id classes]
+  (with-write-tx w
+    (let [bs (batches c)]
+      (doseq [[class-name entry-path] classes]
+        ((:add! (:java-class bs)) [(intern-sym w (:sym bs) class-name) jar-id entry-path]))
+      (flush-all! bs))))

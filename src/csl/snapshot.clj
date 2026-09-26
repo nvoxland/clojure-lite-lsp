@@ -60,10 +60,16 @@
       (db/execute! c "DELETE FROM project_file WHERE project_id = ? AND path = ?" p path)
       (refresh-project-unit! c p old))))
 
+(defn- java-class-entry?
+  "An entry whose only content is Java class definitions."
+  [[_ _ elements]]
+  (and (seq elements) (every? #(= :java-class-def (:kind %)) elements)))
+
 (defn write-jar!
-  "Write a jar's entries as units in one transaction, unless a jar with the
-  same key exists. `jar-key` has :jar-hash :config-hash :kondo-version
-  :options-hash; `entries` is a seq of [entry-path unit-key elements].
+  "Write a jar's entries in one transaction, unless a jar with the same key
+  exists. `jar-key` has :jar-hash :config-hash :kondo-version :options-hash;
+  `entries` is a seq of [entry-path unit-key elements]. Clojure entries
+  become units; Java classes are recorded against the jar itself.
   Returns the jar id."
   [w {:keys [jar-hash config-hash kondo-version options-hash]} entries]
   (writer/with-write-tx w
@@ -72,14 +78,20 @@
                                        AND kondo_version = ? AND options_hash = ?"
                                     jar-hash config-hash kondo-version options-hash)]
       (or (existing)
-          (let [units (writer/write-units! w (map (fn [[_ k els]] [k els]) entries))]
+          (let [unit-entries (remove java-class-entry? entries)
+                units (writer/write-units! w (map (fn [[_ k els]] [k els]) unit-entries))]
             (db/execute! c "INSERT INTO jar (jar_hash, config_hash, kondo_version, options_hash)
                             VALUES (?, ?, ?, ?)"
                          jar-hash config-hash kondo-version options-hash)
             (let [jar-id (existing)]
-              (doseq [[[path] u] (map vector entries units)]
+              (doseq [[[path] u] (map vector unit-entries units)]
                 (db/execute! c "INSERT INTO jar_entry (jar_id, entry_path, unit_id) VALUES (?, ?, ?)"
                              jar-id path u))
+              (writer/write-java-classes! w jar-id
+                                          (for [[path _ els] entries
+                                                el els
+                                                :when (= :java-class-def (:kind el))]
+                                            [(:name el) path]))
               jar-id))))))
 
 (defn set-project-jars!

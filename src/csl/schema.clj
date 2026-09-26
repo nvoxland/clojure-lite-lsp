@@ -4,24 +4,20 @@
 
 (def version
   "Bump on any change to the DDL below or to the meaning of stored values."
-  1)
+  2)
 
 (def ddl
   ["CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"
 
    "CREATE TABLE sym (id INTEGER PRIMARY KEY, text TEXT NOT NULL UNIQUE)"
 
-   ;; one row per analyzed file (source file or jar entry)
+   ;; one row per analyzed Clojure file (source file or jar entry); `key` is
+   ;; the SHA-256 of every input to its analysis (csl.writer/unit-key-hash)
    "CREATE TABLE unit (
-      id            INTEGER PRIMARY KEY,
-      content_hash  BLOB NOT NULL,
-      lang_key      TEXT NOT NULL,
-      kondo_version TEXT NOT NULL,
-      config_hash   BLOB NOT NULL,
-      options_hash  BLOB NOT NULL,
-      external      INTEGER NOT NULL,
-      created_at    INTEGER NOT NULL,
-      UNIQUE (content_hash, lang_key, kondo_version, config_hash, options_hash))"
+      id         INTEGER PRIMARY KEY,
+      key        BLOB NOT NULL UNIQUE,
+      external   INTEGER NOT NULL,
+      created_at INTEGER NOT NULL)"
 
    ;; a jar (or the JDK's src.zip) as one unit of work
    "CREATE TABLE jar (
@@ -86,7 +82,8 @@
       from_ns INTEGER, from_var INTEGER,
       flags INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (to_ns, name, unit_id, name_row, name_col, lang, kind)) WITHOUT ROWID"
-   "CREATE INDEX usage_unit ON usage (unit_id)"
+   ;; no unit_id index: GC finds a dead unit's usage rows through its
+   ;; file_element rows, which hold every column of the usage key
 
    "CREATE TABLE doc (definition_id INTEGER PRIMARY KEY, docstring TEXT)"
 
@@ -101,12 +98,14 @@
       form_end_row INTEGER, form_end_col INTEGER,
       PRIMARY KEY (unit_id, name_row, name_col, kind, lang)) WITHOUT ROWID"
 
+   ;; Java classes are recorded per jar, not as units: one unit per .class
+   ;; file cost a unit, jar_entry and project_unit row each (Phase 1)
    "CREATE TABLE java_class (
       name INTEGER NOT NULL,
-      unit_id INTEGER NOT NULL,
-      flags INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (name, unit_id)) WITHOUT ROWID"
-   "CREATE INDEX java_class_unit ON java_class (unit_id)"
+      jar_id INTEGER NOT NULL,
+      entry_path TEXT NOT NULL,
+      PRIMARY KEY (name, jar_id)) WITHOUT ROWID"
+   "CREATE INDEX java_class_jar ON java_class (jar_id)"
 
    "CREATE VIRTUAL TABLE name_fts USING fts5(text, content='', contentless_delete=1, tokenize='trigram')"
 

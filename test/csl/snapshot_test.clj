@@ -67,6 +67,25 @@
         (is (= 2 (db/query-value c "SELECT count(*) FROM jar_entry WHERE jar_id = ?" j1)))
         (is (= 2 (db/query-value c "SELECT count(*) FROM unit")))))))
 
+(deftest jar-java-classes-are-recorded-per-jar
+  ;; 58% of Metabase's definitions are Java classes, one per .class file:
+  ;; they get no unit (nor unit, jar_entry and project_unit rows each).
+  (with-writer
+    (fn [w c]
+      (let [j (snapshot/write-jar! w {:jar-hash (.getBytes "jar") :config-hash (byte-array 1)
+                                      :kondo-version "test" :options-hash (byte-array 1)}
+                                   [["java/io/File.class" (unit-key "cls" :external? true)
+                                     [{:kind :java-class-def :name "java.io.File" :lang #{:clj}}]]
+                                    ["a/core.clj" (unit-key "clj" :external? true)
+                                     [{:kind :var-def :ns "a.core" :name "f" :lang #{:clj} :pos [1 1 1 2] :flags #{}}]]])
+            p (snapshot/ensure-project! c "/src/a")]
+        (is (= 1 (db/query-value c "SELECT count(*) FROM unit")))
+        (is (= [["a/core.clj"]] (db/query c "SELECT entry_path FROM jar_entry")))
+        (is (= [["java.io.File" j "java/io/File.class"]]
+               (db/query c "SELECT s.text, jc.jar_id, jc.entry_path FROM java_class jc JOIN sym s ON s.id = jc.name")))
+        (snapshot/set-project-jars! w p [[1 "/m2/x.jar" j]])
+        (is (= 1 (count (visible c p))))))))
+
 (deftest classpath-order-is-precedence
   (with-writer
     (fn [w c]
