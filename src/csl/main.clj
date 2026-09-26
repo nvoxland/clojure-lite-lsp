@@ -1,10 +1,11 @@
 (ns csl.main
-  "The `csl` command: `csl index` runs the daemon, `csl status` reports
-  on it. (`csl lsp` comes with the LSP server.)"
+  "The `csl` command: `csl lsp` is the language server an editor runs,
+  `csl index` the daemon it starts, `csl status` reports on them."
   (:require
    [clojure.java.io :as io]
    [csl.daemon :as daemon]
    [csl.db :as db]
+   [csl.lsp.server :as server]
    [csl.version :as version])
   (:gen-class))
 
@@ -30,10 +31,14 @@
 
 (defn -main [& [cmd]]
   (case cmd
+    ;; stdout is the LSP connection: nothing else may print there
+    "lsp" (let [code (server/run! {:in System/in :out System/out :home (home)})]
+            (shutdown-agents)
+            (System/exit code))
     "index" (do (daemon/run! {:home (home)})
                 (shutdown-agents)
                 (System/exit 0))
     "status" (status (home))
     "version" (println version/version)
-    (do (println "Usage: csl index | status | version")
+    (do (println "Usage: csl lsp | index | status | version")
         (System/exit 1))))

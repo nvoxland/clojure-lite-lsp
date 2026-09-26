@@ -43,7 +43,7 @@
   (if (System/getProperty "org.graalvm.nativeimage.imagecode")
     [(.orElseThrow (.command (.info (java.lang.ProcessHandle/current)))) "-Xmx768m" "index"]
     [(str (io/file (System/getProperty "java.home") "bin" "java"))
-     "-Xmx768m" "-cp" (System/getProperty "java.class.path")
+     "-Xmx768m" "--enable-native-access=ALL-UNNAMED" "-cp" (System/getProperty "java.class.path")
      "clojure.main" "-m" "csl.main" "index"]))
 
 (defn spawn-daemon!
@@ -76,7 +76,9 @@
           (if (live?)
             :running
             (do (spawn!)
-                (when-not (wait-until live?)
+                ;; the daemon takes its lock, then creates the schema, then
+                ;; registers: its row means the index is ready to use
+                (when-not (and (wait-until live?) (running-version db))
                   (throw (ex-info "The csl daemon did not start; see daemon.log" {:home home})))
                 :spawned))
           (finally (lock/release! held)))))))
