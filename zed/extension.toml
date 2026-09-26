@@ -1,0 +1,11 @@
+id = "clojure-sqlite-lsp"
+name = "Clojure (SQLite LSP)"
+version = "0.1.0"
+schema_version = 1
+description = "A low-memory, read-only Clojure language server: navigation, references, hover, symbols and call hierarchy from a shared SQLite index. Registers the server only; the Clojure language comes from another extension."
+repository = "https://github.com/nvoxland/clojure-sqlite-lsp"
+authors = ["Nathan Voxland <nathan@voxland.net>"]
+
+[language_servers.clojure-sqlite-lsp]
+name = "clojure-sqlite-lsp"
+languages = ["Clojure"]

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Build the csl native binary (if needed) and link it into ~/.local/bin, where
+# the Zed extension finds it on PATH.
+#
+#   zed/install-server            build if target/csl is missing, then link
+#   zed/install-server --rebuild  always build first
+#
+# Building needs GraalVM: set JAVA_HOME to it, or have native-image on PATH.
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+bin_dir="${CSL_BIN_DIR:-$HOME/.local/bin}"
+
+if [[ "${1:-}" == "--rebuild" || ! -x "$repo/target/csl" ]]; then
+  "$repo/bin/build-native"
+fi
+
+mkdir -p "$bin_dir"
+ln -sf "$repo/target/csl" "$bin_dir/csl"
+echo "Linked $bin_dir/csl -> $repo/target/csl ($("$bin_dir/csl" version))"
+
+case ":$PATH:" in
+  *":$bin_dir:"*) ;;
+  *) echo "Note: $bin_dir is not on your PATH; add it, or set lsp.clojure-sqlite-lsp.binary.path in Zed." ;;
+esac
