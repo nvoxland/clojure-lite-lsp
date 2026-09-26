@@ -17,7 +17,7 @@
 (def version
   "Bump when normalization changes what it produces: it is part of every
   unit key, so all analysis is redone."
-  1)
+  2)
 
 (def project-analysis-options
   {:arglists true
@@ -84,7 +84,9 @@
                  :defined-by (sname (:defined-by e)))
     (:defined-by->lint-as e) (assoc :defined-by-lint-as (sname (:defined-by->lint-as e)))
     (:doc e) (assoc :doc (:doc e))
-    (:arglist-strs e) (assoc :extra {:arglist-strs (vec (:arglist-strs e))})))
+    (:arglist-strs e) (assoc-in [:extra :arglist-strs] (vec (:arglist-strs e)))
+    ;; potemkin/import-vars: where the var really lives
+    (:imported-ns e) (assoc-in [:extra :imported-ns] (sname (:imported-ns e)))))
 
 (defn- var-usage [e]
   (cond-> (assoc (base :var-usage e)

@@ -146,3 +146,7 @@
     (testing "except Java class definitions, which have no positions"
       (is (= [{:kind :java-class-def :name "java.io.File"}]
              (map #(select-keys % [:kind :name]) (get units "x.jar:java/io/File.class")))))))
+
+(deftest imported-vars-remember-their-origin
+  (let [[f] (of-kind :var-def (elements "(ns api (:require [potemkin :refer [import-vars]] [impl])) (import-vars [impl f])" "api.clj"))]
+    (is (= "impl" (get-in f [:extra :imported-ns])))))
