@@ -50,25 +50,49 @@
 
 ;;;; locations
 
+(def ^:private units-per-query 500)
+
+(defn units-locations
+  "Where each of units `us` lives in project `p`: {unit-id [location]},
+  its files and jar entries. One query per batch of units, not per unit:
+  a popular var's references span thousands of usages in a few hundred
+  files."
+  [c p us]
+  (reduce (fn [acc batch]
+            (let [in (str "(" (str/join "," (repeat (count batch) "?")) ")")
+                  add (fn [acc rows ->loc]
+                        (reduce (fn [acc [u & more]] (update acc u (fnil conj []) (->loc more))) acc rows))]
+              (-> acc
+                  (add (apply db/query c (str "SELECT unit_id, path FROM project_file
+                                               WHERE project_id = ? AND unit_id IN " in)
+                              p batch)
+                       (fn [[path]] {:path path}))
+                  (add (apply db/query c (str "SELECT je.unit_id, pj.path, je.entry_path FROM project_jar pj
+                                               JOIN jar_entry je ON je.jar_id = pj.jar_id
+                                               WHERE pj.project_id = ? AND je.unit_id IN " in)
+                              p batch)
+                       (fn [[path entry]] {:path path :entry entry})))))
+          {}
+          (partition-all units-per-query (distinct us))))
+
 (defn unit-locations
   "Where unit `u` lives in project `p`: its files, and jar entries."
   [c p u]
-  (concat
-   (map (fn [[path]] {:path path})
-        (db/query c "SELECT path FROM project_file WHERE project_id = ? AND unit_id = ?" p u))
-   (map (fn [[path entry]] {:path path :entry entry})
-        (db/query c "SELECT pj.path, je.entry_path FROM project_jar pj
-                     JOIN jar_entry je ON je.jar_id = pj.jar_id
-                     WHERE pj.project_id = ? AND je.unit_id = ?" p u))))
+  (get (units-locations c p [u]) u []))
 
 (defn- located
-  "Locations for things (with :unit-id and :pos) in project `p`."
+  "Locations for things in project `p`: things with a :unit-id and :pos
+  (placed through the unit's files and jar entries), or already located
+  ones with a :path."
   [c p things]
-  (->> things
-       (mapcat (fn [{:keys [unit-id pos]}]
-                 (map #(assoc % :pos pos) (unit-locations c p unit-id))))
-       distinct
-       vec))
+  (let [seen (java.util.HashSet.)
+        things (filterv #(.add seen [(or (:path %) (:unit-id %)) (:pos %)]) things)
+        where (units-locations c p (keep #(when-not (:path %) (:unit-id %)) things))]
+    (into [] (mapcat (fn [{:keys [path unit-id pos]}]
+                       (if path
+                         [{:path path :pos pos}]
+                         (map #(assoc % :pos pos) (where unit-id)))))
+          things)))
 
 ;;;; definitions
 
@@ -167,21 +191,30 @@
 
 (defn- usage-rows
   "Usages of `ns`/`name` of the given kinds that project `p` can see, as
-  things with :unit-id :pos :from-ns :from-var :flags. `project-only?`
-  keeps the project's own files."
+  located things: {:path :pos :from-ns-id :from-var-id :flag-bits} (sym
+  ids and bits, not decoded: a popular var has tens of thousands of
+  usages). `project-only?` keeps the project's own sources.
+
+  Joins project_file for the path directly, which is 6x faster than
+  locating units afterwards for clojure.core/let's 25k usages on Metabase.
+  That is complete because only files have usages: dependencies are
+  analyzed without them. (Fully analyzed dependency files, when added,
+  will need their jar entries here too.)"
   [c p ns name kinds & {:keys [project-only?]}]
-  (->> (db/query c (str "SELECT u.unit_id, u.name_row, u.name_col, u.name_end_row, u.name_end_col,
-                                fns.text, fv.text, u.flags
+  (->> (db/query c (str "SELECT pf.path, u.name_row, u.name_col, u.name_end_row, u.name_end_col,
+                                u.from_ns, u.from_var, u.flags
                          FROM usage u
-                         JOIN project_unit pu ON pu.unit_id = u.unit_id AND pu.project_id = ?
-                         LEFT JOIN sym fns ON fns.id = u.from_ns LEFT JOIN sym fv ON fv.id = u.from_var
+                         JOIN project_file pf ON pf.project_id = ? AND pf.unit_id = u.unit_id
                          WHERE u.to_ns = ? AND u.name = ? AND u.kind IN ("
                         (str/join "," (map kinds/code kinds)) ")"
-                        (when project-only? " AND pu.ord = 0"))
+                        (when project-only? " AND pf.ord = 0"))
                    p (sym-id c ns) (sym-id c name))
-       (mapv (fn [[u nr nc ner nec from-ns from-var flags]]
-               {:unit-id u :pos [nr nc ner nec] :from-ns from-ns :from-var from-var
-                :flags (kinds/bits->flags flags)}))))
+       (mapv (fn [[path nr nc ner nec from-ns from-var flags]]
+               {:path path :pos [nr nc ner nec] :from-ns-id from-ns :from-var-id from-var
+                :flag-bits flags}))))
+
+(defn- sym-text [c id]
+  (when (and id (pos? id)) (db/query-value c "SELECT text FROM sym WHERE id = ?" id)))
 
 (defn- generated-names
   "The names a definition also defines: a defrecord's and deftype's
@@ -205,7 +238,9 @@
 
 (defn- var-references [c p el include-declaration?]
   (mapcat (fn [{:keys [ns name] :as target}]
-            (let [recursive? #(and (= ns (:from-ns %)) (= name (:from-var %)))]
+            (let [ns-id (sym-id c ns)
+                  name-id (sym-id c name)
+                  recursive? #(and (= ns-id (:from-ns-id %)) (= name-id (:from-var-id %)))]
               (concat
                (->> (generated-names target)
                     (mapcat #(usage-rows c p ns % [:var-usage :symbol-usage]))
@@ -261,7 +296,7 @@
                   (usage-rows c p ns name [:var-usage :symbol-usage]))
 
               (multimethod-definers defined-by)
-              (filter #(:defmethod (:flags %)) (usage-rows c p ns name [:var-usage]))))
+              (filter #(:defmethod (kinds/bits->flags (:flag-bits %))) (usage-rows c p ns name [:var-usage]))))
           (var-targets c p el)))
 
 (defn implementations
@@ -377,13 +412,15 @@
   caller (:name nil)."
   [c p ns name]
   (->> (usage-rows c p ns name [:var-usage])
-       (group-by (juxt :from-ns :from-var))
-       (mapv (fn [[[from-ns from-var] calls]]
+       (group-by (juxt :from-ns-id :from-var-id))
+       (mapv (fn [[[from-ns-id from-var-id] calls]]
+               (let [from-ns (sym-text c from-ns-id)
+                     from-var (sym-text c from-var-id)]
                {:caller (if from-var
                           (var-item c p from-ns from-var)
                           {:ns from-ns :name nil
                            :locations (located c p (definitions c p :ns-def nil from-ns))})
-                :calls (located c p calls)}))))
+                :calls (located c p calls)})))))
 
 (defn- form-contains? [[fr fc fer fec] [r col]]
   (and (or (> r fr) (and (= r fr) (>= col fc)))
