@@ -30,18 +30,35 @@
 (defn- row->request [[p kind path priority enqueued-at]]
   {:project-id p :kind (keyword kind) :path path :priority priority :enqueued-at enqueued-at})
 
+(defn request-key
+  "What identifies a request in the queue."
+  [{:keys [project-id kind path]}]
+  [project-id kind path])
+
 (defn next-batch
   "The next batch: requests of the top priority for one project and kind,
-  up to that kind's batch size. Empty when the queue is empty."
-  [c batch-sizes]
-  (if-let [[p kind priority] (first (db/query c "SELECT project_id, kind, priority FROM pending
-                                                 ORDER BY priority, enqueued_at LIMIT 1"))]
-    (mapv row->request
-          (db/query c "SELECT project_id, kind, path, priority, enqueued_at FROM pending
-                       WHERE project_id = ? AND kind = ? AND priority = ?
-                       ORDER BY enqueued_at LIMIT ?"
-                    p kind priority (get (merge default-batch-sizes batch-sizes) (keyword kind) 100)))
-    []))
+  up to that kind's batch size. Empty when the queue is empty. Requests
+  whose keys are in `in-flight` (taken but not done yet) are skipped."
+  ([c batch-sizes] (next-batch c batch-sizes nil))
+  ([c batch-sizes in-flight]
+   (let [skip? (set in-flight)
+         n (count skip?)]
+     (if-let [{:keys [project-id kind priority]}
+              (->> (db/query c "SELECT project_id, kind, path, priority, enqueued_at FROM pending
+                                ORDER BY priority, enqueued_at LIMIT ?" (inc n))
+                   (map row->request)
+                   (remove #(skip? (request-key %)))
+                   first)]
+       (->> (db/query c "SELECT project_id, kind, path, priority, enqueued_at FROM pending
+                         WHERE project_id = ? AND kind = ? AND priority = ?
+                         ORDER BY enqueued_at LIMIT ?"
+                      project-id (name kind) priority
+                      (+ n (get (merge default-batch-sizes batch-sizes) kind 100)))
+            (map row->request)
+            (remove #(skip? (request-key %)))
+            (take (get (merge default-batch-sizes batch-sizes) kind 100))
+            vec)
+       []))))
 
 (defn done!
   "Remove a processed batch, except requests re-enqueued since it was taken."

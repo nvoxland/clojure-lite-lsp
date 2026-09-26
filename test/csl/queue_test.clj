@@ -67,3 +67,12 @@
       (queue/enqueue! c p :file "/p1/a.clj" 1)
       (queue/enqueue! c p :jar "/m2/x.jar" 2)
       (is (= 2 (queue/pending-count c p))))))
+
+(deftest in-flight-requests-are-skipped
+  ;; the indexer takes the next batch before the previous one is done
+  (with-db
+    (fn [c p _]
+      (doseq [f ["/p1/a.clj" "/p1/b.clj" "/p1/c.clj"]] (queue/enqueue! c p :file f 1))
+      (let [first-batch (queue/next-batch c {:file 1})]
+        (is (= ["/p1/a.clj"] (map :path first-batch)))
+        (is (= ["/p1/b.clj"] (map :path (queue/next-batch c {:file 1} (map queue/request-key first-batch)))))))))

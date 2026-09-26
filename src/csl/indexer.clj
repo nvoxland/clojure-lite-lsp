@@ -12,8 +12,11 @@
   - :dep-file fully analyze library files someone opened (extracted by
             csl.sources)
 
-  Analysis is sharded across concurrent clj-kondo runs (csl.analyze); the
-  single writer connection is used from the loop thread only."
+  Analysis is sharded across concurrent clj-kondo runs (csl.analyze), and
+  pipelined: while one :file or :jar batch is written, the next one is
+  already being analyzed. Every database access (preparing a batch,
+  writing one) still happens on the loop thread, one after the other:
+  only analysis, which touches no database, runs alongside."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -31,7 +34,7 @@
 
 (set! *warn-on-reflection* true)
 
-(defrecord Indexer [c w cache-dir shards contexts]
+(defrecord Indexer [c w cache-dir shards contexts batch-sizes in-flight]
   Closeable
   (close [_] (.close ^java.sql.Connection c)))
 
@@ -41,12 +44,15 @@
 (defn indexer
   "An indexer writing to the index at `db-path`, keeping clj-kondo configs
   under `cache-dir`."
-  [{:keys [db-path cache-dir shards] :or {shards 8}}]
+  [{:keys [db-path cache-dir shards batch-sizes] :or {shards 8}}]
   (let [c (db/open-writer db-path)]
     (map->Indexer {:c c :w (writer/writer c)
                    :cache-dir (or cache-dir (default-cache-dir))
                    :shards shards
-                   :contexts (atom {})})))
+                   :batch-sizes batch-sizes
+                   :contexts (atom {})
+                   ;; the batch being analyzed: {:batch :job}
+                   :in-flight (atom nil)})))
 
 ;;;; project context: what analysis of a project's files and jars needs
 
@@ -133,53 +139,65 @@
                 (when-not u (queue/enqueue! c p :file path 1)))
               (snapshot/remove-file! w p path))))))))
 
-(defn- index-files!
+(defn- files-job
+  "Index project or external-dir files that changed. Returns a job:
+  {:analysis (a future of the clj-kondo work) :write (fn [analysis])}."
   [{:keys [c w shards] :as ix} p paths]
   (let [ctx (context ix p)
         placed (for [path paths
                      :let [f (io/file path)]]
-                 (cond
-                   (not (.isFile f)) {:path path :gone? true}
-                   :else (assoc (file-placement ctx (.getCanonicalPath f)) :path (.getCanonicalPath f))))]
-    (doseq [{:keys [path gone?]} placed :when gone?]
-      (snapshot/remove-file! w p path))
-    ;; files outside the project's dirs (:mode nil) are not part of it
-    (doseq [[[mode config] group] (group-by (juxt :mode :config) (filter :mode placed))]
-      (let [placement (first group)
-            known (for [{:keys [path]} group]
-                    [path (some->> (file-unit-key ix placement path) (writer/unit-id c))])
-            fresh (analyze/analyze-files (mapv first (remove second known))
-                                         {:config config :mode mode :shards shards})
-            fresh-ids (writer/write-units! w (map (juxt :unit-key :elements) fresh))
-            ids (merge (into {} (filter second) known)
-                       (zipmap (map :path fresh) fresh-ids))]
-        (writer/with-write-tx w
-          (doseq [{:keys [path ord external?]} group]
-            (snapshot/set-file-unit! w p path (ids path) {:ord ord :external? external?})))))))
+                 (if (.isFile f)
+                   (assoc (file-placement ctx (.getCanonicalPath f)) :path (.getCanonicalPath f))
+                   {:path path :gone? true}))
+        ;; files outside the project's dirs (:mode nil) are not part of it
+        groups (vec (for [[[mode config] group] (group-by (juxt :mode :config) (filter :mode placed))
+                          :let [placement (first group)]]
+                      {:mode mode :config config :group group
+                       :known (into {} (for [{:keys [path]} group]
+                                         [path (some->> (file-unit-key ix placement path) (writer/unit-id c))]))}))]
+    {:analysis (future
+                 (mapv (fn [{:keys [mode config known]}]
+                         (analyze/analyze-files (vec (keep (fn [[path u]] (when-not u path)) known))
+                                                {:config config :mode mode :shards shards}))
+                       groups))
+     :write (fn [analysis]
+              (doseq [{:keys [path gone?]} placed :when gone?]
+                (snapshot/remove-file! w p path))
+              (doseq [[{:keys [group known]} fresh] (map vector groups analysis)]
+                (let [fresh-ids (writer/write-units! w (map (juxt :unit-key :elements) fresh))
+                      ids (merge (into {} (filter second) known)
+                                 (zipmap (map :path fresh) fresh-ids))]
+                  (writer/with-write-tx w
+                    (doseq [{:keys [path ord external?]} group]
+                      (snapshot/set-file-unit! w p path (ids path) {:ord ord :external? external?}))))))}))
 
 (defn- delete-files! [{:keys [w]} p paths]
   (doseq [path paths] (snapshot/remove-file! w p path)))
 
-(defn- index-jars!
+(defn- jars-job
+  "Analyze jars (those not indexed yet) and link them into the project.
+  Returns a job: {:analysis (a future) :write (fn [analysis])}."
   [{:keys [c w cache-dir shards] :as ix} p paths]
   (let [{:keys [jars jar-context]} (context ix p)
         ord-of (into {} (map (fn [[ord path]] [path ord])) jars)
-        todo (for [path paths
-                   :let [ord (ord-of path)]
-                   ;; a jar no longer on the classpath: nothing to do
-                   :when ord
-                   :let [config (kc/jar-config! cache-dir jar-context path)
-                         h (fingerprint/content-hash! c path)]]
-               {:path path :ord ord :config config :hash h
-                :jar-id (snapshot/jar-id c (analyze/jar-key h config))})
-        analyzed (analyze/analyze-jars (mapv :path (remove :jar-id todo))
+        todo (vec (for [path paths
+                        :let [ord (ord-of path)]
+                        ;; a jar no longer on the classpath: nothing to do
+                        :when ord
+                        :let [config (kc/jar-config! cache-dir jar-context path)
+                              h (fingerprint/content-hash! c path)]]
+                    {:path path :ord ord :config config :hash h
+                     :jar-id (snapshot/jar-id c (analyze/jar-key h config))}))]
+    {:analysis (future
+                 (analyze/analyze-jars (mapv :path (remove :jar-id todo))
                                        {:configs (into {} (map (juxt :path :config)) todo)
                                         :jar-hashes (into {} (map (juxt :path :hash)) todo)
-                                        :shards shards})
-        written (into {} (for [{:keys [jar jar-key entries]} analyzed]
-                           [jar (snapshot/write-jar! w jar-key (map (juxt :entry-path :unit-key :elements) entries))]))]
-    (doseq [{:keys [path ord jar-id]} todo]
-      (snapshot/link-jar! w p ord (or jar-id (written path))))))
+                                        :shards shards}))
+     :write (fn [analyzed]
+              (let [written (into {} (for [{:keys [jar jar-key entries]} analyzed]
+                                       [jar (snapshot/write-jar! w jar-key (map (juxt :entry-path :unit-key :elements) entries))]))]
+                (doseq [{:keys [path ord jar-id]} todo]
+                  (snapshot/link-jar! w p ord (or jar-id (written path))))))}))
 
 (defn- index-dep-files!
   [{:keys [c w cache-dir shards] :as ix} p paths]
@@ -205,38 +223,87 @@
                        (.getResultCode ^org.sqlite.SQLiteException t))))
         (take-while some? (iterate #(.getCause ^Throwable %) e))))
 
-(defn step!
-  "Process one batch from the queue. Returns the batch, nil when the queue
-  is empty, or :retry when the machine failed (a full disk): the batch
-  stays queued, to try again later."
-  [{:keys [c] :as ix}]
-  (let [batch (queue/next-batch c {})]
-    (when (seq batch)
-      (let [{:keys [project-id kind]} (first batch)
-            paths (mapv :path batch)
-            log #(binding [*out* *err*]
-                   (println "csl:" % kind (count paths) "item(s) of project" project-id ":" (ex-message %2)))]
-        (try
-          (case kind
-            :sync (sync-project! ix project-id)
-            :file (index-files! ix project-id paths)
-            :delete (delete-files! ix project-id paths)
-            :jar (index-jars! ix project-id paths)
-            :dep-file (index-dep-files! ix project-id paths))
+(defn- failed!
+  "A batch failed with `e`. A machine failure keeps it queued (:retry); bad
+  input is dropped, so it can't stop the daemon or be retried forever."
+  [{:keys [c]} batch ^Throwable e]
+  (let [{:keys [project-id kind]} (first batch)
+        log #(binding [*out* *err*]
+               (println "csl:" % kind (count batch) "item(s) of project" project-id ":" (ex-message e)))]
+    (if (environment-failure? e)
+      (do (log "will retry") :retry)
+      (do (log "dropped")
           (queue/done! c batch)
-          batch
-          (catch Exception e
-            (if (environment-failure? e)
-              (do (log "will retry" e) :retry)
-              ;; the input itself fails: drop it, so it can't stop the
-              ;; daemon or be retried forever
-              (do (log "dropped" e)
-                  (queue/done! c batch)
-                  batch))))))))
+          batch))))
+
+(def ^:private pipelined-kinds #{:file :jar})
+
+(defn- start!
+  "Prepare a :file or :jar batch and start its analysis."
+  [ix {:keys [project-id kind]} batch]
+  (let [paths (mapv :path batch)]
+    {:batch batch
+     :job (try ((case kind :file files-job :jar jars-job) ix project-id paths)
+               (catch Exception e {:error e}))}))
+
+(defn- finish!
+  "Write a started batch once its analysis is done. Returns the batch, or
+  :retry."
+  [{:keys [c] :as ix} {:keys [batch job]}]
+  (try
+    (when-let [e (:error job)] (throw e))
+    ((:write job) @(:analysis job))
+    (queue/done! c batch)
+    batch
+    (catch java.util.concurrent.ExecutionException e (failed! ix batch (or (.getCause e) e)))
+    (catch Exception e (failed! ix batch e))))
+
+(defn- run-batch!
+  "Process a batch of a kind that isn't pipelined. Returns the batch, or
+  :retry."
+  [{:keys [c] :as ix} batch]
+  (let [{:keys [project-id kind]} (first batch)
+        paths (mapv :path batch)]
+    (try
+      (case kind
+        :sync (sync-project! ix project-id)
+        :delete (delete-files! ix project-id paths)
+        :dep-file (index-dep-files! ix project-id paths))
+      (queue/done! c batch)
+      batch
+      (catch Exception e (failed! ix batch e)))))
+
+(defn step!
+  "Advance the queue by one batch. Returns something truthy while there is
+  work (:retry when the machine failed, a full disk: the batch stays
+  queued, to try again later), nil when the queue is empty and nothing is
+  in flight.
+
+  :file and :jar batches are pipelined: the next one is prepared and its
+  analysis started before the one in flight is written."
+  [{:keys [c batch-sizes in-flight] :as ix}]
+  (let [current @in-flight
+        batch (queue/next-batch c batch-sizes (map queue/request-key (:batch current)))
+        head (first batch)
+        started (when (and head (pipelined-kinds (:kind head))) (start! ix head batch))
+        finished (when current (finish! ix current))]
+    (cond
+      (= :retry finished)
+      ;; the batch just started is abandoned too: its rows stay queued
+      (do (reset! in-flight nil) :retry)
+
+      started
+      (do (reset! in-flight started) (or finished (:batch started)))
+
+      head
+      (do (reset! in-flight nil) (run-batch! ix batch))
+
+      :else
+      (do (reset! in-flight nil) finished))))
 
 (defn run-until-idle!
-  "Process batches until the queue is empty (nil), or the machine fails
-  (:retry)."
+  "Process batches until the queue is empty and nothing is in flight (nil),
+  or the machine fails (:retry)."
   [ix]
   (loop []
     (let [r (step! ix)]

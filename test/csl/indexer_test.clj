@@ -97,3 +97,31 @@
           (queue/enqueue! c p :sync "" 1)
           (indexer/run-until-idle! ix))
         (is (zero? @analyzed))))))
+
+(deftest analysis-overlaps-writing
+  ;; while one batch is written, the next one is already being analyzed
+  (let [root (project! {"deps.edn" "{:paths [\"src\"]}"
+                        "src/app/a.clj" "(ns app.a)" "src/app/b.clj" "(ns app.b)" "src/app/c.clj" "(ns app.c)"})]
+    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir) :batch-sizes {:file 1}})]
+      (let [c (:c ix)
+            p (sync-project! ix root)
+            events (atom [])
+            now #(System/nanoTime)
+            real-analyze csl.analyze/analyze-files
+            real-write csl.writer/write-units!]
+        (doseq [f ["a" "b" "c"]]
+          (spit (io/file root (str "src/app/" f ".clj")) (str "(ns app." f ") (defn changed [] 1)"))
+          (queue/enqueue! c p :file (str root "/src/app/" f ".clj") 1))
+        (with-redefs [csl.analyze/analyze-files (fn [paths opts]
+                                                  (swap! events conj [:analyze (.getName (io/file (first paths))) (now)])
+                                                  (Thread/sleep 300)
+                                                  (real-analyze paths opts))
+                      csl.writer/write-units! (fn [w units]
+                                                (let [r (real-write w units)]
+                                                  (swap! events conj [:written (count units) (now)])
+                                                  r))]
+          (indexer/run-until-idle! ix))
+        (let [at (fn [kind name] (some (fn [[k n t]] (when (and (= k kind) (= n name)) t)) @events))
+              writes (map last (filter #(= :written (first %)) @events))]
+          (is (< (at :analyze "b.clj") (first writes)) "b's analysis began before a was written")
+          (is (contains? (visible-defs c p) "app.c/changed")))))))
