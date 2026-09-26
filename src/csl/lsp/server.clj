@@ -195,7 +195,8 @@
     (client/ensure-daemon! opts)
     (reset! client-c (db/open-client db))
     (reset! reader (db/open-reader db))
-    (swap! (:opts-atom state) merge (select-keys (:initializationOptions params) [:dependency-scheme]))
+    (swap! (:opts-atom state) merge (select-keys (:initializationOptions params) [:dependency-scheme])
+           {:progress? (boolean (get-in params [:capabilities :window :workDoneProgress]))})
     (reset! projects (vec (for [root (roots params)]
                             {:root root :p (snapshot/ensure-project! @client-c root)})))
     (doseq [{:keys [p]} @projects] (enqueue! state p :sync "" 1))
@@ -217,10 +218,53 @@
                      :registerOptions {:watchers [{:globPattern "**/*.{clj,cljs,cljc,cljd,edn,bb}"}
                                                   {:globPattern "**/project.clj"}]}}]}}))
 
+(defn- pending-total [c projects]
+  (reduce + (map #(queue/pending-count c (:p %)) projects)))
+
+(defn- report-progress!
+  "While the server runs: report indexing as LSP work-done progress, from
+  the queue's pending counts. Uses its own connection (JDBC connections are
+  not shared between threads)."
+  [{:keys [send! projects running? opts]}]
+  (future
+    (try
+      (with-open [c (db/open-reader (:db (daemon/paths (:home opts))))]
+        (loop [n 0 token nil begun? false shown nil]
+          (when @running?
+            (Thread/sleep 300)
+            (let [pending (pending-total c @projects)]
+              (cond
+                (and (pos? pending) (nil? token))
+                (let [token (str "csl-indexing-" n)]
+                  (send! {:jsonrpc "2.0" :id (str "csl-progress-" n) :method "window/workDoneProgress/create"
+                          :params {:token token}})
+                  (recur (inc n) token false nil))
+
+                ;; begin a tick after asking for the token, so the client has it
+                (and token (not begun?))
+                (do (send! {:jsonrpc "2.0" :method "$/progress"
+                            :params {:token token :value {:kind "begin" :title "Indexing" :cancellable false
+                                                          :message (str pending " pending")}}})
+                    (recur n token true pending))
+
+                (and token (zero? pending))
+                (do (send! {:jsonrpc "2.0" :method "$/progress"
+                            :params {:token token :value {:kind "end" :message "Indexed"}}})
+                    (recur n nil false nil))
+
+                (and token (not= pending shown))
+                (do (send! {:jsonrpc "2.0" :method "$/progress"
+                            :params {:token token :value {:kind "report" :message (str pending " pending")}}})
+                    (recur n token true pending))
+
+                :else (recur n token begun? shown))))))
+      (catch Exception e (log "progress reporting stopped:" (ex-message e))))))
+
 (defn- handle-notification [{:keys [buffers] :as state} {:keys [method params]}]
   (let [doc-path #(convert/uri->path (get-in params [:textDocument :uri]))]
     (case method
-      "initialized" (watch-files! state)
+      "initialized" (do (watch-files! state)
+                        (when (:progress? (:opts state)) (report-progress! state)))
       "textDocument/didOpen" (let [path (doc-path)]
                                (buffers/open! buffers path (get-in params [:textDocument :text]))
                                (when-let [{:keys [p]} (project-of state path)] (enqueue! state p :file path 0)))
@@ -243,6 +287,7 @@
                :client-c (atom nil)
                :reader (atom nil)
                :buffers (buffers/store)
+               :running? (atom true)
                :send! #(rpc/write-message! out %)}
         state-now #(assoc state :opts @opts-atom)
         reply! (fn [id m] ((:send! state) (merge {:jsonrpc "2.0" :id id} m)))]
@@ -270,5 +315,6 @@
                     (reply! id {:error {:code -32603 :message (str (ex-message e))}})))
                 (recur (or shutdown? (= "shutdown" method)))))))
       (finally
+        (reset! (:running? state) false)
         (doseq [a [(:client-c state) (:reader state)]]
           (some-> ^java.sql.Connection @a .close))))))

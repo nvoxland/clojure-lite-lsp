@@ -26,15 +26,18 @@
         srv (future (server/run! {:in server-in :out from-server :home home :version "test" :spawn! spawn!}))
         ids (atom 0)
         responses (atom {})
+        notifications (atom [])
         reader (future
                  (loop []
                    (when-let [msg (rpc/read-message client-in)]
                      (cond
                        ;; a request from the server (registerCapability, progress): accept
-                       (and (:method msg) (:id msg)) (rpc/write-message! to-server {:jsonrpc "2.0" :id (:id msg) :result nil})
-                       (:id msg) (swap! responses assoc (:id msg) msg))
+                       (and (:method msg) (:id msg)) (do (swap! notifications conj msg)
+                                                         (rpc/write-message! to-server {:jsonrpc "2.0" :id (:id msg) :result nil}))
+                       (:id msg) (swap! responses assoc (:id msg) msg)
+                       :else (swap! notifications conj msg))
                      (recur))))]
-    {:server srv :reader reader :home home
+    {:server srv :reader reader :home home :notifications notifications
      :notify! (fn [method params] (rpc/write-message! to-server {:jsonrpc "2.0" :method method :params params}))
      :request! (fn [method params]
                  (let [id (swap! ids inc)]
@@ -141,3 +144,18 @@
       (is (nil? (request! "shutdown" nil)))
       (notify! "exit" nil)
       (is (= 0 (deref (:server client) 10000 :timeout))))))
+
+(deftest indexing-progress
+  (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a) (defn f [] 1)"})
+        {:keys [request! notify! notifications] :as client} (start! (str (tu/temp-dir)))]
+    (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {:window {:workDoneProgress true}}})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (Thread/sleep 1500)
+    (let [kinds (->> @notifications (filter #(= "$/progress" (:method %))) (map (comp :kind :value :params)))]
+      (is (some #{"window/workDoneProgress/create"} (map :method @notifications)))
+      (is (= "begin" (first kinds)))
+      (is (= "end" (last kinds))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))
