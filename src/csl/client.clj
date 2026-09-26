@@ -46,10 +46,23 @@
      "-Xmx768m" "--enable-native-access=ALL-UNNAMED" "-cp" (System/getProperty "java.class.path")
      "clojure.main" "-m" "csl.main" "index"]))
 
+(def ^:private max-log-bytes (* 5 1024 1024))
+
+(defn rotate-log!
+  "Start a new log at `path` once it is over 5 MB, keeping the previous
+  one as path.1."
+  [path]
+  (let [f (io/file path)]
+    (when (> (.length f) max-log-bytes)
+      (let [old (io/file (str path ".1"))]
+        (.delete old)
+        (.renameTo f old)))))
+
 (defn spawn-daemon!
   "Start a detached daemon process logging to the home dir's daemon.log."
   [home]
   (let [{:keys [log]} (daemon/paths home)]
+    (rotate-log! log)
     (-> (ProcessBuilder. ^java.util.List (daemon-command))
         (.redirectInput ProcessBuilder$Redirect/PIPE)
         (.redirectErrorStream true)

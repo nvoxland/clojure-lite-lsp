@@ -113,3 +113,31 @@
         (gc/collect! w {})
         (is (zero? (count-of c "dep_file")))
         (is (zero? (count-of c "unit")))))))
+
+(defn sym? [c text] (some? (db/query-value c "SELECT id FROM sym WHERE text = ?" text)))
+
+(deftest symbols-nothing-refers-to-are-swept
+  (with-writer
+    (fn [w c]
+      (let [p (snapshot/ensure-project! c "/a")]
+        (file! w p "/a/kept.clj" "(ns kept) (defn shared-name [] 1)")
+        (file! w p "/a/gone.clj" "(ns gone) (defn shared-name [] 2) (defn only-in-gone [] (kept/shared-name))")
+        (snapshot/remove-file! w p "/a/gone.clj")
+        (gc/collect! w {})
+        (is (not (sym? c "only-in-gone")))
+        (is (not (sym? c "gone")))
+        (is (sym? c "shared-name"))
+        (is (sym? c "kept"))
+        (testing "the writer interns a swept name again"
+          (file! w p "/a/back.clj" "(ns back) (defn only-in-gone [] 3)")
+          (is (sym? c "only-in-gone")))))))
+
+(deftest fingerprints-of-files-no-project-has-are-pruned
+  (with-writer
+    (fn [w c]
+      (let [p (snapshot/ensure-project! c "/a")]
+        (doseq [path ["/a/kept.clj" "/a/gone.clj" "/elsewhere/x.clj"]]
+          (db/execute! c "INSERT INTO fingerprint VALUES (?, 1, 1, X'00')" path))
+        (file! w p "/a/kept.clj" "(ns kept)")
+        (gc/collect! w {})
+        (is (= [["/a/kept.clj"]] (db/query c "SELECT path FROM fingerprint")))))))

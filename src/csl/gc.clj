@@ -69,6 +69,26 @@
       (.delete (java.io.File. ^String path)))
     (count rows)))
 
+(defn- sweep-symbols!
+  "Symbols nothing refers to any more. An anti-join over every analysis
+  table, so it only runs after something was dropped."
+  [c]
+  (db/execute! c "DELETE FROM sym WHERE id NOT IN (
+                    SELECT ns FROM definition UNION SELECT name FROM definition
+                    UNION SELECT defined_by FROM definition UNION SELECT defined_by_lint_as FROM definition
+                    UNION SELECT to_ns FROM usage UNION SELECT name FROM usage
+                    UNION SELECT from_ns FROM usage UNION SELECT from_var FROM usage
+                    UNION SELECT ns FROM file_element UNION SELECT name FROM file_element
+                    UNION SELECT alias FROM file_element
+                    UNION SELECT name FROM java_class)"))
+
+(defn- prune-fingerprints!
+  "Content-hash memos of paths no project's files or jars use (e.g. a
+  deleted worktree's)."
+  [c]
+  (db/execute! c "DELETE FROM fingerprint WHERE path NOT IN (
+                    SELECT path FROM project_file UNION SELECT path FROM project_jar)"))
+
 (defn collect!
   "Collect garbage through writer `w`. Returns what was dropped:
   {:projects :jars :units}."
@@ -80,8 +100,10 @@
                        dead (map first (db/query c "SELECT id FROM unit WHERE id NOT IN (SELECT unit_id FROM project_unit)
                                                     AND id NOT IN (SELECT unit_id FROM dep_file)"))]
                    (doseq [us (partition-all batch dead)] (delete-units! c us))
+                   (when (pos? (+ projects jars (count dead))) (sweep-symbols! c))
+                   (prune-fingerprints! c)
                    {:projects projects :jars jars :units (count dead)}))]
-    ;; the writer caches searchable names: forget the ones just deleted
+    ;; the writer caches symbols and searchable names: forget deleted ones
     (writer/reload-state! w)
     (db/pragma! c "incremental_vacuum")
     result))
