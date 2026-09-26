@@ -14,6 +14,11 @@
    [clj-kondo.impl.config :as kondo-config]
    [clojure.string :as str]))
 
+(def version
+  "Bump when normalization changes what it produces: it is part of every
+  unit key, so all analysis is redone."
+  1)
+
 (def project-analysis-options
   {:arglists true
    :locals true
