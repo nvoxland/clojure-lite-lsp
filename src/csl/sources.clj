@@ -27,7 +27,12 @@
       (aset-byte bs i (unchecked-byte (Integer/parseInt (subs s (* 2 i) (+ 2 (* 2 i))) 16))))
     bs))
 
-(defn sources-dir ^File [home] (io/file home "sources"))
+(defn sources-dir
+  "Where extracted sources live, canonical: the paths handed to editors and
+  the ones recognized from them must agree even when the home dir is
+  reached through a symlink (macOS's /var -> /private/var)."
+  ^File [home]
+  (.getCanonicalFile (io/file home "sources")))
 
 (defn extract!
   "The path of jar location {:path jar :entry :jar-hash} extracted as a

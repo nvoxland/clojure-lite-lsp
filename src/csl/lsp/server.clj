@@ -26,6 +26,13 @@
 
 (set! *warn-on-reflection* true)
 
+(defn- client-path
+  "The canonical path of a file: URI from the editor (nil for other URIs).
+  Editors send paths as the project was opened, possibly through symlinks;
+  the index has canonical ones."
+  [uri]
+  (some-> ^String (convert/uri->path uri) (File.) (.getCanonicalPath)))
+
 (defn- log [& xs]
   (binding [*out* *err*] (apply println "csl:" xs)))
 
@@ -68,7 +75,7 @@
 (defn- text-position
   "The request's document path and indexed [row col], or nil."
   [{:keys [buffers]} {:keys [textDocument position]}]
-  (when-let [path (convert/uri->path (:uri textDocument))]
+  (when-let [path (client-path (:uri textDocument))]
     (when-let [[row col] (buffers/->indexed buffers path (convert/->kondo position))]
       [path row col])))
 
@@ -185,7 +192,7 @@
           {:contents {:kind "markdown" :value (str/join "\n\n---\n\n" (map hover-markdown hs))}})))
 
     "textDocument/documentSymbol"
-    (let [path (convert/uri->path (get-in params [:textDocument :uri]))]
+    (let [path (client-path (get-in params [:textDocument :uri]))]
       (if-let [{:keys [p]} (project-of state path)] (document-symbols state path p) []))
 
     "workspace/symbol"
@@ -201,7 +208,7 @@
 
     "callHierarchy/incomingCalls"
     (let [{:keys [ns name]} (get-in params [:item :data])
-          path (convert/uri->path (get-in params [:item :uri]))]
+          path (client-path (get-in params [:item :uri]))]
       (if-let [{:keys [p]} (project-of state path)]
         (vec (keep (fn [{:keys [caller calls]}]
                      (when-let [item (call-item state caller)]
@@ -211,7 +218,7 @@
 
     "callHierarchy/outgoingCalls"
     (let [{:keys [ns name]} (get-in params [:item :data])
-          path (convert/uri->path (get-in params [:item :uri]))]
+          path (client-path (get-in params [:item :uri]))]
       (if-let [{:keys [p]} (project-of state path)]
         (vec (keep (fn [{:keys [callee calls]}]
                      (when-let [item (call-item state callee)]
@@ -307,7 +314,7 @@
       (catch Exception e (log "progress reporting stopped:" (ex-message e))))))
 
 (defn- handle-notification [{:keys [buffers] :as state} {:keys [method params]}]
-  (let [doc-path #(convert/uri->path (get-in params [:textDocument :uri]))
+  (let [doc-path #(client-path (get-in params [:textDocument :uri]))
         ;; documents that aren't files (jar: entries) aren't tracked yet
         method (if (and (str/starts-with? method "textDocument/") (nil? (doc-path))) ::ignored method)]
     (case method
@@ -325,7 +332,7 @@
       "textDocument/didClose" (buffers/close! buffers (doc-path))
       "workspace/didChangeWatchedFiles" (doseq [{:keys [uri type]} (:changes params)
                                                 :when (str/starts-with? uri "file:")]
-                                          (file-changed! state (convert/uri->path uri) (= 3 type)))
+                                          (file-changed! state (client-path uri) (= 3 type)))
       nil)))
 
 (defn run!

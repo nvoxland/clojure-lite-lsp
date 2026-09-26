@@ -11,7 +11,8 @@
         j (jar! {"acme/core.clj" "(ns acme.core)\n(defn f [] 1)\n"})
         loc {:path j :entry "acme/core.clj" :jar-hash (byte-array [1 2 255])}
         path (sources/extract! home loc)]
-    (is (= (str (io/file home "sources" "0102ff" "acme" "core.clj")) path))
+    ;; canonical, as editors send them back (the temp dir is under a symlink)
+    (is (= (.getCanonicalPath (io/file home "sources" "0102ff" "acme" "core.clj")) path))
     (is (= "(ns acme.core)\n(defn f [] 1)\n" (slurp path)))
     (is (not (.canWrite (io/file path))) "read-only: it's the library's source, not the user's")
     (testing "again: the same file, not rewritten"

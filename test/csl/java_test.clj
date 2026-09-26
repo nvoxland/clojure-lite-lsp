@@ -26,7 +26,7 @@
     (io/copy (io/file (jar! {"acme/Widget.class" "binary"})) classes)
     (io/copy (io/file (jar! {"acme/Widget.java" widget})) sources)
     (let [{:keys [path pos]} (java/source-location {:home home :class-jars [(str classes)]} "acme.Widget")]
-      (is (.startsWith ^String path (str home "/sources/")) "extracted like library files")
+      (is (.startsWith ^String path (str (.getCanonicalPath (io/file home)) "/sources/")) "extracted like library files")
       (is (= widget (slurp path)))
       (is (= [4 14] (vec (take 2 pos)))))))
 

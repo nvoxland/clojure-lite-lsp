@@ -189,7 +189,7 @@
     (let [[{:keys [uri range]}] (request! "textDocument/definition" (at root "src/app/a.clj" "keep"))
           core (convert/uri->path uri)
           core-text (slurp core)]
-      (is (str/starts-with? core (str home "/sources/")))
+      (is (str/starts-with? core (str (.getCanonicalPath (io/file home)) "/sources/")))
       (is (str/ends-with? core "/clojure/core.clj"))
       (is (str/includes? (nth (str/split-lines core-text) (get-in range [:start :line])) "keep"))
       (testing "opened, the library file is analyzed fully"
@@ -245,3 +245,24 @@
           (request! "shutdown" nil)
           (notify! "exit" nil)
           (deref server 10000 :timeout))))))
+
+(deftest a-project-opened-through-a-symlink
+  ;; editors send paths as the user opened them; the index has canonical ones
+  (let [real (project! {"deps.edn" "{:paths [\"src\"]}"
+                        "src/app/a.clj" "(ns app.a)\n(defn f [] 1)\n"
+                        "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/f)\n"})
+        link (str (tu/temp-dir) "/linked-project")
+        _ (java.nio.file.Files/createSymbolicLink (.toPath (io/file link)) (.toPath (io/file real))
+                                                  (make-array java.nio.file.attribute.FileAttribute 0))
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))]
+    (request! "initialize" {:rootUri (convert/path->uri link) :capabilities {}})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (let [b (slurp (io/file link "src/app/b.clj"))]
+      (notify! "textDocument/didOpen" {:textDocument {:uri (uri link "src/app/b.clj") :languageId "clojure" :version 1 :text b}})
+      (is (= ["a.clj"] (map #(.getName (io/file (convert/uri->path (:uri %))))
+                            (request! "textDocument/definition" {:textDocument {:uri (uri link "src/app/b.clj")}
+                                                                 :position (pos-of b "a/f")})))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))
