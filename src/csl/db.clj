@@ -93,13 +93,22 @@
         (execute! c "INSERT INTO meta (key, value) VALUES ('schema_version', ?)"
                   (str schema/version))))))
 
-(defn- connect ^Connection [url]
-  (DriverManager/getConnection ^String url))
+(defn- connect
+  "Open a connection. Writing connections begin transactions IMMEDIATE:
+  taking the write lock up front is where the busy timeout applies. A
+  deferred transaction that reads and then writes after another
+  connection committed fails at once with SQLITE_BUSY_SNAPSHOT instead,
+  and the daemon does exactly that (checks what exists, then writes)
+  while clients enqueue."
+  ^Connection [url & {:keys [writes?]}]
+  (DriverManager/getConnection ^String url
+                               (doto (java.util.Properties.)
+                                 (.setProperty "transaction_mode" (if writes? "IMMEDIATE" "DEFERRED")))))
 
 (defn open-writer
   "Open the index for writing, creating or rebuilding the schema as needed."
   ^Connection [path]
-  (let [c (connect (str "jdbc:sqlite:" path))]
+  (let [c (connect (str "jdbc:sqlite:" path) :writes? true)]
     (pragma! c "busy_timeout = 5000")
     (pragma! c "auto_vacuum = INCREMENTAL") ; only takes effect on a new file
     (pragma! c "journal_mode = WAL")
@@ -108,6 +117,18 @@
     (pragma! c "synchronous = NORMAL")
     (pragma! c "cache_size = -65536")
     (ensure-schema! c)
+    c))
+
+(defn open-client
+  "Open the index for a csl lsp process's few writes (enqueueing, project
+  registration, stop requests). Never creates or rebuilds the schema: that
+  is the daemon's job, and a client of another version must not drop
+  tables from under a running daemon."
+  ^Connection [path]
+  ;; no journal_mode here: WAL is persistent (the daemon sets it), and
+  ;; changing it can fail at once while the daemon creates the database
+  (let [c (connect (str "jdbc:sqlite:" path) :writes? true)]
+    (pragma! c "busy_timeout = 5000")
     c))
 
 (defn open-reader

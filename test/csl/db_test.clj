@@ -45,3 +45,19 @@
         (is (thrown? java.sql.SQLException
                      (db/execute! r "INSERT INTO sym (id, text) VALUES (1, 'x')")))
         (is (pos? (db/query-value r "PRAGMA mmap_size")))))))
+
+(deftest a-transaction-that-reads-then-writes-waits-for-other-writers
+  ;; the daemon checks what exists, then writes, while clients enqueue.
+  ;; A deferred transaction whose snapshot went stale fails at once with
+  ;; SQLITE_BUSY (the busy timeout doesn't apply); an immediate one waits.
+  (let [path (tu/temp-db-path)]
+    (with-open [daemon (db/open-writer path)
+                client (db/open-client path)]
+      (let [other-write (promise)]
+        (db/with-tx daemon
+          (db/query daemon "SELECT count(*) FROM sym")
+          (deliver other-write (future (db/execute! client "INSERT INTO sym (id, text) VALUES (1, 'client')")))
+          (Thread/sleep 100)
+          (db/execute! daemon "INSERT INTO sym (id, text) VALUES (2, 'daemon')"))
+        (is (= 1 (deref @other-write 10000 :timeout)))
+        (is (= 2 (db/query-value daemon "SELECT count(*) FROM sym")))))))
