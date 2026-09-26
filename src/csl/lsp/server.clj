@@ -200,7 +200,7 @@
     (reset! projects (vec (for [root (roots params)]
                             {:root root :p (snapshot/ensure-project! @client-c root)})))
     (doseq [{:keys [p]} @projects] (enqueue! state p :sync "" 1))
-    {:capabilities {:textDocumentSync {:openClose true :change 1 :save {:includeText false}}
+    {:capabilities {:textDocumentSync {:openClose true :change 2 :save {:includeText false}}
                     :definitionProvider true
                     :declarationProvider true
                     :implementationProvider true
@@ -270,7 +270,7 @@
       "textDocument/didOpen" (let [path (doc-path)]
                                (buffers/open! buffers path (get-in params [:textDocument :text]))
                                (when-let [{:keys [p]} (project-of state path)] (enqueue! state p :file path 0)))
-      "textDocument/didChange" (buffers/change! buffers (doc-path) (:text (last (:contentChanges params))))
+      "textDocument/didChange" (buffers/change! buffers (doc-path) (:contentChanges params))
       "textDocument/didSave" (let [path (doc-path)]
                                (buffers/saved! buffers path)
                                (when-let [{:keys [p]} (project-of state path)] (enqueue! state p :file path 0)))

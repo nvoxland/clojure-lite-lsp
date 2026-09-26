@@ -49,7 +49,7 @@
     (buffers/open! store path (slurp f))
     (testing "an unchanged buffer maps positions as they are"
       (is (= [2 7] (buffers/->indexed store path [2 7]))))
-    (buffers/change! store path (lines "(ns a)" ";; new" "(defn f [] 1)"))
+    (buffers/change! store path [{:text (lines "(ns a)" ";; new" "(defn f [] 1)")}])
     (testing "edits above shift positions onto the indexed (saved) version"
       (is (= [2 7] (buffers/->indexed store path [3 7])))
       (is (= [3 7 3 8] (buffers/->buffer store path [2 7 2 8])))
@@ -61,3 +61,20 @@
       (is (= [5 5] (buffers/->indexed store "/elsewhere.clj" [5 5]))))
     (buffers/close! store path)
     (is (= [9 1] (buffers/->indexed store path [9 1])))))
+
+(deftest incremental-changes
+  (let [text "(ns a)\n(defn f [] 1)\n"
+        change (fn [t & changes] (reduce buffers/apply-change t changes))]
+    (testing "a range replaced"
+      (is (= "(ns a)\n(defn g [] 1)\n"
+             (change text {:range {:start {:line 1 :character 6} :end {:line 1 :character 7}} :text "g"}))))
+    (testing "an insertion spanning lines, then a deletion"
+      (is (= "(ns a)\n;; x\n(defn f [] 2)\n"
+             (change text
+                     {:range {:start {:line 1 :character 0} :end {:line 1 :character 0}} :text ";; x\n"}
+                     {:range {:start {:line 2 :character 11} :end {:line 2 :character 12}} :text "2"}))))
+    (testing "characters are UTF-16 units, as Java strings count them"
+      (is (= "(def s \"😀\") (def t 1)"
+             (change "(def s \"😀\") (def u 1)" {:range {:start {:line 0 :character 18} :end {:line 0 :character 19}} :text "t"}))))
+    (testing "no range: the whole text"
+      (is (= "new" (change text {:text "new"}))))))

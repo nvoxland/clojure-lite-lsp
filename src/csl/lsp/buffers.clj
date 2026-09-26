@@ -71,8 +71,32 @@
         base (if (.isFile f) (slurp f) text)]
     (swap! store assoc path (entry base text))))
 
-(defn change! [store path text]
-  (swap! store update path #(entry (or (:base %) text) text)))
+(defn- offset
+  "The index in `text` of an LSP position. Characters are UTF-16 units,
+  which is how Java strings count."
+  [^String text {:keys [line character]}]
+  (loop [i 0 l 0]
+    (if (= l line)
+      (min (count text) (+ i character))
+      (let [nl (.indexOf text "\n" (int i))]
+        (if (neg? nl) (count text) (recur (inc nl) (inc l)))))))
+
+(defn apply-change
+  "`text` after one LSP content change: a range replaced, or (no range)
+  the whole text."
+  [text {:keys [range] new-text :text}]
+  (if range
+    (str (subs text 0 (offset text (:start range))) new-text (subs text (offset text (:end range))))
+    new-text))
+
+(defn change!
+  "Apply LSP content changes, in order, to the document at `path`."
+  [store path changes]
+  (swap! store update path
+         (fn [{:keys [base current] :as e}]
+           (when e
+             (let [text (reduce apply-change current changes)]
+               (entry base text))))))
 
 (defn saved!
   "The document was saved: the buffer is now the base."
