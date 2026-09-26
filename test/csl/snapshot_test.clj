@@ -111,6 +111,19 @@
             (snapshot/set-project-jars! w p [])
             (is (= {u 0} (visible c p)))))))))
 
+(deftest a-jar-indexed-later-is-linked-incrementally
+  (with-writer
+    (fn [w c]
+      (let [p (snapshot/ensure-project! c "/src/a")
+            j1 (jar! w "jar1" [["a.clj" "a"] ["shared.clj" "same"]])]
+        (snapshot/set-project-jars! w p [[1 "/m2/jar1.jar" j1] [2 "/m2/jar2.jar" nil]])
+        (let [before (visible c p)
+              j2 (jar! w "jar2" [["b.clj" "b"] ["shared.clj" "same"]])
+              b (db/query-value c "SELECT unit_id FROM jar_entry WHERE jar_id = ? AND entry_path = 'b.clj'" j2)]
+          (snapshot/link-jar! w p 2 j2)
+          (is (= (assoc before b 2) (visible c p)) "the shared unit keeps the earlier position")
+          (is (= j2 (db/query-value c "SELECT jar_id FROM project_jar WHERE project_id = ? AND ord = 2" p))))))))
+
 (deftest projects-share-units-but-not-visibility
   (with-writer
     (fn [w c]

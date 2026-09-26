@@ -60,7 +60,10 @@
 
 (defn- canonical ^String [path] (.getCanonicalPath (io/file path)))
 
-(defn- unit-key [mode config content-hash path]
+(defn unit-key
+  "The key of the unit for a file with `content-hash` at `path` (its
+  extension matters), analyzed in `mode` with `config`."
+  [mode config content-hash path]
   {:content-hash content-hash
    :lang-key (normalize/file-extension path)
    :kondo-version kondo-version
@@ -84,6 +87,14 @@
                     :unit-key (unit-key mode config (fingerprint/sha256 c) p)
                     :elements (get units c [])})))))
 
+(defn jar-key
+  "The key of a jar with `jar-hash` analyzed with `config`."
+  [jar-hash config]
+  {:jar-hash jar-hash
+   :config-hash (:hash config)
+   :kondo-version kondo-version
+   :options-hash (options-hashes :dependency)})
+
 (defn- entry-hashes
   "{entry-path sha256} for the given entries of `jar`."
   [jar entry-paths]
@@ -106,10 +117,7 @@
                                        [(second (str/split filename #"(?<=\.jar):" 2)) els])
                              hashes (entry-hashes j (map first entries))]]
                    {:jar j
-                    :jar-key {:jar-hash (jar-hashes j)
-                              :config-hash (:hash config)
-                              :kondo-version kondo-version
-                              :options-hash (options-hashes :dependency)}
+                    :jar-key (jar-key (jar-hashes j) config)
                     :entries (vec (for [[entry els] (sort-by first entries)]
                                     {:entry-path entry
                                      :unit-key (unit-key :dependency config (hashes entry) entry)

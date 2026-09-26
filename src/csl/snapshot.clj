@@ -60,6 +60,12 @@
       (db/execute! c "DELETE FROM project_file WHERE project_id = ? AND path = ?" p path)
       (refresh-project-unit! c p old))))
 
+(defn jar-id
+  "The id of the jar with `jar-key`, if it has been written."
+  [c {:keys [jar-hash config-hash kondo-version options-hash]}]
+  (db/query-value c "SELECT id FROM jar WHERE jar_hash = ? AND config_hash = ? AND kondo_version = ? AND options_hash = ?"
+                  jar-hash config-hash kondo-version options-hash))
+
 (defn- java-class-entry?
   "An entry whose only content is Java class definitions."
   [[_ _ elements]]
@@ -114,3 +120,22 @@
                         WHERE pj.project_id = ?)
                       GROUP BY unit_id"
                    p p p))))
+
+(defn link-jar!
+  "Record that project `p`'s jar at classpath position `ord` is now
+  indexed as `jar-id`, and make its units visible, without recomputing the
+  project's other visibility."
+  [w p ord jar-id]
+  (writer/with-write-tx w
+    (let [c (:c w)]
+      (db/execute! c "UPDATE project_jar SET jar_id = ? WHERE project_id = ? AND ord = ?" jar-id p ord)
+      (db/execute! c "INSERT INTO project_unit (project_id, unit_id, ord)
+                      SELECT ?, unit_id, ? FROM jar_entry WHERE jar_id = ?
+                      ON CONFLICT (project_id, unit_id) DO UPDATE SET ord = min(ord, excluded.ord)"
+                   p ord jar-id))))
+
+(defn file-paths
+  "Project `p`'s files: {path {:unit-id :external? :ord}}."
+  [c p]
+  (into {} (map (fn [[path u ext ord]] [path {:unit-id u :external? (= 1 ext) :ord ord}]))
+        (db/query c "SELECT path, unit_id, external, ord FROM project_file WHERE project_id = ?" p)))

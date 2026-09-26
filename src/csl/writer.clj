@@ -151,6 +151,11 @@
 (defn- existing-unit [c key-hash]
   (db/query-value c "SELECT id FROM unit WHERE key = ?" key-hash))
 
+(defn unit-id
+  "The id of the unit with `unit-key`, if it has been written."
+  [c unit-key]
+  (existing-unit c (unit-key-hash unit-key)))
+
 (defn write-units!
   "Write a chunk of units in one transaction. `units` is a seq of
   [unit-key elements], where unit-key has :content-hash :lang-key

@@ -159,6 +159,12 @@
   [cache-dir {:keys [closure] :as ctx} jar]
   (materialize! cache-dir (imports (map (:exports ctx) (cons jar (sort (closure jar)))))))
 
+(defn dir-config!
+  "The config dir for an external source dir (e.g. a git dep): its own
+  exports only."
+  [cache-dir dir]
+  (materialize! cache-dir (imports [(exports dir)])))
+
 (defn neutral-config!
   "The config dir with no configuration: clj-kondo's defaults."
   [cache-dir]
