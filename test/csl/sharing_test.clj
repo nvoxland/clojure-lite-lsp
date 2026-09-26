@@ -93,7 +93,9 @@
           (is (contains? (visible-defs c pid1) "acme.x/thing")))
         (testing "a variant lives while a project uses it"
           (db/execute! c "UPDATE project SET last_seen = 0 WHERE id = ?" pid3)
-          (gc/collect! (:w ix) {:project-max-age-ms 1000})
+          ;; p3 was last seen in 1970; p1 just now (a short max age would
+          ;; expire p1 too, as syncing takes more than a moment)
+          (gc/collect! (:w ix) {:project-max-age-ms (* 1000 60 60)})
           (is (contains? (visible-defs c pid1) "acme.x/thing"))
           (is (= (db/query-value c "SELECT count(*) FROM project_jar WHERE project_id = ?" pid1) (count-of c "jar"))
               "only p1's jars (x, y 1.0, and Clojure's own) remain"))))))
