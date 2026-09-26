@@ -161,3 +161,110 @@
   locations."
   [c p path row col]
   (located c p (mapcat #(definition-of c p %) (elements-at c p path row col))))
+
+;;;; references
+
+(defn- usage-rows
+  "Usages of `ns`/`name` of the given kinds that project `p` can see, as
+  things with :unit-id :pos :from-ns :from-var :flags. `project-only?`
+  keeps the project's own files."
+  [c p ns name kinds & {:keys [project-only?]}]
+  (->> (db/query c (str "SELECT u.unit_id, u.name_row, u.name_col, u.name_end_row, u.name_end_col,
+                                fns.text, fv.text, u.flags
+                         FROM usage u
+                         JOIN project_unit pu ON pu.unit_id = u.unit_id AND pu.project_id = ?
+                         LEFT JOIN sym fns ON fns.id = u.from_ns LEFT JOIN sym fv ON fv.id = u.from_var
+                         WHERE u.to_ns = ? AND u.name = ? AND u.kind IN ("
+                        (clojure.string/join "," (map kinds/code kinds)) ")"
+                        (when project-only? " AND pu.ord = 0"))
+                   p (sym-id c ns) (sym-id c name))
+       (mapv (fn [[u nr nc ner nec from-ns from-var flags]]
+               {:unit-id u :pos [nr nc ner nec] :from-ns from-ns :from-var from-var
+                :flags (kinds/bits->flags flags)}))))
+
+(defn- generated-names
+  "The names a definition also defines: a defrecord's and deftype's
+  constructors."
+  [{:keys [name defined-by]}]
+  (case defined-by
+    ("clojure.core/defrecord" "cljs.core/defrecord") [name (str "->" name) (str "map->" name)]
+    ("clojure.core/deftype" "cljs.core/deftype") [name (str "->" name)]
+    [name]))
+
+(defn- var-targets
+  "The var definitions an element means, for references and
+  implementations: itself when it is one, else what it resolves to."
+  [c p {:keys [kind ns name pos] :as el}]
+  (case kind
+    :var-def (or (seq (filter #(= pos (:pos %)) (definitions c p :var-def ns name))) [el])
+    (:var-usage :symbol-usage) (or (seq (var-definitions c p el))
+                                   ;; unresolved: its own name is all we know
+                                   [(select-keys el [:ns :name])])
+    []))
+
+(defn- var-references [c p el include-declaration?]
+  (mapcat (fn [{:keys [ns name] :as target}]
+            (let [recursive? #(and (= ns (:from-ns %)) (= name (:from-var %)))]
+              (concat
+               (->> (generated-names target)
+                    (mapcat #(usage-rows c p ns % [:var-usage :symbol-usage]))
+                    (remove #(and (not include-declaration?) (recursive? %))))
+               (when (and include-declaration? (:unit-id target)) [target]))))
+          (var-targets c p el)))
+
+(defn- references-of [c p {:keys [kind ns name unit-id local-id] :as el} include-declaration?]
+  (case kind
+    (:var-def :var-usage :symbol-usage) (var-references c p el include-declaration?)
+
+    :protocol-impl (concat (usage-rows c p ns name [:var-usage :symbol-usage])
+                           (when include-declaration? [el]))
+
+    (:keyword-usage :keyword-def)
+    (concat (usage-rows c p ns name [:keyword-usage] :project-only? true)
+            (when include-declaration? (definitions c p :keyword-def ns name)))
+
+    (:local :local-usage)
+    (->> (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                          " WHERE fe.unit_id = ? AND fe.local_id = ? AND fe.kind IN (?, ?)")
+                   unit-id local-id (kinds/code :local-usage)
+                   (kinds/code (if include-declaration? :local :local-usage)))
+         (map row->element))
+
+    (:ns-def :ns-usage :ns-alias)
+    (let [target (if (= :ns-def kind) name ns)]
+      (concat (usage-rows c p target target [:ns-usage :ns-alias])
+              (when include-declaration? (definitions c p :ns-def nil target))))
+
+    []))
+
+(defn references
+  "Find references from a position in project `p`'s file at `path`:
+  locations."
+  [c p path row col {:keys [include-declaration?]}]
+  (located c p (mapcat #(references-of c p % include-declaration?) (elements-at c p path row col))))
+
+;;;; implementations
+
+(def ^:private protocol-definers
+  #{"clojure.core/defprotocol" "cljs.core/defprotocol" "clojure.core/definterface"})
+
+(def ^:private multimethod-definers #{"clojure.core/defmulti" "cljs.core/defmulti"})
+
+(defn- implementations-of [c p el]
+  (mapcat (fn [{:keys [ns name defined-by]}]
+            (cond
+              (protocol-definers defined-by)
+              ;; a method's impls; for the protocol itself, where it is
+              ;; extended (extend-type, extend-protocol, reify, ...)
+              (or (seq (definitions c p :protocol-impl ns name))
+                  (usage-rows c p ns name [:var-usage :symbol-usage]))
+
+              (multimethod-definers defined-by)
+              (filter #(:defmethod (:flags %)) (usage-rows c p ns name [:var-usage]))))
+          (var-targets c p el)))
+
+(defn implementations
+  "Find implementations from a position in project `p`'s file at `path`:
+  locations."
+  [c p path row col]
+  (located c p (mapcat #(implementations-of c p %) (elements-at c p path row col))))
