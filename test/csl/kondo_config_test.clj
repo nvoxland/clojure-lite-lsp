@@ -26,9 +26,13 @@
   (jar! (merge {(str "META-INF/maven/" group "/" artifact "/pom.properties")
                 (str "groupId=" group "\nartifactId=" artifact "\nversion=1.0\n")
                 (str "META-INF/maven/" group "/" artifact "/pom.xml")
-                (str "<project><dependencies>"
+                ;; a valid Maven model: tools.deps reads poms inside local jars
+                (str "<project><modelVersion>4.0.0</modelVersion>"
+                     "<groupId>" group "</groupId><artifactId>" artifact "</artifactId><version>1.0</version>"
+                     "<dependencies>"
                      (apply str (for [[g a] deps]
-                                  (str "<dependency><groupId>" g "</groupId><artifactId>" a "</artifactId></dependency>")))
+                                  (str "<dependency><groupId>" g "</groupId><artifactId>" a "</artifactId>"
+                                       "<version>1.0</version></dependency>")))
                      "</dependencies></project>")}
                extra)))
 
