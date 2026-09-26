@@ -1,0 +1,102 @@
+(ns csl.kondo-config-test
+  (:require
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is testing]]
+   [csl.classpath-test :refer [project!]]
+   [csl.kondo-config :as kc]
+   [csl.test-util :as tu])
+  (:import
+   [java.util.jar JarEntry JarOutputStream]))
+
+(defn jar!
+  "A jar file with `entries` ({path content})."
+  [entries]
+  (let [f (io/file (tu/temp-dir) "lib.jar")]
+    (with-open [out (JarOutputStream. (io/output-stream f))]
+      (doseq [[path content] entries]
+        (.putNextEntry out (JarEntry. ^String path))
+        (.write out (.getBytes ^String content "UTF-8"))
+        (.closeEntry out)))
+    (str f)))
+
+(defn maven-jar!
+  "A jar for group/artifact that depends on `deps` ([group artifact]) and
+  has `extra` entries."
+  [group artifact deps extra]
+  (jar! (merge {(str "META-INF/maven/" group "/" artifact "/pom.properties")
+                (str "groupId=" group "\nartifactId=" artifact "\nversion=1.0\n")
+                (str "META-INF/maven/" group "/" artifact "/pom.xml")
+                (str "<project><dependencies>"
+                     (apply str (for [[g a] deps]
+                                  (str "<dependency><groupId>" g "</groupId><artifactId>" a "</artifactId></dependency>")))
+                     "</dependencies></project>")}
+               extra)))
+
+(defn files-in [dir]
+  (let [base (count (str dir "/"))]
+    (->> (file-seq (io/file dir))
+         (filter #(.isFile ^java.io.File %))
+         (map #(subs (str %) base))
+         set)))
+
+(deftest reads-exports-from-jars-and-dirs
+  (let [j (jar! {"clj-kondo.exports/acme/lib/config.edn" "{:lint-as {acme.lib/defthing clojure.core/def}}"
+                 "clj-kondo.exports/acme/lib/hooks/h.clj" "(ns hooks.h)"
+                 "acme/lib.clj" "(ns acme.lib)"})
+        d (project! {"clj-kondo.exports/other/lib/config.edn" "{}"})]
+    (is (= #{"acme/lib/config.edn" "acme/lib/hooks/h.clj"} (set (keys (kc/exports j)))))
+    (is (= #{"other/lib/config.edn"} (set (keys (kc/exports d)))))
+    (is (= {} (kc/exports (jar! {"a.clj" "(ns a)"}))))))
+
+(deftest maven-dependencies
+  (let [a (maven-jar! "acme" "a" [["acme" "b"]] {})
+        b (maven-jar! "acme" "b" [["acme" "c"] ["not" "on-classpath"]] {})
+        c (maven-jar! "acme" "c" [] {})
+        plain (jar! {"x.clj" "(ns x)"})]
+    (is (= ["acme" "a"] (kc/maven-coords a)))
+    (is (nil? (kc/maven-coords plain)))
+    (testing "the transitive closure, among the classpath's jars"
+      (is (= {a #{b c} b #{c} c #{} plain #{}}
+             (kc/dependency-closure [a b c plain]))))))
+
+(deftest materialized-configs-are-content-addressed
+  (let [cache (tu/temp-dir)
+        m1 (kc/materialize! cache {"config.edn" (.getBytes "{}") "acme/lib/config.edn" (.getBytes "{:x 1}")})
+        m2 (kc/materialize! cache {"acme/lib/config.edn" (.getBytes "{:x 1}") "config.edn" (.getBytes "{}")})
+        m3 (kc/materialize! cache {"config.edn" (.getBytes "{:changed true}")})]
+    (is (= (:dir m1) (:dir m2)))
+    (is (= (vec (:hash m1)) (vec (:hash m2))))
+    (is (not= (:dir m1) (:dir m3)))
+    (is (= #{"config.edn" "acme/lib/config.edn"} (files-in (:dir m1))))))
+
+(deftest project-config-is-a-private-copy-plus-classpath-exports
+  (let [cache (tu/temp-dir)
+        root (project! {".clj-kondo/config.edn" "{:lint-as {a/b clojure.core/def}}"
+                        ".clj-kondo/hooks/mine.clj" "(ns hooks.mine)"
+                        ".clj-kondo/.cache/v1/clj/a.transit.json" "cache"
+                        ".clj-kondo/inline-configs/a.clj/config.edn" "{}"
+                        ".clj-kondo/gen-macros/a.clj" "x"})
+        j (jar! {"clj-kondo.exports/acme/lib/config.edn" "{}"})
+        {:keys [dir]} (kc/project-config! cache root [{:path j :kind :jar :ord 1}])]
+    (testing "clj-kondo's caches and generated files are left out"
+      (is (= #{"config.edn" "hooks/mine.clj" "imports/acme/lib/config.edn"} (files-in dir))))
+    (testing "the project's own directory is untouched"
+      (is (.exists (io/file root ".clj-kondo/.cache/v1/clj/a.transit.json")))
+      (is (not (.exists (io/file root ".clj-kondo/imports")))))))
+
+(deftest project-without-kondo-config
+  (let [{:keys [dir]} (kc/project-config! (tu/temp-dir) (project! {}) [])]
+    (is (= #{} (files-in dir)))))
+
+(deftest jar-configs-include-dependency-exports
+  (let [cache (tu/temp-dir)
+        ham (maven-jar! "acme" "ham" [] {"clj-kondo.exports/acme/ham/config.edn" "{:hooks {}}"})
+        dtype (maven-jar! "acme" "dtype" [["acme" "ham"]] {"dtype.clj" "(ns dtype)"})
+        plain (jar! {"plain.clj" "(ns plain)"})
+        ctx (kc/jar-context [ham dtype plain])]
+    (testing "a jar sees its own and its dependencies' exports"
+      (is (= #{"imports/acme/ham/config.edn"} (files-in (:dir (kc/jar-config! cache ctx dtype))))))
+    (testing "jars with no exports anywhere share the neutral config"
+      (let [n1 (kc/jar-config! cache ctx plain)]
+        (is (= #{} (files-in (:dir n1))))
+        (is (= (vec (:hash n1)) (vec (:hash (kc/neutral-config! cache)))))))))
