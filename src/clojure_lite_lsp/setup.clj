@@ -102,7 +102,7 @@
       (let [c (.charAt line i)]
         (cond
           quote (cond (= \\ c) (recur (+ i 2) depth quote)
-                      (= quote c) (recur (inc i) depth nil)
+                      (.equals ^Object quote c) (recur (inc i) depth nil)
                       :else (recur (inc i) depth quote))
           (#{\" \'} c) (recur (inc i) depth c)
           (= \# c) depth
