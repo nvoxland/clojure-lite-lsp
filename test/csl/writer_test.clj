@@ -98,3 +98,25 @@
       (testing "and the writer still works afterwards"
         (writer/write-units! w [[(unit-key 3) (analyzed "(ns c) (defn h [] 1)" "c.clj")]])
         (is (= 1 (db/query-value c "SELECT count(*) FROM unit")))))))
+
+(deftest refs-are-recorded-per-unit
+  (with-writer
+    (fn [w c]
+      (let [code "(ns a (:require [clojure.string :as str])) (defn f [] (str/join []))"
+            [u] (writer/write-units! w [[(unit-key code) (analyzed code "a.clj")]])]
+        (is (every? (set (writer/unit-refs c u)) ["clojure.string/join" "clojure.core/defn" "ns:a"]))
+        (is (zero? (db/query-value c "SELECT count(*) FROM file_element WHERE kind = 0")))))))
+
+(deftest units-are-found-by-alias-and-by-base-key
+  (with-writer
+    (fn [w c]
+      (let [k1 (unit-key "same content" :config-hash (byte-array [1]))
+            k2 (unit-key "same content" :config-hash (byte-array [2]))
+            [u] (writer/write-units! w [[k1 (analyzed "(ns a)" "a.clj")]])]
+        (testing "another config: not the same key, but the same base"
+          (is (nil? (writer/unit-id c k2)))
+          (is (= [[u [1]]] (map (fn [[id h]] [id (vec h)]) (writer/units-with-base c k2)))))
+        (testing "an alias makes the other config's key find the unit"
+          (writer/add-unit-key! w k2 u)
+          (is (= u (writer/unit-id c k2)))
+          (is (= u (writer/unit-id c k1))))))))

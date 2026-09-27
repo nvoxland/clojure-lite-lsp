@@ -17,7 +17,7 @@
 (def version
   "Bump when normalization changes what it produces: it is part of every
   unit key, so all analysis is redone."
-  2)
+  3)
 
 (def project-analysis-options
   {:arglists true
@@ -200,6 +200,21 @@
                  (let [[first-el :as group] (groups key)]
                    (assoc first-el :lang (into #{} (mapcat :lang) group))))))))
 
+(defn- refs
+  "What each file references, as :ref elements named \"ns/name\" for every
+  var it calls (including calls inside hook expansions, which have no
+  usable position and are otherwise dropped) and \"ns:name\" for its own
+  namespaces. A file's analysis depends only on the config for these
+  (csl.config-sig)."
+  [{:keys [var-usages namespace-definitions]}]
+  (->> (concat (for [{:keys [filename to name]} var-usages
+                     :when (and (symbol? to) name)]
+                 [filename (str to "/" name)])
+               (for [{:keys [filename name]} namespace-definitions :when name]
+                 [filename (str "ns:" name)]))
+       distinct
+       (map (fn [[filename ref]] {:kind :ref :name ref :lang (file-lang filename) :filename filename}))))
+
 (defn normalize
   "clj-kondo's result -> {filename [element ...]}."
   [{:keys [analysis findings]} {:keys [external?]}]
@@ -209,13 +224,14 @@
                             el els
                             :when (valid? raw el)]
                         (assoc el :filename (:filename raw)))
-        from-findings (when-not external? (mapcat finding->elements findings))]
+        from-findings (when-not external? (mapcat finding->elements findings))
+        from-refs (refs analysis)]
     (into {}
           (map (fn [[filename els]]
                  (let [els (mapv #(dissoc % :filename) els)]
                    ;; only a .cljc file is analyzed once per language
                    [filename (if (str/ends-with? filename ".cljc") (merge-langs els) els)])))
-          (group-by :filename (concat from-analysis from-findings)))))
+          (group-by :filename (concat from-analysis from-findings from-refs)))))
 
 (defn file-extension [filename]
   (some-> (re-find #"\.([^./:]+)$" filename) second str/lower-case))

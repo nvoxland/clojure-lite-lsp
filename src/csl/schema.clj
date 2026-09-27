@@ -4,20 +4,31 @@
 
 (def version
   "Bump on any change to the DDL below or to the meaning of stored values."
-  4)
+  5)
 
 (def ddl
   ["CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"
 
    "CREATE TABLE sym (id INTEGER PRIMARY KEY, text TEXT NOT NULL UNIQUE)"
 
-   ;; one row per analyzed Clojure file (source file or jar entry); `key` is
-   ;; the SHA-256 of every input to its analysis (csl.writer/unit-key-hash)
+   ;; one row per analyzed Clojure file (source file or jar entry).
+   ;; base_key covers every input to its analysis except the clj-kondo
+   ;; config; config_hash is the config it was analyzed with.
    "CREATE TABLE unit (
-      id         INTEGER PRIMARY KEY,
-      key        BLOB NOT NULL UNIQUE,
-      external   INTEGER NOT NULL,
-      created_at INTEGER NOT NULL)"
+      id          INTEGER PRIMARY KEY,
+      base_key    BLOB NOT NULL,
+      config_hash BLOB NOT NULL,
+      external    INTEGER NOT NULL,
+      created_at  INTEGER NOT NULL)"
+   "CREATE INDEX unit_base ON unit (base_key)"
+   ;; every full key (csl.writer/unit-key-hash) that finds a unit: its own,
+   ;; and those of other configs it was found valid for (csl.reuse)
+   "CREATE TABLE unit_key (key BLOB PRIMARY KEY, unit_id INTEGER NOT NULL) WITHOUT ROWID"
+   "CREATE INDEX unit_key_unit ON unit_key (unit_id)"
+   ;; what a unit references (sym ids of "ns/name" and "ns:name"): its
+   ;; analysis depends on the config only for these
+   "CREATE TABLE unit_ref (unit_id INTEGER NOT NULL, ref INTEGER NOT NULL,
+      PRIMARY KEY (unit_id, ref)) WITHOUT ROWID"
 
    ;; a jar (or the JDK's src.zip) as one unit of work
    "CREATE TABLE jar (

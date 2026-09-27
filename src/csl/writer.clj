@@ -43,16 +43,24 @@
                    (exec! ps)))
                (when (realized? full) (.close ^PreparedStatement @full)))}))
 
-(defn unit-key-hash
-  "The unit key: a SHA-256 over every input to a file's analysis."
-  ^bytes [{:keys [content-hash lang-key kondo-version config-hash options-hash]}]
+(defn base-key-hash
+  "A SHA-256 over every input to a file's analysis except the clj-kondo
+  config."
+  ^bytes [{:keys [content-hash lang-key kondo-version options-hash]}]
   (let [md (MessageDigest/getInstance "SHA-256")
         text (fn [^String s] (.update md (.getBytes (str s "\u0000") StandardCharsets/UTF_8)))]
     (.update md ^bytes content-hash)
     (text lang-key)
     (text kondo-version)
-    (.update md ^bytes config-hash)
     (.update md ^bytes options-hash)
+    (.digest md)))
+
+(defn unit-key-hash
+  "The unit key: a SHA-256 over every input to a file's analysis."
+  ^bytes [{:keys [config-hash] :as unit-key}]
+  (let [md (MessageDigest/getInstance "SHA-256")]
+    (.update md (base-key-hash unit-key))
+    (.update md ^bytes config-hash)
     (.digest md)))
 
 (defn reload-state!
@@ -115,7 +123,8 @@
    :fts (batcher c "name_fts(rowid, text)" 2)
    :usage (batcher c "usage" 12)
    :file-element (batcher c "file_element" 15)
-   :java-class (batcher c "java_class" 3)})
+   :java-class (batcher c "java_class" 3)
+   :ref (batcher c "unit_ref" 2)})
 
 (defn- flush-all! [batches]
   (doseq [b (vals batches)] ((:flush! b))))
@@ -148,13 +157,38 @@
          [unit-id nr nc code lang-bits ner nec ns-id name-id (sym (:alias el)) (:local-id el)
           fr fc fer fec])))))
 
+(defn- write-refs!
+  "Record what a unit references (:ref elements)."
+  [w batches unit-id refs]
+  (doseq [{:keys [name]} refs]
+    ((:add! (:ref batches)) [unit-id (intern-sym w (:sym batches) name)])))
+
 (defn- existing-unit [c key-hash]
-  (db/query-value c "SELECT id FROM unit WHERE key = ?" key-hash))
+  (db/query-value c "SELECT unit_id FROM unit_key WHERE key = ?" key-hash))
 
 (defn unit-id
   "The id of the unit with `unit-key`, if it has been written."
   [c unit-key]
   (existing-unit c (unit-key-hash unit-key)))
+
+(defn units-with-base
+  "Units analyzed from the same inputs as `unit-key` except the config:
+  [[unit-id config-hash] ...], newest first."
+  [c unit-key]
+  (db/query c "SELECT id, config_hash FROM unit WHERE base_key = ? ORDER BY id DESC"
+            (base-key-hash unit-key)))
+
+(defn unit-refs
+  "What unit `u` references: \"ns/name\" and \"ns:name\" strings."
+  [c u]
+  (mapv first (db/query c "SELECT s.text FROM unit_ref r JOIN sym s ON s.id = r.ref WHERE r.unit_id = ?" u)))
+
+(defn add-unit-key!
+  "Let `unit-key` find unit `u` too: its analysis holds under that key's
+  config as well (csl.reuse)."
+  [{:keys [c] :as w} unit-key u]
+  (with-write-tx w
+    (db/execute! c "INSERT OR IGNORE INTO unit_key (key, unit_id) VALUES (?, ?)" (unit-key-hash unit-key) u)))
 
 (defn write-units!
   "Write a chunk of units in one transaction. `units` is a seq of
@@ -171,9 +205,14 @@
                       (let [key-hash (unit-key-hash k)]
                         (or (existing-unit c key-hash)
                             (let [id (next-id! w :unit)]
-                              (db/execute! c "INSERT INTO unit (id, key, external, created_at) VALUES (?, ?, ?, ?)"
-                                           id key-hash (if (:external? k) 1 0) (System/currentTimeMillis))
-                              (write-elements! w bs id (remove #(= :java-class-def (:kind %)) elements))
+                              (db/execute! c "INSERT INTO unit (id, base_key, config_hash, external, created_at)
+                                              VALUES (?, ?, ?, ?, ?)"
+                                           id (base-key-hash k) (:config-hash k) (if (:external? k) 1 0)
+                                           (System/currentTimeMillis))
+                              (db/execute! c "INSERT INTO unit_key (key, unit_id) VALUES (?, ?)" key-hash id)
+                              (let [{refs true others false} (group-by #(= :ref (:kind %)) elements)]
+                                (write-refs! w bs id refs)
+                                (write-elements! w bs id (remove #(= :java-class-def (:kind %)) others)))
                               id))))
                     units)]
       (flush-all! bs)

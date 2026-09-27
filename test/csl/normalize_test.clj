@@ -104,7 +104,8 @@
   (let [els (elements "(ns a (:import [java.io File])) (def s 'clojure.core/map) (File. \"x\")" "a.clj")]
     (is (= [["clojure.core" "map"]] (map (juxt :ns :name) (of-kind :symbol-usage els))))
     (is (some #(= "java.io.File" (:name %)) (of-kind :java-class-usage els)))
-    (is (every? :pos els))))
+    ;; refs are a record of the file, not located elements
+    (is (every? :pos (remove #(= :ref (:kind %)) els)))))
 
 (deftest protocol-impls
   (let [els (elements "(ns a) (defprotocol P (m [this])) (defrecord R [] P (m [this] 1))" "a.clj")]
@@ -150,3 +151,20 @@
 (deftest imported-vars-remember-their-origin
   (let [[f] (of-kind :var-def (elements "(ns api (:require [potemkin :refer [import-vars]] [impl])) (import-vars [impl f])" "api.clj"))]
     (is (= "impl" (get-in f [:extra :imported-ns])))))
+
+(deftest files-record-what-they-reference
+  ;; for reusing analysis across configs: every var a file calls, including
+  ;; calls inside hook expansions (derived locations, not elements), and
+  ;; its own namespace (for :config-in-ns)
+  (let [pos {:name-row 1 :name-col 2 :name-end-row 1 :name-end-col 5 :row 1 :col 1 :end-row 1 :end-col 9}
+        units (normalize/normalize
+               {:analysis {:namespace-definitions [(merge pos {:filename "b.clj" :name 'b})]
+                           :var-usages [(merge pos {:filename "b.clj" :from 'b :to 'a :name 'wrap})
+                                        {:filename "b.clj" :from 'b :to 'a :name 'inner :derived-location true
+                                         :name-row 1 :name-col 2 :name-end-row 1 :name-end-col 5}
+                                        (merge pos {:filename "b.clj" :from 'b :to :clj-kondo/unknown-namespace :name 'x})]}}
+               {:external? false})
+        els (get units "b.clj")]
+    (is (= #{"a/wrap" "a/inner" "ns:b"} (set (map :name (filter #(= :ref (:kind %)) els)))))
+    (testing "a derived usage is still not an element"
+      (is (not-any? #(= "inner" (:name %)) (filter #(= :var-usage (:kind %)) els))))))

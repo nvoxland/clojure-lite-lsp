@@ -47,6 +47,8 @@
     (apply db/execute! c (str "DELETE FROM file_element WHERE unit_id IN " q) us)
     (apply db/execute! c (str "DELETE FROM doc WHERE definition_id IN (SELECT id FROM definition WHERE unit_id IN " q ")") us)
     (apply db/execute! c (str "DELETE FROM definition WHERE unit_id IN " q) us)
+    (apply db/execute! c (str "DELETE FROM unit_key WHERE unit_id IN " q) us)
+    (apply db/execute! c (str "DELETE FROM unit_ref WHERE unit_id IN " q) us)
     (apply db/execute! c (str "DELETE FROM unit WHERE id IN " q) us)
     (doseq [n names
             :when (nil? (db/query-value c (str "SELECT 1 FROM definition WHERE name = ? AND kind IN (" searchable-kinds ") LIMIT 1") n))]
@@ -80,7 +82,7 @@
                     UNION SELECT from_ns FROM usage UNION SELECT from_var FROM usage
                     UNION SELECT ns FROM file_element UNION SELECT name FROM file_element
                     UNION SELECT alias FROM file_element
-                    UNION SELECT name FROM java_class)"))
+                    UNION SELECT name FROM java_class UNION SELECT ref FROM unit_ref)"))
 
 (defn- prune-fingerprints!
   "Content-hash memos of paths no project's files or jars use (e.g. a
