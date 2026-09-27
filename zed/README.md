@@ -1,9 +1,9 @@
 # Zed extension: clojure-lite-lsp
 
-Registers `clojure-lite-lsp lsp` as a language server for Zed's `Clojure` language. It
-registers only the server: the language itself (grammar, highlighting) comes
-from another extension, Zed's own **Clojure** extension or **Clojure (nREPL
-LSP)**.
+Clojure language support for Zed, with `clojure-lite-lsp lsp` as its language
+server. It replaces Zed's **Clojure** extension: it has the same tree-sitter
+grammar and queries (syntax highlighting, brackets, indentation, outline), and
+this server instead of clojure-lsp.
 
 ## Install
 
@@ -17,24 +17,16 @@ LSP)**.
    Building needs GraalVM (`JAVA_HOME` pointing at it, or `native-image` on
    PATH).
 
-2. In Zed, run **zed: install dev extension** and select this `zed/`
-   directory. Zed builds it, which needs Rust installed through rustup.
+2. In Zed, uninstall the **Clojure** extension (and any other extension that
+   defines the `Clojure` language, like **Clojure (nREPL LSP)**): they would
+   define the same language twice.
 
-3. Choose which Clojure language servers run (Zed settings). To use only
-   this one:
+3. Run **zed: install dev extension** and select this `zed/` directory. Zed
+   builds it, which needs Rust installed through rustup, and fetches the
+   grammar.
 
-   ```json
-   {
-     "languages": {
-       "Clojure": {
-         "language_servers": ["clojure-lite-lsp", "!clojure-lsp", "!clojure-nrepl-lsp", "..."]
-       }
-     }
-   }
-   ```
-
-   Both servers can also run side by side, but then Zed shows each result
-   twice. `"..."` keeps any other servers registered for Clojure.
+4. Open a `.clj` file: the status bar shows Clojure, and `clojure-lite-lsp`
+   is in the language servers list.
 
 ## Settings
 
@@ -87,3 +79,9 @@ passed through. For example, to keep a separate index while trying it out:
 cargo test                                   # launch-command resolution tests
 cargo build --release --target wasm32-wasip2 # what Zed builds on install
 ```
+
+## License
+
+The files in `languages/clojure/` are copied from Zed's Clojure extension
+(Apache License 2.0, see `LICENSE-zed-clojure` and `NOTICE`); the grammar is
+[tree-sitter-clojure](https://github.com/prcastro/tree-sitter-clojure).

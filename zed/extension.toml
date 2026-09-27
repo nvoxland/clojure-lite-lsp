@@ -2,9 +2,13 @@ id = "clojure-lite-lsp"
 name = "clojure-lite-lsp"
 version = "0.1.0"
 schema_version = 1
-description = "A low-memory, read-only Clojure language server: navigation, references, hover, symbols and call hierarchy from a shared SQLite index. Registers the server only; the Clojure language comes from another extension."
+description = "Clojure language support with a low-memory, read-only language server: navigation, references, hover, symbols and call hierarchy from a shared index. Replaces the Clojure extension."
 repository = "https://github.com/nvoxland/clojure-lite-lsp"
 authors = ["Nathan Voxland <nathan@voxland.net>"]
+
+[grammars.clojure]
+repository = "https://github.com/prcastro/tree-sitter-clojure"
+rev = "38b4f8d264248b2fd09575fbce66f7c22e8929d5"
 
 [language_servers.clojure-lite-lsp]
 name = "clojure-lite-lsp"

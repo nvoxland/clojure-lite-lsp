@@ -1,2 +1,4 @@
 target/
 extension.wasm
+# the tree-sitter grammar Zed checks out and builds
+grammars/

@@ -1,0 +1,3 @@
+The files in languages/clojure/ are copied from the Zed Clojure extension
+(https://github.com/zed-extensions/clojure), licensed under the Apache License 2.0.
+The tree-sitter grammar is https://github.com/prcastro/tree-sitter-clojure.
