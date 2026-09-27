@@ -141,7 +141,7 @@
   A file is queued again for the same unit and the same answers only once:
   had analyzing it again given back that unit, nothing would change, and it
   would be queued forever."
-  [{:keys [c requeued] :as ix} p]
+  [{:keys [c requeued in-flight] :as ix} p]
   (when-let [marker (db/query-value c "SELECT id FROM sym WHERE text = ?" nsa/marker)]
     (let [digest-of (digest-fn ix p)]
       (doseq [[u] (db/query c "SELECT r.unit_id FROM unit_ref r
@@ -152,8 +152,11 @@
               :when (not= (map last deps) today)
               [path] (db/query c "SELECT path FROM project_file WHERE project_id = ? AND unit_id = ?" p u)]
         (if (= [u today] (@requeued [p path]))
-          (binding [*out* *err*]
-            (println "csl: analysis of" path "doesn't match what its hooks are told; left as is"))
+          ;; unless it's still waiting to be analyzed again, that didn't help
+          (when-not (or (db/query-value c "SELECT 1 FROM pending WHERE project_id = ? AND kind = 'file' AND path = ?" p path)
+                        (some #(= path (:path %)) (:batch @in-flight)))
+            (binding [*out* *err*]
+              (println "csl: analysis of" path "doesn't match what its hooks are told; left as is")))
           (do (swap! requeued assoc [p path] [u today])
               (queue/enqueue! c p :file path 1)))))))
 

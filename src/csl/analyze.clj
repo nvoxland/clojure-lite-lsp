@@ -46,7 +46,12 @@
 (def ^:dynamic *lookups*
   "While analyzing: {:serve (fn [lang ns-sym]) :record atom}. Hooks asking
   about a namespace (hooks-api/ns-analysis) are answered by :serve, and
-  [file lang ns digest] is recorded for each question."
+  [file lang ns digest] is recorded for each question a hook that
+  transformed asked: only then can the answer change the analysis."
+  nil)
+
+(def ^:dynamic ^:private *call-lookups*
+  "During one hook call: an atom collecting its questions."
   nil)
 
 (defn- wrap-var!
@@ -76,17 +81,22 @@
                  (fn [ctx config ns-sym var-sym & more]
                    (when-let [f (apply hook-fn ctx config ns-sym var-sym more)]
                      (fn [{:keys [node] :as m}]
-                       (let [r (f m)]
-                         (when (and *transformed* (:node r) (not (identical? node (:node r))))
-                           (swap! *transformed* conj [(:filename ctx) (symbol (str ns-sym) (str var-sym))]))
+                       (let [asked (atom [])
+                             r (binding [*call-lookups* asked] (f m))]
+                         (when (and (:node r) (not (identical? node (:node r))))
+                           (when *transformed*
+                             (swap! *transformed* conj [(:filename ctx) (symbol (str ns-sym) (str var-sym))]))
+                           (when-let [{:keys [record]} *lookups*]
+                             (swap! record into @asked)))
                          r))))))
     ;; questions about namespaces are answered by csl
     (wrap-var! #'clj-kondo.hooks-api/ns-analysis*
                (fn [ns-analysis*]
                  (fn [lang ns-sym]
-                   (if-let [{:keys [serve record]} *lookups*]
+                   (if-let [{:keys [serve]} *lookups*]
                      (let [r (answer serve lang ns-sym)]
-                       (swap! record conj [(:filename clj-kondo.impl.utils/*ctx*) lang ns-sym (nsa/digest r)])
+                       (some-> *call-lookups*
+                               (swap! conj [(:filename clj-kondo.impl.utils/*ctx*) lang ns-sym (nsa/digest r)]))
                        r)
                      (ns-analysis* lang ns-sym)))))))
 
