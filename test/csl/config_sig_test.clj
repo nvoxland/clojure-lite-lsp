@@ -47,8 +47,15 @@
     (is (= {:global-same? true :custom-changed #{} :changed #{"ns:app.core"}}
            (diff base-config (with-config #(assoc-in % [:config-in-ns 'app.core :lint-as] '{acme/x clojure.core/def})))))))
 
-(deftest ns-groups-are-global
-  (is (false? (:global-same? (diff base-config (with-config #(assoc % :ns-groups [{:pattern "app\\..*" :name 'app-group}])))))))
+(deftest ns-groups-matter-only-with-analysis-settings
+  (let [group [{:pattern "app\\..*" :name 'app-group}]]
+    (testing "a group only linters are configured for: nothing"
+      (is (:global-same? (diff base-config (with-config #(assoc % :ns-groups group
+                                                                 :config-in-ns {'app-group {:linters {:unresolved-symbol {:level :off}}}}))))))
+    (testing "a group with analysis settings: global"
+      (let [with-group #(with-config (fn [c] (assoc c :ns-groups [{:pattern % :name 'app-group}]
+                                                     :config-in-ns {'app-group {:lint-as '{acme/x clojure.core/def}}})))]
+        (is (false? (:global-same? (diff (with-group "app\\..*") (with-group "other\\..*")))))))))
 
 (deftest exported-configs-count-too
   (let [with-import #(assoc base-config "imports/acme/lib/config.edn" (pr-str {:lint-as {'acme.lib/deft %}}))]

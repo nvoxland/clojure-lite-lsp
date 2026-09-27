@@ -61,7 +61,8 @@
       (sync-project! ix root)
       (is (= #{"acme.clj" "uses_thing.clj" "uses_other.clj" "plain.clj"}
              (analyzed-files ix root #(set-config! root {:lint-as lint-as
-                                                         :ns-groups [{:pattern "app\\..*" :name 'app-group}]})))))))
+                                                         :ns-groups [{:pattern "app\\..*" :name 'app-group}]
+                                                         :config-in-ns {'app-group {:lint-as '{acme/y clojure.core/def}}}})))))))
 
 (def lint-hook
   "(ns hooks.lint (:require [clj-kondo.hooks-api :as api]))

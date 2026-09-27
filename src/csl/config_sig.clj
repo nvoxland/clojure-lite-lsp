@@ -102,6 +102,8 @@
         {:keys [lint-as hooks config-in-call config-in-ns ns-groups]} cfg
         {:keys [analyze-call macroexpand]} hooks
         groups (set (keep :name ns-groups))
+        ;; a group only reaches analysis through config-in-ns for it
+        analysis-groups (into #{} (keep (fn [[g c]] (when (and (groups g) (without-linters c)) g))) config-in-ns)
         syms (into #{} (concat (keys lint-as) (keys analyze-call) (keys macroexpand) (keys config-in-call)))
         sym-entries (into {}
                           (keep (fn [s]
@@ -128,12 +130,13 @@
                                  [(str s) (into #{} (filter #(str/includes? text (subs (str %) 1))) (keys custom))]))))
                      (concat (keys analyze-call) (keys macroexpand)))
      :global (digest (-> (apply dissoc cfg (keys custom))
-                         (dissoc :linters :lint-as :hooks :config-in-call :config-in-ns :output :analysis
+                         (dissoc :linters :lint-as :hooks :config-in-call :config-in-ns :ns-groups :output :analysis
                                  ;; where things are, not what they say (hook code is
                                  ;; hashed by content, per symbol)
                                  :cfg-dir :classpath :use-import-dir :config-paths :auto-load-configs
                                  :skip-lint)
                          (assoc :other-hooks (dissoc hooks :analyze-call :macroexpand)
+                                :ns-groups (filterv #(analysis-groups (:name %)) ns-groups)
                                 ;; config for a group of namespaces applies to whichever
                                 ;; namespaces match it: global
                                 :group-config (into {} (keep (fn [[g c]] (when-let [c (without-linters c)] [g c]))) group-cfgs))
