@@ -17,7 +17,7 @@
 (def version
   "Bump when normalization changes what it produces: it is part of every
   unit key, so all analysis is redone."
-  5)
+  6)
 
 (def project-analysis-options
   {:arglists true
@@ -202,13 +202,6 @@
          (mapv (fn [key]
                  (let [[first-el :as group] (groups key)]
                    (assoc first-el :lang (into #{} (mapcat :lang) group))))))))
-
-(defn transformed-ref
-  "The ref recorded for a file in which the hook for macro `sym` returned a
-  new node (csl.analyze): only such files can depend on the custom config
-  keys that hook reads."
-  [sym]
-  (str "xform:" sym))
 
 (defn- refs
   "What each file references, as :ref elements named \"ns/name\" for every

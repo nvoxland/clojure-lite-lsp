@@ -14,7 +14,8 @@
 
   Analysis is sharded across concurrent clj-kondo runs (csl.analyze), and
   pipelined: while one :file or :jar batch is written, the next one is
-  already being analyzed. Every database access (preparing a batch,
+  already being analyzed. Analyses themselves never overlap: hooks share
+  clj-kondo's process-wide state, and batches can have different configs. Every database access (preparing a batch,
   writing one) still happens on the loop thread, one after the other:
   only analysis, which touches no database, runs alongside."
   (:require
@@ -208,7 +209,7 @@
 
 (defn- files-job
   "Index project or external-dir files that changed. Returns a job:
-  {:analysis (a future of the clj-kondo work) :write (fn [analysis])}."
+  {:analyze (fn [], the clj-kondo work) :write (fn [analysis])}."
   [{:keys [c w shards] :as ix} p paths]
   (let [ctx (context ix p)
         digest-of (digest-fn ix p)
@@ -224,21 +225,26 @@
                        :known (into {} (for [{:keys [path]} group]
                                          [path (existing-unit ix (file-unit-key ix placement path) digest-of)]))}))
         serve (serve-fn ix p)]
-    {:analysis (future
-                 (mapv (fn [{:keys [mode config known]}]
-                         (analyze/analyze-files (vec (keep (fn [[path u]] (when-not u path)) known))
-                                                {:config config :mode mode :shards shards :serve serve}))
-                       groups))
+    {:analyze (fn []
+                (mapv (fn [{:keys [mode config known]}]
+                        (analyze/analyze-files (vec (keep (fn [[path u]] (when-not u path)) known))
+                                               {:config config :mode mode :shards shards :serve serve}))
+                      groups))
      :write (fn [analysis]
               (doseq [{:keys [path gone?]} placed :when gone?]
                 (snapshot/remove-file! w p path))
               (doseq [[{:keys [group known]} fresh] (map vector groups analysis)]
-                (let [fresh-ids (writer/write-units! w (map (juxt :unit-key :elements) fresh))
+                (let [;; changed while analyzed: analyze it again
+                      [fresh changed] ((juxt filter remove) :unit-key fresh)
+                      fresh-ids (writer/write-units! w (map (juxt :unit-key :elements) fresh))
                       ids (merge (into {} (filter second) known)
-                                 (zipmap (map :path fresh) fresh-ids))]
+                                 (zipmap (map :path fresh) fresh-ids))
+                      changed (set (map :path changed))]
                   (writer/with-write-tx w
-                    (doseq [{:keys [path ord external?]} group]
-                      (snapshot/set-file-unit! w p path (ids path) {:ord ord :external? external?})))))
+                    (doseq [{:keys [path ord external?]} group
+                            :when (not (changed path))]
+                      (snapshot/set-file-unit! w p path (ids path) {:ord ord :external? external?})))
+                  (doseq [path changed] (queue/enqueue! c p :file path 1))))
               (recheck-dependents! ix p))}))
 
 (defn- delete-files! [{:keys [w] :as ix} p paths]
@@ -259,11 +265,11 @@
                               h (fingerprint/content-hash! c path)]]
                     {:path path :ord ord :config config :hash h
                      :jar-id (snapshot/jar-id c (analyze/jar-key h config))}))]
-    {:analysis (future
-                 (analyze/analyze-jars (mapv :path (remove :jar-id todo))
-                                       {:configs (into {} (map (juxt :path :config)) todo)
-                                        :jar-hashes (into {} (map (juxt :path :hash)) todo)
-                                        :shards shards}))
+    {:analyze (fn []
+                (analyze/analyze-jars (mapv :path (remove :jar-id todo))
+                                      {:configs (into {} (map (juxt :path :config)) todo)
+                                       :jar-hashes (into {} (map (juxt :path :hash)) todo)
+                                       :shards shards}))
      :write (fn [analyzed]
               (let [written (into {} (for [{:keys [jar jar-key entries]} analyzed]
                                        [jar (snapshot/write-jar! w jar-key (map (juxt :entry-path :unit-key :elements) entries))]))]
@@ -311,12 +317,18 @@
 (def ^:private pipelined-kinds #{:file :jar})
 
 (defn- start!
-  "Prepare a :file or :jar batch and start its analysis."
-  [ix {:keys [project-id kind]} batch]
-  (let [paths (mapv :path batch)]
+  "Prepare a :file or :jar batch and start its analysis, once the analysis
+  of the batch before (`previous`, in flight) is done."
+  [ix {:keys [project-id kind]} batch previous]
+  (let [paths (mapv :path batch)
+        job (try ((case kind :file files-job :jar jars-job) ix project-id paths)
+                 (catch Exception e {:error e}))
+        before (get-in previous [:job :analysis])]
     {:batch batch
-     :job (try ((case kind :file files-job :jar jars-job) ix project-id paths)
-               (catch Exception e {:error e}))}))
+     :job (cond-> job
+            (:analyze job) (assoc :analysis (future
+                                              (when before (try @before (catch Throwable _ nil)))
+                                              ((:analyze job)))))}))
 
 (defn- finish!
   "Write a started batch once its analysis is done. Returns the batch, or
@@ -357,7 +369,7 @@
   (let [current @in-flight
         batch (queue/next-batch c batch-sizes (map queue/request-key (:batch current)))
         head (first batch)
-        started (when (and head (pipelined-kinds (:kind head))) (start! ix head batch))
+        started (when (and head (pipelined-kinds (:kind head))) (start! ix head batch current))
         finished (when current (finish! ix current))]
     (cond
       (= :retry finished)

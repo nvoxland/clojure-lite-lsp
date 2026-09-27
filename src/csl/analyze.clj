@@ -37,21 +37,11 @@
   its analysis."
   (update-vals modes (fn [m] (sha256 (pr-str [normalize/version (dissoc m :external?)])))))
 
-(def ^:dynamic *transformed*
-  "While analyzing: an atom collecting [file macro] pairs (canonical paths)
-  where the macro's hook returned a new node, which is how clj-kondo itself
-  tells a transformation from a hook that only lints."
-  nil)
-
 (def ^:dynamic *lookups*
   "While analyzing: {:serve (fn [lang ns-sym]) :record atom}. Hooks asking
   about a namespace (hooks-api/ns-analysis) are answered by :serve, and
-  [file lang ns digest] is recorded for each question a hook that
-  transformed asked: only then can the answer change the analysis."
-  nil)
-
-(def ^:dynamic ^:private *call-lookups*
-  "During one hook call: an atom collecting its questions."
+  [file lang ns digest] is recorded for each question: whether a hook
+  changes the code can depend on the answer."
   nil)
 
 (defn- wrap-var!
@@ -74,35 +64,37 @@
   (or (when serve (serve lang ns-sym)) (kondo-answer lang ns-sym)))
 
 (def ^:private watch-hooks
+  ;; questions about namespaces are answered by csl
   (delay
-    ;; each hook call is compared with what it was given
-    (wrap-var! #'clj-kondo.impl.hooks/hook-fn
-               (fn [hook-fn]
-                 (fn [ctx config ns-sym var-sym & more]
-                   (when-let [f (apply hook-fn ctx config ns-sym var-sym more)]
-                     (fn [{:keys [node] :as m}]
-                       (let [asked (atom [])
-                             r (binding [*call-lookups* asked] (f m))]
-                         (when (and (:node r) (not (identical? node (:node r))))
-                           (when *transformed*
-                             (swap! *transformed* conj [(:filename ctx) (symbol (str ns-sym) (str var-sym))]))
-                           (when-let [{:keys [record]} *lookups*]
-                             (swap! record into @asked)))
-                         r))))))
-    ;; questions about namespaces are answered by csl
     (wrap-var! #'clj-kondo.hooks-api/ns-analysis*
                (fn [ns-analysis*]
                  (fn [lang ns-sym]
-                   (if-let [{:keys [serve]} *lookups*]
+                   (if-let [{:keys [serve record]} *lookups*]
                      (let [r (answer serve lang ns-sym)]
-                       (some-> *call-lookups*
-                               (swap! conj [(:filename clj-kondo.impl.utils/*ctx*) lang ns-sym (nsa/digest r)]))
+                       (swap! record conj [(:filename clj-kondo.impl.utils/*ctx*) lang ns-sym (nsa/digest r)])
                        r)
                      (ns-analysis* lang ns-sym)))))))
+
+(def ^:private hooks-config
+  "The config dir whose hooks clj-kondo has loaded."
+  (atom nil))
+
+(defn- use-config!
+  "Make clj-kondo load hooks afresh when `config-dir` isn't the one it last
+  ran with. It loads a hook namespace once per process and reloads only a
+  file it saw change, and every config is a directory of its own: an
+  edited hook would otherwise keep its old code. Runs never overlap across
+  configs (csl.indexer), so this can't pull hooks from under one."
+  [config-dir]
+  (when (not= config-dir @hooks-config)
+    (clj-kondo.impl.hooks/reset-ctx!)
+    (reset! hooks-config config-dir)))
 
 (defn- run-kondo [lint mode config-dir]
   (let [{:keys [skip-lint analysis]} (modes mode)]
     (kondo/run! {:lint lint
+                 ;; the config is the project's alone: none from ~/.config
+                 :repro true
                  :parallel true
                  :cache false
                  :skip-lint skip-lint
@@ -141,18 +133,13 @@
   "One clj-kondo run over `lint` (canonical paths, or jars), with hooks'
   questions answered by `serve`: {filename {:elements :lookups}}."
   [lint mode config-dir serve]
-  (let [transformed (atom #{})
-        record (atom #{})
-        units (normalize/normalize (binding [*transformed* transformed
-                                             *lookups* {:serve serve :record record}]
+  (let [record (atom #{})
+        units (normalize/normalize (binding [*lookups* {:serve serve :record record}]
                                      (run-kondo (vec lint) mode config-dir))
                                    {:external? (:external? (modes mode))})
-        xforms (group-by first @transformed)
         lookups (group-by first @record)]
-    (into {} (for [f (into (set (keys units)) (concat (keys xforms) (keys lookups)))]
-               [f {:elements (into (get units f [])
-                                   (map (fn [[_ s]] {:kind :ref :name (normalize/transformed-ref s) :lang #{}}))
-                                   (xforms f))
+    (into {} (for [f (into (set (keys units)) (keys lookups))]
+               [f {:elements (get units f [])
                    :lookups (into #{} (map (fn [[_ l n d]] [l n d])) (lookups f))}]))))
 
 (defn- batch-answers
@@ -197,20 +184,27 @@
   in `mode` (:project, or :dependency for external dirs). Hooks asking
   about a namespace are answered by `serve` (fn [lang ns-sym], the index
   as the project sees it) or the batch itself. Returns, in order,
-  [{:path :unit-key :elements}], including files with no analysis."
+  [{:path :unit-key :elements}], including files with no analysis. A file
+  that changed (or went) while it was analyzed has no :unit-key: what was
+  analyzed isn't what a key would say."
   [paths {:keys [config mode shards serve] :or {shards 8}}]
   @watch-hooks
+  (use-config! (:dir config))
   (let [dir (:dir config)
-        results (into {} (in-shards (vec (distinct (map canonical paths))) shards
-                                    #(run-pass % mode dir serve)))
+        files (vec (distinct (map canonical paths)))
+        content-hash #(try (fingerprint/sha256 %) (catch java.io.IOException _ nil))
+        before (into {} (map (juxt identity content-hash)) files)
+        results (into {} (in-shards files shards #(run-pass % mode dir serve)))
         results (settle results serve (fn [redo serve'] (run-pass redo mode dir serve')))]
     (vec (for [p paths
                :let [c (canonical p)
                      {:keys [elements lookups]} (results c)
-                     refs (dep-refs lookups)]]
+                     refs (dep-refs lookups)
+                     h (before c)]]
            {:path p
-            :unit-key (cond-> (unit-key mode config (fingerprint/sha256 c) p)
-                        (seq refs) (assoc :ns-deps (vec refs)))
+            :unit-key (when (and h (java.util.Arrays/equals ^bytes h ^bytes (content-hash c)))
+                        (cond-> (unit-key mode config h p)
+                          (seq refs) (assoc :ns-deps (vec refs))))
             :elements (into (or elements [])
                             (map (fn [r] {:kind :ref :name r :lang #{}}))
                             (when (seq refs) (cons nsa/marker refs)))}))))
@@ -237,6 +231,7 @@
 (defn- entry-of [filename] (second (str/split filename #"(?<=\.jar):" 2)))
 
 (defn- analyze-jar-group [jars config shards jar-hashes]
+  (use-config! (:dir config))
   (in-shards jars shards
              (fn [part]
                (let [dir (:dir config)

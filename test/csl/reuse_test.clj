@@ -94,15 +94,15 @@
              "src/app/uses_defx.clj" "(ns app.uses-defx (:require [acme])) (acme/defx y 2)"
              "src/app/plain.clj" "(ns app.plain) (defn plain [] 1)"}))
 
-(deftest custom-keys-matter-only-where-hooks-transform
-  ;; two hooks read :acme/strict; only the one that returns a new node can
-  ;; change analysis, so only its users are analyzed again. The other
-  ;; transforming hook never reads it.
+(deftest custom-keys-matter-where-hooks-that-read-them-run
+  ;; two hooks read :acme/strict: their users are analyzed again (whether a
+  ;; hook changes the code can depend on the key, so one that only lints
+  ;; counts too). The other transforming hook never reads it.
   (let [root (hooks-fixture)]
     (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
       (let [p (sync-project! ix root)]
         (is (contains? (visible-defs (:c ix) p) "app.uses-defx/y") "the transforming hook ran")
-        (is (= #{"uses_defx.clj"}
+        (is (= #{"uses_defx.clj" "uses_checked.clj"}
                (analyzed-files ix root #(set-config! root '{:hooks {:analyze-call {acme/checked hooks.lint/check
                                                                                     acme/defx hooks.xform/expand
                                                                                     acme/defp hooks.plainx/expand}}

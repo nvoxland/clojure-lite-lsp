@@ -119,9 +119,9 @@
         (let [done (future (sync-project! ix root) :idle)]
           (is (= :idle (deref done 60000 :still-looping))))))))
 
-(deftest questions-from-hooks-that-only-lint-dont-count
-  ;; like a hook checking with-redefs targets: it asks, but returns the
-  ;; node it was given, so the answer can't change the analysis
+(deftest questions-from-hooks-that-only-lint-count-too
+  ;; a hook that returns the node it was given this time may change it
+  ;; given another answer
   (let [root (project! {"deps.edn" "{:paths [\"src\"]}"
                         ".clj-kondo/config.edn" "{:hooks {:analyze-call {app.re/check hooks.check/check}}}"
                         ".clj-kondo/hooks/check.clj" "(ns hooks.check (:require [clj-kondo.hooks-api :as api]))
@@ -131,4 +131,4 @@
                         "src/app/checked.clj" "(ns app.checked (:require [app.re :as re])) (re/check 1)"})]
     (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
       (sync-project! ix root)
-      (is (= #{"src.clj"} (analyzed-files ix root #(spit (io/file root "src/app/src.clj") src-fgh)))))))
+      (is (= #{"src.clj" "checked.clj"} (analyzed-files ix root #(spit (io/file root "src/app/src.clj") src-fgh)))))))

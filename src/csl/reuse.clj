@@ -19,7 +19,6 @@
    [clojure.string :as str]
    [csl.config-sig :as config-sig]
    [csl.db :as db]
-   [csl.normalize :as normalize]
    [csl.ns-analysis :as nsa]
    [csl.writer :as writer]))
 
@@ -88,15 +87,17 @@
   checks units whose hooks asked about namespaces (`hold?`)."
   [r {:keys [c] :as w} unit-key digest-of]
   (or (writer/unit-id c unit-key)
-      (some (fn [[u other-config]]
+      ;; an external dir's file is analyzed without usages, so it records
+      ;; no references: nothing shows which configs it's safe under
+      (when-not (:external? unit-key)
+        (some (fn [[u other-config]]
               (let [{:keys [global-same? changed custom-readers]} (config-diff r other-config (:config-hash unit-key))
-                    ;; a changed custom key reaches analysis only through a
-                    ;; hook that reads it and transformed a call in the file
-                    ;; (csl.analyze records those as xform: refs)
-                    changed (into changed (map normalize/transformed-ref) custom-readers)]
+                    ;; a changed custom key reaches analysis only through
+                    ;; the hooks that read it: files calling their macros
+                    changed (into changed custom-readers)]
                 (when (and global-same? (not (references-any? c u changed)))
                   (let [deps (ns-deps c u)]
                     (when (hold? deps digest-of)
                       (when (empty? deps) (writer/add-unit-key! w unit-key u))
                       u)))))
-            (take candidates-to-try (writer/units-with-base c unit-key)))))
+              (take candidates-to-try (writer/units-with-base c unit-key))))))
