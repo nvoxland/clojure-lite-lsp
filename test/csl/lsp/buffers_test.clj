@@ -54,13 +54,28 @@
       (is (= [2 7] (buffers/->indexed store path [3 7])))
       (is (= [3 7 3 8] (buffers/->buffer store path [2 7 2 8])))
       (is (nil? (buffers/->indexed store path [2 1])) "the new line doesn't exist there"))
-    (testing "after a save the buffer is the base again"
-      (buffers/saved! store path)
-      (is (= [3 7] (buffers/->indexed store path [3 7]))))
+    (testing "after a save, until the index has it, positions still map onto what it has"
+      (buffers/saved! store path 41)
+      (is (= [2 7] (buffers/->indexed store path [3 7])))
+      (is (= 41 (buffers/awaited-unit store path))))
+    (testing "once indexed, the saved buffer is the base"
+      (buffers/indexed! store path)
+      (is (= [3 7] (buffers/->indexed store path [3 7])))
+      (is (nil? (buffers/awaited-unit store path))))
     (testing "files that aren't open map as they are"
       (is (= [5 5] (buffers/->indexed store "/elsewhere.clj" [5 5]))))
     (buffers/close! store path)
     (is (= [9 1] (buffers/->indexed store path [9 1])))))
+
+(deftest a-position-past-the-end-of-a-line-is-its-end
+  ;; LSP: a character beyond the line's length means the line's end
+  (let [f (io/file (tu/temp-dir) "a.clj")
+        path (str f)
+        store (buffers/store)]
+    (spit f (lines "abc" "def"))
+    (buffers/open! store path (slurp f))
+    (buffers/change! store path [{:range {:start {:line 0 :character 1} :end {:line 0 :character 99}} :text "X"}])
+    (is (= (lines "aX" "def") (:current (@store path))))))
 
 (deftest incremental-changes
   (let [text "(ns a)\n(defn f [] 1)\n"

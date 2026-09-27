@@ -22,14 +22,18 @@
 
 (defn read-message
   "The next message from `in` as a map with keyword keys, or nil at end of
-  input."
+  input. A body that isn't JSON is {::parse-error message}, so the caller
+  can answer it and go on; a header block without a length is skipped."
   [^InputStream in]
   (loop [length nil]
     (when-let [line (read-line-ascii in)]
       (if (str/blank? line)
-        (when length
+        (if length
           (let [body (.readNBytes in (int length))]
-            (json/parse-string (String. body StandardCharsets/UTF_8) true)))
+            (when (= length (alength body))
+              (try (json/parse-string (String. body StandardCharsets/UTF_8) true)
+                   (catch Exception e {::parse-error (ex-message e)}))))
+          (recur nil))
         (recur (if-let [[_ n] (re-matches #"(?i)content-length:\s*(\d+)" line)]
                  (parse-long n)
                  length))))))

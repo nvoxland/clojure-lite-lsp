@@ -77,7 +77,10 @@
   [^String text {:keys [line character]}]
   (loop [i 0 l 0]
     (if (= l line)
-      (min (count text) (+ i character))
+      ;; past the line's end means its end
+      (let [nl (.indexOf text "\n" (int i))
+            end (if (neg? nl) (count text) nl)]
+        (min end (+ i character)))
       (let [nl (.indexOf text "\n" (int i))]
         (if (neg? nl) (count text) (recur (inc nl) (inc l)))))))
 
@@ -96,12 +99,32 @@
          (fn [{:keys [base current] :as e}]
            (when e
              (let [text (reduce apply-change current changes)]
-               (entry base text))))))
+               (merge (entry base text) (select-keys e [:saved :awaited])))))))
 
 (defn saved!
-  "The document was saved: the buffer is now the base."
+  "The document was saved while the index had unit `unit-id` for it. The
+  base stays what the index has until it has the saved text (`indexed!`,
+  once the file's unit is no longer `unit-id`)."
+  [store path unit-id]
+  (swap! store update path
+         (fn [{:keys [base current] :as e}]
+           (when e
+             (if (= base current)
+               (dissoc e :saved :awaited)
+               (assoc e :saved current :awaited unit-id))))))
+
+(defn awaited-unit
+  "The unit the index had for `path` when it was saved, while it has yet
+  to catch up."
   [store path]
-  (swap! store update path #(when % (entry (:current %) (:current %)))))
+  (:awaited (@store path)))
+
+(defn indexed!
+  "The index now has `path` as it was saved: that is the base."
+  [store path]
+  (swap! store update path
+         (fn [{:keys [saved current] :as e}]
+           (if (and e saved) (entry saved current) e))))
 
 (defn close! [store path] (swap! store dissoc path))
 

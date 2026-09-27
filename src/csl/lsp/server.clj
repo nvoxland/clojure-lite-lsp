@@ -162,7 +162,7 @@
       (mapv ->sym defs))))
 
 (defn- call-item [state {:keys [ns name locations]}]
-  (when-let [loc (first locations)]
+  (when-let [loc (some #(in-buffer state %) locations)]
     (let [{:keys [uri range]} (lsp-location state loc)]
       {:name (or name ns) :kind (if name 12 3) :detail ns :uri uri
        :range range :selectionRange range :data {:ns ns :name name}})))
@@ -170,7 +170,17 @@
 (defn- ranges-in [state p calls]
   (mapv :range (lsp-locations state p calls)))
 
+(defn- catch-up-buffers!
+  "Saved documents the index now has: their saved text is the base."
+  [{:keys [buffers reader] :as state}]
+  (doseq [[path {:keys [awaited saved]}] @buffers
+          :when saved
+          :let [{:keys [p]} (project-of state path)]
+          :when (and p (not= awaited (q/file-unit @reader p path)))]
+    (buffers/indexed! buffers path)))
+
 (defn- handle-request [{:keys [opts reader projects] :as state} {:keys [method params]}]
+  (catch-up-buffers! state)
   (case method
     "textDocument/definition"
     (with-project state params [] #(lsp-locations state %2 (q/definition %1 %2 %3 %4 %5)))
@@ -326,9 +336,10 @@
                                (when-let [{:keys [p]} (project-of state path)]
                                  (enqueue! state p (if (dep-file? state path) :dep-file :file) path 0)))
       "textDocument/didChange" (buffers/change! buffers (doc-path) (:contentChanges params))
-      "textDocument/didSave" (let [path (doc-path)]
-                               (buffers/saved! buffers path)
-                               (when-let [{:keys [p]} (project-of state path)]
+      "textDocument/didSave" (let [path (doc-path)
+                                   proj (project-of state path)]
+                               (buffers/saved! buffers path (when proj (q/file-unit @(:reader state) (:p proj) path)))
+                               (when-let [{:keys [p]} proj]
                                  (enqueue! state p (if (dep-file? state path) :dep-file :file) path 0)))
       "textDocument/didClose" (buffers/close! buffers (doc-path))
       "workspace/didChangeWatchedFiles" (doseq [{:keys [uri type]} (:changes params)
@@ -359,12 +370,18 @@
         (let [{:keys [id method] :as msg} (rpc/read-message in)]
           (cond
             (nil? msg) 1
+            (::rpc/parse-error msg) (do (reply! nil {:error {:code -32700 :message (::rpc/parse-error msg)}})
+                                        (recur shutdown?))
             (= "exit" method) (if shutdown? 0 1)
             ;; a response to one of our requests
             (and id (nil? method)) (recur shutdown?)
             (nil? id) (do (try (handle-notification (state-now) msg)
                                (catch Exception e (log method "failed:" (ex-message e))))
                           (recur shutdown?))
+            (and shutdown? id)
+            (do (reply! id {:error {:code -32600 :message "The server is shutting down"}})
+                (recur shutdown?))
+
             :else
             (do (try
                   (let [result (if (= "initialize" method)

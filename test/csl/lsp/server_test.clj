@@ -219,6 +219,9 @@
             path (convert/uri->path uri)]
         (is (str/ends-with? path "/java/io/File.java"))
         (is (str/includes? (nth (str/split-lines (slurp path)) (get-in range [:start :line])) "class File")))
+      (testing "hover names the class"
+        (is (str/includes? (get-in (request! "textDocument/hover" (at root "src/app/a.clj" "File. ")) [:contents :value])
+                           "java.io.File")))
       (request! "shutdown" nil)
       (notify! "exit" nil)
       (deref (:server client) 10000 :timeout))))
@@ -288,3 +291,31 @@
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))
+
+(defn frame [^String body]
+  (let [b (.getBytes body "UTF-8")]
+    (str "Content-Length: " (alength b) "\r\n\r\n" body)))
+
+(defn serve-bytes
+  "Run the server over `input` (framed messages) to its end: [exit-code
+  responses]."
+  [input]
+  (let [out (java.io.ByteArrayOutputStream.)
+        code (server/run! {:in (java.io.ByteArrayInputStream. (.getBytes ^String input "UTF-8")) :out out
+                           :home (str (tu/temp-dir)) :version "test"})
+        in (java.io.ByteArrayInputStream. (.toByteArray out))]
+    [code (vec (take-while some? (repeatedly #(rpc/read-message in))))]))
+
+(deftest bad-input-is-answered-not-fatal
+  (let [[code responses] (serve-bytes (str (frame "{not json")
+                                           (frame "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"shutdown\"}")
+                                           (frame "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}")))]
+    (is (= -32700 (get-in (first responses) [:error :code])))
+    (is (= 0 code) "and it carries on")))
+
+(deftest requests-after-shutdown-are-refused
+  (let [[code responses] (serve-bytes (str (frame "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"shutdown\"}")
+                                           (frame "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"x\"}}")
+                                           (frame "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}")))]
+    (is (= -32600 (get-in (second responses) [:error :code])))
+    (is (= 0 code))))

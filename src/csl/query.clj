@@ -32,10 +32,13 @@
   (or (db/query-value c "SELECT unit_id FROM project_file WHERE project_id = ? AND path = ?" p path)
       (db/query-value c "SELECT unit_id FROM dep_file WHERE path = ?" path)))
 
-(defn- contains-pos? [{[nr nc ner nec] :pos} row col]
+(defn- contains-pos?
+  "Is [row col] in the element's name? `end?` counts the position just
+  after it too: an editor's cursor sits between characters."
+  [{[nr nc ner nec] :pos} row col end?]
   (and (<= nr row ner)
        (or (> row nr) (<= nc col))
-       (or (< row ner) (< col nec))))
+       (or (< row ner) (< col nec) (and end? (= col nec)))))
 
 (defn elements-at
   "The elements of project `p`'s file at `path` whose name contains the
@@ -43,11 +46,13 @@
   languages of a .cljc file)."
   [c p path row col]
   (when-let [u (file-unit c p path)]
-    (->> (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
-                          " WHERE fe.unit_id = ? AND fe.name_row <= ? AND fe.name_row >= ? - 5")
-                   u row row)
-         (map row->element)
-         (filter #(contains-pos? % row col)))))
+    (let [els (->> (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                                    " WHERE fe.unit_id = ? AND fe.name_row <= ? AND fe.name_row >= ? - 5")
+                             u row row)
+                   (map row->element))]
+      ;; a name the cursor is in, else one it is just after
+      (or (seq (filter #(contains-pos? % row col false) els))
+          (filter #(contains-pos? % row col true) els)))))
 
 ;;;; locations
 
@@ -141,6 +146,11 @@
 
 (defn- same-lang? [el d] (boolean (some (:lang el) (:lang d))))
 
+(defn- in-lang
+  "The candidates in `el`'s language, else all of them."
+  [el candidates]
+  (or (seq (filter #(same-lang? el %) candidates)) candidates))
+
 (declare var-definitions)
 
 (defn- follow-imports
@@ -165,7 +175,7 @@
                      ;; clj falls back to a cljs definition
                      (when (:clj lang) (seq defs)))]
     (or (seq (follow-imports c p el (best matching) depth))
-        (when alias (best (definitions c p :ns-def nil ns)))))))
+        (when alias (best (in-lang el (definitions c p :ns-def nil ns))))))))
 
 (defn- definition-of [c p {:keys [kind unit-id local-id ns name] :as el}]
   (case kind
@@ -181,7 +191,7 @@
     :keyword-usage (or (best (definitions c p :keyword-def ns name)) [el])
     :keyword-def [el]
     :protocol-impl (best (definitions c p :var-def ns name))
-    (:ns-usage :ns-alias) (best (definitions c p :ns-def nil ns))
+    (:ns-usage :ns-alias) (best (in-lang el (definitions c p :ns-def nil ns)))
     :ns-def [el]
     ;; finding a class's source is file work, left to the server (csl.java)
     :java-class-usage [{:java-class name}]
@@ -199,22 +209,25 @@
   "Usages of `ns`/`name` of the given kinds that project `p` can see, as
   located things: {:path :pos :from-ns-id :from-var-id :flag-bits} (sym
   ids and bits, not decoded: a popular var has tens of thousands of
-  usages). `project-only?` keeps the project's own sources.
+  usages). `project-only?` keeps the project's own sources, `langs` the
+  usages in those languages.
 
   Joins project_file for the path directly, which is 6x faster than
   locating units afterwards for clojure.core/let's 25k usages on Metabase.
   That is complete because only files have usages: dependencies are
   analyzed without them. (Fully analyzed dependency files, when added,
   will need their jar entries here too.)"
-  [c p ns name kinds & {:keys [project-only?]}]
-  (->> (db/query c (str "SELECT pf.path, u.name_row, u.name_col, u.name_end_row, u.name_end_col,
-                                u.from_ns, u.from_var, u.flags
-                         FROM usage u
-                         JOIN project_file pf ON pf.project_id = ? AND pf.unit_id = u.unit_id
-                         WHERE u.to_ns = ? AND u.name = ? AND u.kind IN ("
-                        (str/join "," (map kinds/code kinds)) ")"
-                        (when project-only? " AND pf.ord = 0"))
-                   p (sym-id c ns) (sym-id c name))
+  [c p ns name kinds & {:keys [project-only? langs]}]
+  (->> (apply db/query c (str "SELECT pf.path, u.name_row, u.name_col, u.name_end_row, u.name_end_col,
+                                      u.from_ns, u.from_var, u.flags
+                               FROM usage u
+                               JOIN project_file pf ON pf.project_id = ? AND pf.unit_id = u.unit_id
+                               WHERE u.to_ns = ? AND u.name = ? AND u.kind IN ("
+                              (str/join "," (map kinds/code kinds)) ")"
+                              (when project-only? " AND pf.ord = 0")
+                              (when (seq langs) " AND (u.lang & ?) != 0"))
+              p (sym-id c ns) (sym-id c name)
+              (when (seq langs) [(kinds/langs->bits langs)]))
        (mapv (fn [[path nr nc ner nec from-ns from-var flags]]
                {:path path :pos [nr nc ner nec] :from-ns-id from-ns :from-var-id from-var
                 :flag-bits flags}))))
@@ -234,13 +247,21 @@
 (defn- var-targets
   "The var definitions an element means, for references and
   implementations: itself when it is one, else what it resolves to."
-  [c p {:keys [kind ns name pos] :as el}]
+  [c p {:keys [kind ns name pos unit-id] :as el}]
   (case kind
-    :var-def (or (seq (filter #(= pos (:pos %)) (definitions c p :var-def ns name))) [el])
+    :var-def (or (seq (filter #(and (= pos (:pos %)) (= unit-id (:unit-id %))) (definitions c p :var-def ns name)))
+                 [el])
     (:var-usage :symbol-usage) (or (seq (var-definitions c p el))
                                    ;; unresolved: its own name is all we know
                                    [(select-keys el [:ns :name])])
     []))
+
+(defn- usage-langs
+  "The languages whose usages can mean definition `d`: its own, and cljs
+  for a clj macro (:require-macros). nil (any) when it isn't known."
+  [{:keys [lang flags] :as d}]
+  (when (seq lang)
+    (cond-> lang (and (:clj lang) (:macro flags)) (conj :cljs))))
 
 (defn- var-references [c p el include-declaration?]
   (mapcat (fn [{:keys [ns name] :as target}]
@@ -249,7 +270,7 @@
                   recursive? #(and (= ns-id (:from-ns-id %)) (= name-id (:from-var-id %)))]
               (concat
                (->> (generated-names target)
-                    (mapcat #(usage-rows c p ns % [:var-usage :symbol-usage]))
+                    (mapcat #(usage-rows c p ns % [:var-usage :symbol-usage] :langs (usage-langs target)))
                     (remove #(and (not include-declaration?) (recursive? %))))
                (when (and include-declaration? (:unit-id target)) [target]))))
           (var-targets c p el)))
@@ -276,8 +297,8 @@
 
     (:ns-def :ns-usage :ns-alias)
     (let [target (if (= :ns-def kind) name ns)]
-      (concat (usage-rows c p target target [:ns-usage :ns-alias])
-              (when include-declaration? (definitions c p :ns-def nil target))))
+      (concat (usage-rows c p target target [:ns-usage :ns-alias] :langs (:lang el))
+              (when include-declaration? (in-lang el (definitions c p :ns-def nil target)))))
 
     []))
 
@@ -322,12 +343,12 @@
   `el`: what hover describes."
   [c p el]
   (->> (definition-of c p el)
-       (mapcat (fn [{:keys [kind ns name id pos] :as d}]
+       (mapcat (fn [{:keys [kind ns name id pos unit-id] :as d}]
                  (cond
                    id [d]
                    ;; an element (e.g. the definition under the cursor): its row
                    (#{:var-def :ns-def :keyword-def} kind)
-                   (filter #(= pos (:pos %)) (definitions c p kind ns name))
+                   (filter #(and (= pos (:pos %)) (= unit-id (:unit-id %))) (definitions c p kind ns name))
                    :else [d])))))
 
 (defn hover
@@ -336,8 +357,9 @@
   [c p path row col]
   (->> (elements-at c p path row col)
        (mapcat #(with-definition-rows c p %))
-       (map (fn [{:keys [id kind ns name flags extra] :as d}]
-              (let [doc (when id (doc-of c id))
+       (map (fn [{:keys [id kind ns name flags extra java-class] :as d}]
+              (let [[kind name] (if java-class [:java-class java-class] [kind name])
+                    doc (when id (doc-of c id))
                     arglists (:arglist-strs extra)]
                 (cond-> {:kind kind :ns ns :name name :flags (or flags #{})
                          :location (first (located c p [d]))}
