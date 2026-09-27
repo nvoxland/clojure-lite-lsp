@@ -35,6 +35,7 @@
   "Run a daemon in a future, returning once it is up (as clients do through
   ensure-daemon!, since the daemon creates the schema)."
   [h opts]
+  (.mkdirs (io/file (:dir (daemon/paths h))))
   (let [d (future (daemon/run! (merge fast {:home h} opts)))]
     (eventually #(or (realized? d)
                      (with-open [c (db/open-client (:db (daemon/paths h)))]
@@ -104,16 +105,68 @@
 
 (deftest an-older-daemon-is-replaced
   (let [h (home)
-        old (start! h {:version "old"})
+        old (start! h {:version "0.1.0"})
         spawned (atom nil)]
     (is (eventually #(lock/held? (:daemon-lock (daemon/paths h)))))
-    (is (= :spawned (client/ensure-daemon! {:home h :version "new"
-                                            :spawn! #(reset! spawned (future (daemon/run! (merge fast {:home h :version "new"}))))})))
+    (is (= :spawned (client/ensure-daemon! {:home h :version "0.2.0"
+                                            :spawn! #(reset! spawned (future (daemon/run! (merge fast {:home h :version "0.2.0"}))))})))
     (is (= :stopped (deref old 30000 :timeout)))
     (with-open [c (client-db h)]
-      (is (eventually #(= "new" (db/query-value c "SELECT version FROM daemon WHERE id = 1"))))
+      (is (eventually #(= "0.2.0" (db/query-value c "SELECT version FROM daemon WHERE id = 1"))))
       (client/request-stop! c))
     (deref @spawned 30000 :timeout)))
+
+(deftest a-newer-daemon-is-left-running
+  ;; two editors running different csl versions: the older one must not
+  ;; stop the newer daemon (and be replaced back, over and over)
+  (let [h (home)
+        newer (start! h {:version "0.2.0"})]
+    (is (= :running (client/ensure-daemon! {:home h :version "0.1.0"
+                                            :spawn! #(throw (ex-info "spawned" {}))})))
+    (is (not (realized? newer)))
+    (with-open [c (client-db h)] (client/request-stop! c))
+    (deref newer 30000 :timeout)))
+
+(deftest versions-compare-by-number
+  (is (client/older? "0.1.0" "0.2.0"))
+  (is (client/older? "0.9.0" "0.10.0"))
+  (is (client/older? "0.2.0-SNAPSHOT" "0.2.0"))
+  (is (not (client/older? "0.2.0" "0.2.0")))
+  (is (not (client/older? "0.2.0" "0.1.9"))))
+
+(deftest each-schema-version-has-its-own-index
+  ;; csl versions with different schemas run side by side: neither
+  ;; rebuilds the other's index
+  (let [h (home)
+        a (daemon/paths h 5)
+        b (daemon/paths h 6)]
+    (doseq [k [:db :daemon-lock :spawn-lock :log]]
+      (is (not= (k a) (k b)) (str k)))
+    (is (= (:home a) (:home b)) "configs and extracted sources are shared")))
+
+(deftest unused-older-indexes-are-removed
+  (let [h (home)
+        day-and-more (- (System/currentTimeMillis) (* 25 60 60 1000))
+        make! (fn [v age] (let [{:keys [db]} (daemon/paths h v)]
+                            (io/make-parents (io/file db))
+                            (spit db "x")
+                            (.setLastModified (io/file db) age)
+                            (.getParentFile (io/file db))))
+        unused (make! 1 day-and-more)
+        recent (make! 2 (System/currentTimeMillis))
+        in-use (make! 3 day-and-more)
+        newer (make! 999 day-and-more)
+        held (lock/try-lock (:daemon-lock (daemon/paths h 3)))
+        d (start! h {})]
+    (try
+      (is (not (.exists unused)))
+      (is (.exists recent))
+      (is (.exists in-use) "its daemon is running")
+      (is (.exists newer) "a newer csl's")
+      (finally
+        (lock/release! held)
+        (with-open [c (client-db h)] (client/request-stop! c))
+        (deref d 30000 :timeout)))))
 
 (deftest a-liveness-probe-does-not-stop-a-starting-daemon
   ;; clients probe liveness by briefly taking daemon.lock; a daemon

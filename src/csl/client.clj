@@ -1,8 +1,10 @@
 (ns csl.client
   "The csl lsp side of the daemon lifecycle: make sure a daemon of this
-  version is running, starting one if needed (DESIGN.md §6.3)."
+  version or a newer one is running, starting one if needed (DESIGN.md
+  §6.3)."
   (:require
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [csl.daemon :as daemon]
    [csl.db :as db]
    [csl.lock :as lock]
@@ -35,6 +37,20 @@
       (wait-until #(reset! v (try (db/query-value c "SELECT version FROM daemon WHERE id = 1")
                                   (catch java.sql.SQLException _ nil))))
       @v)))
+
+(defn- version-key [v]
+  (let [[number qualifier] (str/split (str v) #"-" 2)]
+    [(mapv parse-long (re-seq #"\d+" number)) (if qualifier 0 1)]))
+
+(defn older?
+  "Is version `a` older than `b`? Compared by number; a -SNAPSHOT (or any
+  qualifier) is older than its release."
+  [a b]
+  (let [[na qa] (version-key a)
+        [nb qb] (version-key b)
+        width (max (count na) (count nb))
+        pad #(into % (repeat (- width (count %)) 0))]
+    (neg? (compare [(pad na) qa] [(pad nb) qb]))))
 
 (defn daemon-command
   "How to start a daemon: this same native binary, or on the JVM (dev) this
@@ -72,17 +88,23 @@
         (-> .getOutputStream .close))))
 
 (defn ensure-daemon!
-  "Make sure a daemon of `version` is running. Returns :running or
-  :spawned."
+  "Make sure a daemon of `version`, or a newer one, is running. Returns
+  :running or :spawned.
+
+  Only an older daemon is replaced: with two editors running different
+  versions, the older one uses the newer daemon rather than the two
+  replacing each other's over and over. (Versions with different schemas
+  don't meet: each has its own index, `daemon/paths`.)"
   [{:keys [home version spawn!] :or {version version/version}}]
-  (let [{:keys [db daemon-lock spawn-lock]} (daemon/paths home)
+  (let [{:keys [db daemon-lock spawn-lock dir]} (daemon/paths home)
+        _ (.mkdirs (io/file dir))
         spawn! (or spawn! #(spawn-daemon! home))
-        live? #(lock/held? daemon-lock)]
-    (when (and (live?) (not= version (running-version db)))
-      ;; another version: ask it to stop, and replace it
+        live? #(lock/held? daemon-lock)
+        current? #(and (live?) (not (older? (running-version db) version)))]
+    (when (and (live?) (older? (running-version db) version))
       (with-open [c (db/open-client db)] (request-stop! c))
       (wait-until #(not (live?))))
-    (if (and (live?) (= version (running-version db)))
+    (if (current?)
       :running
       (let [held (lock/lock! spawn-lock timeout-ms)]
         (try
