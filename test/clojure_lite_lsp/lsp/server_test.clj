@@ -339,3 +339,19 @@
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))
+
+(deftest agents-can-have-requests-wait-for-the-index
+  ;; an editor is served from whatever is indexed so far; an agent asks
+  ;; once and trusts the answer, so it can ask to wait (waitForIndex)
+  (let [root (project! {"deps.edn" "{:paths [\"src\"]}"
+                        "src/app/a.clj" "(ns app.a)\n(defn greet [who] who)\n"
+                        "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/greet 1)\n"})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))]
+    (request! "initialize" {:rootUri (convert/path->uri root) :initializationOptions {:waitForIndex true}})
+    (notify! "initialized" {})
+    ;; asked at once: the first index is still running
+    (is (= [(uri root "src/app/a.clj")]
+           (map :uri (request! "textDocument/definition" (at root "src/app/b.clj" "greet")))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))

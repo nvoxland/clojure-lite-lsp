@@ -64,3 +64,33 @@
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Not a directory"
                         (cli/index! {:home (home) :spawn! #(throw (ex-info "no daemon needed" {}))}
                                     ["/no/such/dir"] (fn [_])))))
+
+(deftest query-answers-from-the-projects-index
+  (let [h (home)
+        daemons (atom [])
+        root (project! {"src/app/a.clj" "(ns app.a)\n(defn greet [who] who)\n"
+                        "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/greet 1)\n"})
+        o (opts h daemons)
+        q #(cli/query! o %& {:cwd root})]
+    (try
+      (testing "it indexes the project first, then answers"
+        (is (= {:exit 0 :out "src/app/b.clj:2:2: (a/greet 1)"} (q "references" "app.a/greet"))))
+      (testing "the project is found from a directory inside it"
+        (is (= 0 (:exit (cli/query! o ["definition" "app.a/greet"] {:cwd (str root "/src/app")})))))
+      (testing "positions are relative to the current directory"
+        (is (= "src/app/a.clj:2:7: (defn greet [who] who)"
+               (:out (cli/query! o ["definition" "b.clj:2:4"] {:cwd (str root "/src/app")})))))
+      (testing "--json"
+        (is (= [{:path (str root "/src/app/b.clj") :line 2 :column 2 :end-line 2 :end-column 9}]
+               (:results (cheshire.core/parse-string (:out (q "references" "app.a/greet" "--json")) true)))))
+      (testing "--no-sync answers from the index as it is"
+        (is (= 0 (:exit (q "definition" "app.a/greet" "--no-sync")))))
+      (testing "no command: what there is"
+        (let [{:keys [exit out]} (q)]
+          (is (= 0 exit))
+          (is (clojure.string/includes? out "references"))))
+      (testing "an unknown command: an error and the commands"
+        (let [{:keys [exit out]} (q "frobnicate" "x")]
+          (is (= 2 exit))
+          (is (clojure.string/includes? out "definition"))))
+      (finally (stop! h daemons)))))

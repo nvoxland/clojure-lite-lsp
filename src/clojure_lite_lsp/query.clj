@@ -197,11 +197,24 @@
     :java-class-usage [{:java-class name}]
     []))
 
+(defn symbol-elements
+  "The definitions a symbol names in project `p`: \"ns/name\" a var,
+  \"ns\" a namespace. Usable wherever elements at a position are."
+  [c p sym]
+  (if-let [[_ ns name] (re-matches #"([^/]+)/(.+)" sym)]
+    (without-declares (definitions c p :var-def ns name))
+    (definitions c p :ns-def nil sym)))
+
+(defn definition-of-elements
+  "Where the things `els` mean are defined: locations."
+  [c p els]
+  (located c p (mapcat #(definition-of c p %) els)))
+
 (defn definition
   "Go to definition from a position in project `p`'s file at `path`:
   locations."
   [c p path row col]
-  (located c p (mapcat #(definition-of c p %) (elements-at c p path row col))))
+  (definition-of-elements c p (elements-at c p path row col)))
 
 ;;;; references
 
@@ -302,11 +315,16 @@
 
     []))
 
+(defn references-of-elements
+  "Where the things `els` mean are used: locations."
+  [c p els {:keys [include-declaration?]}]
+  (located c p (mapcat #(references-of c p % include-declaration?) els)))
+
 (defn references
   "Find references from a position in project `p`'s file at `path`:
   locations."
-  [c p path row col {:keys [include-declaration?]}]
-  (located c p (mapcat #(references-of c p % include-declaration?) (elements-at c p path row col))))
+  [c p path row col opts]
+  (references-of-elements c p (elements-at c p path row col) opts))
 
 ;;;; implementations
 
@@ -328,11 +346,16 @@
               (filter #(:defmethod (kinds/bits->flags (:flag-bits %))) (usage-rows c p ns name [:var-usage]))))
           (var-targets c p el)))
 
+(defn implementations-of-elements
+  "Implementations of the protocols and multimethods `els` mean: locations."
+  [c p els]
+  (located c p (mapcat #(implementations-of c p %) els)))
+
 (defn implementations
   "Find implementations from a position in project `p`'s file at `path`:
   locations."
   [c p path row col]
-  (located c p (mapcat #(implementations-of c p %) (elements-at c p path row col))))
+  (implementations-of-elements c p (elements-at c p path row col)))
 
 ;;;; hover
 
@@ -351,11 +374,19 @@
                    (filter #(and (= pos (:pos %)) (= unit-id (:unit-id %))) (definitions c p kind ns name))
                    :else [d])))))
 
+(declare hover-of-elements)
+
 (defn hover
   "What to show on hover at a position: for each thing it means,
   {:kind :ns :name :doc :arglists :flags :location}."
   [c p path row col]
-  (->> (elements-at c p path row col)
+  (hover-of-elements c p (elements-at c p path row col)))
+
+(defn hover-of-elements
+  "What to show about the things `els` mean: [{:kind :ns :name :doc
+  :arglists :flags :location}]."
+  [c p els]
+  (->> els
        (mapcat #(with-definition-rows c p %))
        (map (fn [{:keys [id kind ns name flags extra java-class] :as d}]
               (let [[kind name] (if java-class [:java-class java-class] [kind name])

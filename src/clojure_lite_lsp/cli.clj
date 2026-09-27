@@ -4,8 +4,11 @@
   editor opened on it finds its index ready), and `clojure-lite-lsp gc` collects
   garbage now. Both go through the daemon, the index's only writer."
   (:require
+   [cheshire.core :as json]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
+   [clojure.string :as str]
+   [clojure-lite-lsp.commands :as commands]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
@@ -63,3 +66,53 @@
           (do (Thread/sleep (long poll-ms))
               (keep-daemon! opts)
               (recur)))))))
+
+;;;; query
+
+(def ^:private project-markers ["deps.edn" "project.clj" "bb.edn" ".clojure-lite-lsp.edn"])
+
+(defn project-root
+  "The project `dir` is in: the nearest directory, `dir` or above, with a
+  build file; else `dir` itself."
+  [dir]
+  (let [start (.getCanonicalFile (io/file dir))
+        ^java.io.File found (or (first (filter (fn [^java.io.File d] (some #(.isFile (io/file d ^String %)) project-markers))
+                                               (take-while some? (iterate #(.getParentFile ^java.io.File %) start))))
+                                start)]
+    (.getPath found)))
+
+(defn- parse-query-args
+  "{:args [command argument] :json? :sync? :project}."
+  [args]
+  (loop [[a & more] args acc {:args [] :sync? true}]
+    (cond
+      (nil? a) acc
+      (= "--json" a) (recur more (assoc acc :json? true))
+      (= "--no-sync" a) (recur more (assoc acc :sync? false))
+      (= "--project" a) (recur (rest more) (assoc acc :project (first more)))
+      :else (recur more (update acc :args conj a)))))
+
+(defn query!
+  "Run `clojure-lite-lsp query` with `args`, in directory `cwd`: {:exit
+  :out}. The project is brought up to date first (unless --no-sync), so
+  what an agent just edited is answered. `opts` are
+  clojure-lite-lsp.client/ensure-daemon!'s."
+  [opts args {:keys [cwd]}]
+  (let [{:keys [args json? sync? project]} (parse-query-args args)
+        [cmd] args]
+    (if (or (nil? cmd) (#{"help" "--help" "-h"} cmd))
+      {:exit 0 :out (commands/help)}
+      (try
+        (let [root (project-root (or project cwd))
+              _ (when sync? (index! opts [root] (fn [_])))
+              {:keys [db]} (daemon/paths (:home opts))]
+          (if-not (.isFile (io/file db))
+            {:exit 1 :out (str "No index yet: run clojure-lite-lsp index " root)}
+            (with-open [c (db/open-reader db)]
+              (if-let [p (db/query-value c "SELECT id FROM project WHERE root = ?" root)]
+                (let [ctx {:c c :p p :root root :home (:home opts) :cwd (.getCanonicalPath (io/file cwd))}
+                      result (commands/run ctx args)]
+                  {:exit 0 :out (if json? (json/generate-string result) (commands/format-text ctx cmd result))})
+                {:exit 1 :out (str root " isn't indexed yet: run clojure-lite-lsp index " root)}))))
+        (catch clojure.lang.ExceptionInfo e
+          {:exit 2 :out (str (ex-message e) "\n\n" (commands/help))})))))

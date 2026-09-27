@@ -14,6 +14,8 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.query :as q]
    [clojure-lite-lsp.sources :as sources])
   (:import
    [java.io File]
@@ -97,3 +99,25 @@
        (filter #(.isFile ^File %))
        first
        (#(some-> ^File % str))))
+
+(defn- project-source-dirs
+  "Where project `p`'s .java files may be: its classpath dirs, and the
+  usual places (they are often compiled separately, off the classpath)."
+  [c p]
+  (let [root (db/query-value c "SELECT root FROM project WHERE id = ?" p)
+        memo (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
+    (distinct (concat (->> (str/split (or memo "") (re-pattern File/pathSeparator))
+                           (remove #(str/ends-with? % ".jar"))
+                           (map #(if (.isAbsolute (io/file ^String %)) % (str root "/" %))))
+                      (map #(str root "/" %) ["java" "src/main/java" "src/java" "src"])))))
+
+(defn class-location
+  "The location {:path :pos} of `class-name`'s source for project `p`, or
+  nil: its .java files, a -sources.jar beside a jar with the class, or the
+  JDK's src.zip. `home`: where extracted sources go."
+  [c home p class-name]
+  (source-location {:home home
+                    :source-dirs (project-source-dirs c p)
+                    :class-jars (q/java-class-jars c p class-name)
+                    :jdk-src (jdk-src)}
+                   class-name))

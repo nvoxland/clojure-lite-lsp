@@ -102,26 +102,11 @@
 (defn- lsp-location [{:keys [opts] :as state} loc]
   (some-> (as-file state loc) (convert/location opts)))
 
-(defn- java-source-dirs
-  "Where a project's .java files may be: its classpath dirs, and the usual
-  places (they are often compiled separately, off the classpath)."
-  [{:keys [reader]} p]
-  (let [root (db/query-value @reader "SELECT root FROM project WHERE id = ?" p)
-        memo (db/query-value @reader "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
-    (distinct (concat (->> (str/split (or memo "") (re-pattern File/pathSeparator))
-                           (remove #(str/ends-with? % ".jar"))
-                           (map #(if (.isAbsolute (io/file ^String %)) % (str root "/" %))))
-                      (map #(str root "/" %) ["java" "src/main/java" "src/java" "src"])))))
-
 (defn- resolve-java
   "A {:java-class} result as the location of its source, or nil."
-  [{:keys [reader opts] :as state} p {:keys [java-class] :as loc}]
+  [{:keys [reader opts]} p {:keys [java-class] :as loc}]
   (if java-class
-    (java/source-location {:home (:home opts)
-                           :source-dirs (java-source-dirs state p)
-                           :class-jars (q/java-class-jars @reader p java-class)
-                           :jdk-src (java/jdk-src)}
-                          java-class)
+    (java/class-location @reader (:home opts) p java-class)
     loc))
 
 (defn- lsp-locations [state p locs]
@@ -183,7 +168,24 @@
           :when (and p (not= awaited (q/file-unit @reader p path)))]
     (buffers/indexed! buffers path)))
 
+(def ^:private index-wait-ms
+  "How long a request waits for the index (waitForIndex) at most."
+  120000)
+
+(defn- await-index!
+  "Wait until the projects have nothing queued: for clients that asked to
+  (initializationOptions {\"waitForIndex\": true}), agents that ask once and
+  trust the answer. Editors are served from what's indexed so far."
+  [{:keys [reader projects]}]
+  (let [deadline (+ (System/currentTimeMillis) index-wait-ms)]
+    (loop []
+      (when (and (some #(pos? (queue/pending-count @reader (:p %))) @projects)
+                 (< (System/currentTimeMillis) deadline))
+        (Thread/sleep 100)
+        (recur)))))
+
 (defn- handle-request [{:keys [opts reader projects] :as state} {:keys [method params]}]
+  (when (:waitForIndex opts) (await-index! state))
   (catch-up-buffers! state)
   (case method
     "textDocument/definition"
@@ -267,7 +269,7 @@
     (client/ensure-daemon! opts)
     (reset! client-c (db/open-client db))
     (reset! reader (db/open-reader db))
-    (swap! (:opts-atom state) merge (select-keys (:initializationOptions params) [:dependency-scheme])
+    (swap! (:opts-atom state) merge (select-keys (:initializationOptions params) [:dependency-scheme :waitForIndex])
            {:progress? (boolean (get-in params [:capabilities :window :workDoneProgress]))})
     (reset! projects (vec (for [root (roots params)]
                             {:root root :p (snapshot/ensure-project! @client-c root)})))
