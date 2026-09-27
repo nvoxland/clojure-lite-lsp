@@ -55,13 +55,13 @@
       (is (= [3 7 3 8] (buffers/->buffer store path [2 7 2 8])))
       (is (nil? (buffers/->indexed store path [2 1])) "the new line doesn't exist there"))
     (testing "after a save, until the index has it, positions still map onto what it has"
-      (buffers/saved! store path 41)
+      (buffers/saved! store path)
       (is (= [2 7] (buffers/->indexed store path [3 7])))
-      (is (= 41 (buffers/awaited-unit store path))))
+      (is (= [path] (keys (buffers/awaiting store)))))
     (testing "once indexed, the saved buffer is the base"
       (buffers/indexed! store path)
       (is (= [3 7] (buffers/->indexed store path [3 7])))
-      (is (nil? (buffers/awaited-unit store path))))
+      (is (empty? (buffers/awaiting store))))
     (testing "files that aren't open map as they are"
       (is (= [5 5] (buffers/->indexed store "/elsewhere.clj" [5 5]))))
     (buffers/close! store path)

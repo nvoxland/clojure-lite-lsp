@@ -65,7 +65,10 @@
 
 (def ^:private build-files #{"deps.edn" "project.clj" "bb.edn" ".clojure-lite-lsp.edn" "config.edn"})
 
-(defn- file-changed! [state path deleted?]
+(defn- file-changed! [{:keys [buffers] :as state} path deleted?]
+  ;; an open document's file rewritten outside the editor
+  (when (and (not deleted?) (contains? @buffers path) (.isFile (io/file path)))
+    (buffers/changed-on-disk! buffers path (slurp path)))
   (when-let [{:keys [p]} (project-of state path)]
     (cond
       (build-files (.getName (io/file path))) (enqueue! state p :sync "" 1)
@@ -141,11 +144,18 @@
   [positions row col]
   (first (filter (fn [[r c _ ec]] (and (= r row) (<= c col ec))) positions)))
 
+(defn- scope-unchanged?
+  "Is the scope a local is bound in unchanged since the save? Otherwise a
+  use typed since would be missed by a rename from the index."
+  [buffers path [start _ end]]
+  (or (nil? start) (buffers/unchanged? buffers path start end)))
+
 (defn- prepare-rename [{:keys [buffers]} c p path row col]
   ;; only locals: a var's rename would edit other files from the index
-  (when-let [{:keys [name positions]} (q/local-occurrences c p path row col)]
-    (when-let [bp (some->> (at-cursor positions row col) (buffers/->buffer buffers path))]
-      {:range (convert/range bp) :placeholder name})))
+  (when-let [{:keys [name positions scope]} (q/local-occurrences c p path row col)]
+    (when (scope-unchanged? buffers path scope)
+      (when-let [bp (some->> (at-cursor positions row col) (buffers/->buffer buffers path))]
+        {:range (convert/range bp) :placeholder name}))))
 
 (def ^:private symbol-name-re
   "What a local can be renamed to: a plain symbol."
@@ -154,8 +164,10 @@
 (defn- rename [{:keys [buffers]} c p path row col new-name]
   (when-not (and new-name (re-matches symbol-name-re new-name))
     (throw (ex-info (str "Not a valid local name: " new-name) {})))
-  (let [{:keys [name positions]} (or (q/local-occurrences c p path row col)
-                                     (throw (ex-info "Only locals can be renamed" {})))
+  (let [{:keys [name positions scope]} (or (q/local-occurrences c p path row col)
+                                           (throw (ex-info "Only locals can be renamed" {})))
+        _ (when-not (scope-unchanged? buffers path scope)
+            (throw (ex-info (str "Save the file first: the code where " name " is bound changed since the last save") {})))
         text (buffers/text buffers path)
         ranges (for [pos positions]
                  (let [bp (buffers/->buffer buffers path pos)
@@ -182,8 +194,10 @@
        :documentation (when doc {:kind "markdown" :value doc})
        :parameters (mapv (fn [o] {:label o}) offsets)
        :fits? (or (< arg (count params)) (some? variadic))
+       ;; past the last parameter: the last one (LSP reads an index out
+       ;; of range as the first)
        :active (cond (and variadic (>= arg variadic)) variadic
-                     :else arg)})))
+                     :else (min arg (max 0 (dec (count params)))))})))
 
 (defn- signature-help [{:keys [buffers reader] :as state} {:keys [textDocument position]}]
   (when-let [path (client-path (:uri textDocument))]
@@ -234,12 +248,14 @@
   (mapv :range (lsp-locations state p calls)))
 
 (defn- catch-up-buffers!
-  "Saved documents the index now has: their saved text is the base."
-  [{:keys [buffers reader] :as state}]
-  (doseq [[path {:keys [awaited saved]}] @buffers
-          :when saved
-          :let [{:keys [p]} (project-of state path)]
-          :when (and p (not= awaited (q/file-unit @reader p path)))]
+  "Documents whose file's text the index now has: that text is the base.
+  By content: the index's hash of the file is the saved text's, and
+  nothing for the file is still queued."
+  [{:keys [buffers reader]}]
+  (doseq [[path h] (buffers/awaiting buffers)
+          :let [indexed (db/query-value @reader "SELECT content_hash FROM fingerprint WHERE path = ?" path)]
+          :when (and indexed (java.util.Arrays/equals ^bytes indexed ^bytes h)
+                     (nil? (db/query-value @reader "SELECT 1 FROM pending WHERE kind = 'file' AND path = ?" path)))]
     (buffers/indexed! buffers path)))
 
 (def ^:private index-wait-ms
@@ -438,7 +454,7 @@
       "textDocument/didChange" (buffers/change! buffers (doc-path) (:contentChanges params))
       "textDocument/didSave" (let [path (doc-path)
                                    proj (project-of state path)]
-                               (buffers/saved! buffers path (when proj (q/file-unit @(:reader state) (:p proj) path)))
+                               (buffers/saved! buffers path)
                                (when-let [{:keys [p]} proj]
                                  (enqueue! state p (if (dep-file? state path) :dep-file :file) path 0)))
       "textDocument/didClose" (buffers/close! buffers (doc-path))

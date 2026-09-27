@@ -46,3 +46,21 @@
   (is (= {:params ["a" "b" "more"] :variadic 2} (forms/arglist-params "[a b & more]")))
   (is (= {:params ["{:keys [a b]}" "c"] :variadic nil} (forms/arglist-params "[{:keys [a b]} c]")))
   (is (= {:params [] :variadic nil} (forms/arglist-params "[]"))))
+
+(deftest dispatch-forms
+  (is (= ["f" 1] (ctx "(f #_(g 1) x |")) "a discarded form isn't an argument")
+  (is (= ["f" 1] (ctx "(f #_ #_ a b x |")) "nor are two")
+  (is (= ["f" 1] (ctx "(f #?(:clj a :cljs b) |")) "a reader conditional is one")
+  (is (= ["f" 1] (ctx "(f #?@(:clj [a b]) |")))
+  (is (= ["f" 1] (ctx "(f #inst \"2020\" |")) "a tagged literal is one")
+  (is (= ["f" 1] (ctx "(f #:a{:b 1} |")) "a namespaced map is one")
+  (is (= ["f" 1] (ctx "(f #'x |")) "a var quote is one")
+  (is (= ["f" 1] (ctx "(f #\"re\" |")) "a regex is one"))
+
+(deftest a-cursor-in-a-string-is-in-that-argument
+  (is (= ["str" 0] (ctx "(str \"hello |"))))
+
+(deftest type-hints-arent-parameters
+  (is (= {:params ["s" "n"] :variadic nil} (forms/arglist-params "[^String s n]")))
+  (is (= {:params ["s"] :variadic nil} (forms/arglist-params "[^{:tag String} s]")))
+  (is (= {:params ["a" "more"] :variadic 1} (forms/arglist-params "[a & ^java.util.List more]"))))

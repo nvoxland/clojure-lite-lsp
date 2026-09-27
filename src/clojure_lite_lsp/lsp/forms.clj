@@ -8,7 +8,7 @@
 
 (def ^:private openers #{\( \[ \{})
 (def ^:private closers #{\) \] \}})
-(def ^:private prefixes #{\' \` \~ \@ \# \^})
+(def ^:private prefixes #{\' \` \~ \@})
 
 (defn- whitespace? [c] (or (Character/isWhitespace (char c)) (= \, c)))
 
@@ -36,6 +36,27 @@
       stack)
     stack))
 
+(defn- skip-next
+  "The innermost frame's next form isn't one of its forms (^metadata, #_)."
+  [stack]
+  (if (seq stack) (update-in stack [(dec (count stack)) :skip] (fnil inc 0)) stack))
+
+(defn- prefix
+  "The form just counted continues in what follows (a reader prefix)."
+  [stack]
+  (if (seq stack) (assoc-in stack [(dec (count stack)) :prefixed] true) stack))
+
+(defn- token-end
+  "Where the token starting at `i` ends: a tag (#inst), a namespaced map's
+  :ns, ##Inf."
+  [^String text i n]
+  (loop [j i]
+    (if (and (< j n)
+             (let [c (.charAt text j)]
+               (not (or (whitespace? c) (openers c) (closers c) (= \" c)))))
+      (recur (inc j))
+      j)))
+
 (defn call-at
   "The call the cursor at `offset` in `text` is in: {:head [start end] (of
   the called symbol) :arg n (0-based argument index)}, or nil when it isn't
@@ -61,22 +82,34 @@
                        (recur (if (neg? nl) n nl) stack nil))
 
             (= \" c) (let [end (loop [j (inc i)]
-                                 (cond (>= j n) n
+                                 (cond (>= j n) nil
                                        (= \\ (.charAt text j)) (recur (+ j 2))
                                        (= \" (.charAt text j)) (inc j)
                                        :else (recur (inc j))))]
-                       (recur end (start-form stack i false) nil))
+                       ;; unclosed at the cursor: in that argument
+                       (recur (or end n) (start-form stack i false) (when-not end i)))
 
             (openers c) (recur (inc i) (conj (start-form stack i false) {:open c :forms 0}) nil)
 
             (closers c) (recur (inc i) (if (seq stack) (pop stack) stack) nil)
 
-            (= \^ c) (let [stack (if (seq stack) (update-in stack [(dec (count stack)) :skip] (fnil inc 0)) stack)]
-                       (recur (inc i) stack nil))
+            (= \^ c) (recur (inc i) (skip-next stack) nil)
 
-            (prefixes c) (let [stack (start-form stack i false)
-                               stack (if (seq stack) (assoc-in stack [(dec (count stack)) :prefixed] true) stack)]
-                           (recur (inc i) stack nil))
+            (= \# c) (let [d (when (< (inc i) n) (.charAt text (inc i)))]
+                       (cond
+                         ;; #_ discards the next form
+                         (= \_ d) (recur (+ i 2) (skip-next stack) nil)
+                         ;; #? #?@ #' #( #{ #"..." #:ns{...} #tag form ##Inf:
+                         ;; one form, whatever follows the dispatch
+                         :else (let [stack (prefix (start-form stack i false))
+                                     after (cond
+                                             (#{\( \{ \"} d) (inc i)
+                                             (= \? d) (if (and (< (+ i 2) n) (= \@ (.charAt text (+ i 2)))) (+ i 3) (+ i 2))
+                                             (= \' d) (+ i 2)
+                                             :else (token-end text (inc i) n))]
+                                 (recur after stack nil))))
+
+            (prefixes c) (recur (inc i) (prefix (start-form stack i false)) nil)
 
             :else (recur (inc i) (start-form stack i true) i)))
         ;; at the cursor
@@ -108,6 +141,8 @@
                        (closers c) (recur (inc i) (dec depth) start out)
                        :else (recur (inc i) depth (or start i) out)))
                    (cond-> out start (conj (subs inner start)))))
+        ;; type hints (^String s, ^{:tag X} s) aren't parameters
+        tokens (remove #(.startsWith ^String % "^") tokens)
         amp (.indexOf ^java.util.List tokens "&")]
     {:params (vec (remove #{"&"} tokens))
      :variadic (when-not (neg? amp) amp)}))

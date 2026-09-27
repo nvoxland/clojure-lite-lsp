@@ -382,6 +382,14 @@
         (is (every? #(= "person" (:newText %)) edits)))
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"name"
                             (request! "textDocument/rename" (assoc (at root "src/app/a.clj" "who who") :newName "not valid")))))
+    (testing "rename refuses when the local's scope changed since the save: an unsaved use would be missed"
+      (let [edited (str/replace a "  [who]\n" "  [who]\n  (println who)\n")]
+        (notify! "textDocument/didChange" {:textDocument (assoc doc :version 2) :contentChanges [{:text edited}]})
+        (let [pos {:textDocument doc :position (pos-of edited "who who")}]
+          (is (nil? (request! "textDocument/prepareRename" pos)))
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"[Ss]ave"
+                                (request! "textDocument/rename" (assoc pos :newName "person")))))
+        (notify! "textDocument/didChange" {:textDocument (assoc doc :version 3) :contentChanges [{:text a}]})))
     (testing "signature help while typing a new call"
       (let [typed (str a "(greet ")]
         (notify! "textDocument/didChange" {:textDocument (assoc doc :version 2) :contentChanges [{:text typed}]})
@@ -398,6 +406,34 @@
             typed (str b "(a/greet ")]
         (notify! "textDocument/didOpen" {:textDocument (assoc bdoc :languageId "clojure" :version 1 :text typed)})
         (is (= ["greet [who]"] (map :label (:signatures (request! "textDocument/signatureHelp" {:textDocument bdoc :position (end-of typed)})))))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))
+
+(deftest an-open-file-changed-on-disk
+  ;; git checkout or a formatter rewrites an open file; the editor reloads
+  ;; it without a save. Positions must follow what the index then has.
+  (let [a "(ns app.a)\n(defn greet [who] who)\n(defn twice [x] (greet x))\n"
+        a2 (str ";; one\n;; two\n" a)
+        root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" a})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
+        doc {:uri (uri root "src/app/a.clj")}]
+    (request! "initialize" {:rootUri (convert/path->uri root)})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (notify! "textDocument/didOpen" {:textDocument (assoc doc :languageId "clojure" :version 1 :text a)})
+    (wait-indexed! client)
+    (spit (io/file root "src/app/a.clj") a2)
+    (notify! "workspace/didChangeWatchedFiles" {:changes [{:uri (:uri doc) :type 2}]})
+    (notify! "textDocument/didChange" {:textDocument (assoc doc :version 2) :contentChanges [{:text a2}]})
+    (wait-indexed! client)
+    (is (= [(pos-of a2 "greet [")]
+           (map (comp :start :range) (request! "textDocument/definition" {:textDocument doc :position (pos-of a2 "greet x")}))))
+    (testing "and saved again, unchanged"
+      (notify! "textDocument/didSave" {:textDocument doc})
+      (wait-indexed! client)
+      (is (= [(pos-of a2 "greet [")]
+             (map (comp :start :range) (request! "textDocument/definition" {:textDocument doc :position (pos-of a2 "greet x")})))))
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))

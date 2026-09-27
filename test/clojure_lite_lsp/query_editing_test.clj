@@ -45,3 +45,15 @@
     (testing "anything but a local: nil (renaming it would touch other files)"
       (let [[row col] (at proj "greet x" 0)]
         (is (nil? (q/local-occurrences (:c proj) (:p proj) (f/path proj "src/app/a.clj") row col)))))))
+
+(deftest a-cljc-local-is-one-local-in-both-languages
+  ;; clj-kondo analyzes a .cljc file once per language, giving the same
+  ;; local an id in each: a rename must take the uses in both branches
+  (with-project [proj {"src/app/c.cljc" "(ns app.c)\n(defn f [x] #?(:clj (inc x) :cljs (dec x)))\n"}]
+    (let [path (f/path proj "src/app/c.cljc")
+          all #{(f/at proj "src/app/c.cljc" "x]") (f/at proj "src/app/c.cljc" "x) :cljs") (f/at proj "src/app/c.cljc" "x)))")}]
+      (doseq [from ["x]" "x) :cljs" "x)))"]
+              :let [[row col] (f/at proj "src/app/c.cljc" from)]]
+        (testing (str "from " from)
+          (is (= all (set (map #(vec (take 2 %)) (:positions (q/local-occurrences (:c proj) (:p proj) path row col))))))
+          (is (= all (set (map #(vec (take 2 (:pos %))) (q/highlights (:c proj) (:p proj) path row col))))))))))

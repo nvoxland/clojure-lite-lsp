@@ -413,20 +413,37 @@
 
 (def ^:private write-kinds #{:var-def :ns-def :keyword-def :local})
 
+(defn- local-rows [c u clause & params]
+  (map row->element
+       (apply db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                              " WHERE fe.unit_id = ? AND fe.kind IN (?, ?) AND " clause)
+              u (kinds/code :local) (kinds/code :local-usage) params)))
+
+(defn- local-ids
+  "The ids of local `el` in every language: a .cljc file is analyzed once
+  per language, and each gives the same local its own id. They share the
+  binding's position."
+  [c u {:keys [local-id]}]
+  (let [bindings (filter (comp #{:local} :kind) (local-rows c u "fe.local_id = ?" local-id))]
+    (into #{local-id}
+          (for [{[r col] :pos} bindings
+                el (local-rows c u "fe.name_row = ? AND fe.name_col = ?" r col)
+                :when (= :local (:kind el))]
+            (:local-id el)))))
+
 (defn- occurrences-of
-  "The elements of unit `u` that are occurrences of `el`: the same local,
-  or the same var, namespace or keyword."
-  [c u {:keys [kind ns name local-id]}]
-  (->> (if (#{:local :local-usage} kind)
-         (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
-                          " WHERE fe.unit_id = ? AND fe.local_id = ? AND fe.kind IN (?, ?)")
-                   u local-id (kinds/code :local) (kinds/code :local-usage))
-         (when-let [ks (occurrence-kinds kind)]
+  "The elements of unit `u` that are occurrences of `el`: the same local
+  (in every language), or the same var, namespace or keyword."
+  [c u {:keys [kind ns name] :as el}]
+  (if (#{:local :local-usage} kind)
+    (let [ids (vec (local-ids c u el))]
+      (apply local-rows c u (str "fe.local_id IN (" (str/join "," (repeat (count ids) "?")) ")") ids))
+    (when-let [ks (occurrence-kinds kind)]
+      (map row->element
            (apply db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
                                   " WHERE fe.unit_id = ? AND fe.ns = ? AND fe.name = ? AND fe.kind IN ("
                                   (str/join "," (repeat (count ks) "?")) ")")
-                  u (sym-id c ns) (sym-id c name) (map kinds/code ks))))
-       (map row->element)))
+                  u (sym-id c ns) (sym-id c name) (map kinds/code ks))))))
 
 (defn highlights
   "The occurrences, in project `p`'s file at `path`, of what's at a
@@ -440,14 +457,17 @@
          vec)))
 
 (defn local-occurrences
-  "When a local is at the position: {:name :positions}, every place its
-  name is written (binding and uses), all in this file. nil otherwise:
-  renaming anything else would touch other files."
+  "When a local is at the position: {:name :positions :scope}, every place
+  its name is written (binding and uses), all in this file, and the scope
+  it's bound in. nil otherwise: renaming anything else would touch other
+  files."
   [c p path row col]
   (when-let [u (file-unit c p path)]
     (when-let [el (first (filter (comp #{:local :local-usage} :kind) (elements-at c p path row col)))]
-      {:name (:name el)
-       :positions (vec (distinct (map :pos (occurrences-of c u el))))})))
+      (let [occurrences (occurrences-of c u el)]
+        {:name (:name el)
+         :positions (vec (distinct (map :pos occurrences)))
+         :scope (some #(when (= :local (:kind %)) (:form %)) occurrences)}))))
 
 (defn resolve-symbol
   "The var definitions a symbol written as `text` (\"alias/name\",

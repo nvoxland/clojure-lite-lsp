@@ -99,25 +99,36 @@
          (fn [{:keys [base current] :as e}]
            (when e
              (let [text (reduce apply-change current changes)]
-               (merge (entry base text) (select-keys e [:saved :awaited])))))))
+               (merge (entry base text) (select-keys e [:saved :saved-hash])))))))
+
+(defn- sha256 ^bytes [^String s]
+  (.digest (java.security.MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8")))
+
+(defn- await-text
+  "The file now holds `text`: it becomes the base once the index has it
+  (`indexed!`); until then, the base stays what the index has."
+  [{:keys [base] :as e} text]
+  (when e
+    (if (= base text)
+      (dissoc e :saved :saved-hash)
+      (assoc e :saved text :saved-hash (sha256 text)))))
 
 (defn saved!
-  "The document was saved while the index had unit `unit-id` for it. The
-  base stays what the index has until it has the saved text (`indexed!`,
-  once the file's unit is no longer `unit-id`)."
-  [store path unit-id]
-  (swap! store update path
-         (fn [{:keys [base current] :as e}]
-           (when e
-             (if (= base current)
-               (dissoc e :saved :awaited)
-               (assoc e :saved current :awaited unit-id))))))
-
-(defn awaited-unit
-  "The unit the index had for `path` when it was saved, while it has yet
-  to catch up."
+  "The document was saved: the buffer is what the file holds."
   [store path]
-  (:awaited (@store path)))
+  (swap! store update path #(await-text % (:current %))))
+
+(defn changed-on-disk!
+  "The file changed outside the editor (a checkout, a formatter) and holds
+  `text`."
+  [store path text]
+  (swap! store update path #(await-text % text)))
+
+(defn awaiting
+  "{path content-hash} of the documents whose file holds text the index
+  may not have yet."
+  [store]
+  (into {} (keep (fn [[path {:keys [saved-hash]}]] (when saved-hash [path saved-hash]))) @store))
 
 (defn indexed!
   "The index now has `path` as it was saved: that is the base."
@@ -149,6 +160,18 @@
         (when (every? some? rows)
           (vec (interleave (map inc rows) (take-nth 2 (rest pos)))))))
     pos))
+
+(defn unchanged?
+  "Are rows `start`..`end` (1-based) of the indexed version of `path` the
+  same in its buffer, with nothing inserted among them?"
+  [store path start end]
+  (if-let [{m :map :keys [base current]} (@store path)]
+    (or (= base current)
+        (let [to (:to-current @m)
+              first-row (get to (dec start))]
+          (and first-row
+               (every? #(= (+ first-row (- % (dec start))) (get to %)) (range (dec start) end)))))
+    true))
 
 (defn ->indexed
   "A position ([row col] or [row col end-row end-col], 1-based) in the
