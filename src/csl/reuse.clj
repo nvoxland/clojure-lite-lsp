@@ -14,6 +14,7 @@
    [clojure.string :as str]
    [csl.config-sig :as config-sig]
    [csl.db :as db]
+   [csl.normalize :as normalize]
    [csl.writer :as writer]))
 
 (set! *warn-on-reflection* true)
@@ -68,7 +69,10 @@
   [r {:keys [c] :as w} unit-key]
   (or (writer/unit-id c unit-key)
       (some (fn [[u other-config]]
-              (let [{:keys [global-same? changed]} (config-diff r other-config (:config-hash unit-key))]
+              (let [{:keys [global-same? custom-same? changed]} (config-diff r other-config (:config-hash unit-key))
+                    ;; custom keys reach analysis only through hooks that
+                    ;; transform (csl.analyze marks those files)
+                    changed (cond-> changed (not custom-same?) (conj normalize/transformed-ref))]
                 (when (and global-same? (not (references-any? c u changed)))
                   (writer/add-unit-key! w unit-key u)
                   u)))

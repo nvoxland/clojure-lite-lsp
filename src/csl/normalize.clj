@@ -200,6 +200,12 @@
                  (let [[first-el :as group] (groups key)]
                    (assoc first-el :lang (into #{} (mapcat :lang) group))))))))
 
+(def transformed-ref
+  "The ref recorded for a file in which a hook returned a new node
+  (csl.analyze): only such files can depend on the custom config keys
+  hooks read."
+  "hook:transformed")
+
 (defn- refs
   "What each file references, as :ref elements named \"ns/name\" for every
   var it calls (including calls inside hook expansions, which have no

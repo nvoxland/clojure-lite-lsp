@@ -36,6 +36,27 @@
   its analysis."
   (update-vals modes (fn [m] (sha256 (pr-str [normalize/version (dissoc m :external?)])))))
 
+(def ^:dynamic *transformed*
+  "While analyzing: an atom collecting the files (canonical paths) in which
+  a hook returned a new node, which is how clj-kondo itself tells a
+  transformation from a hook that only lints."
+  nil)
+
+(defonce ^:private watch-hooks
+  ;; wrap clj-kondo's hook lookup, once, so each hook call is compared with
+  ;; what it was given
+  (delay
+    (alter-var-root
+     #'clj-kondo.impl.hooks/hook-fn
+     (fn [hook-fn]
+       (fn [ctx & args]
+         (when-let [f (apply hook-fn ctx args)]
+           (fn [{:keys [node] :as m}]
+             (let [r (f m)]
+               (when (and *transformed* (:node r) (not (identical? node (:node r))))
+                 (swap! *transformed* conj (:filename ctx)))
+               r))))))))
+
 (defn- run-kondo [lint mode config-dir]
   (let [{:keys [skip-lint analysis]} (modes mode)]
     (kondo/run! {:lint lint
@@ -78,16 +99,20 @@
   in `mode` (:project, or :dependency for external dirs). Returns, in
   order, [{:path :unit-key :elements}], including files with no analysis."
   [paths {:keys [config mode shards] :or {shards 8}}]
+  @watch-hooks
   (in-shards paths shards
              (fn [part]
                (let [by-canonical (into {} (map (fn [p] [(canonical p) p])) part)
-                     units (normalize/normalize (run-kondo (vec (keys by-canonical)) mode (:dir config))
+                     transformed (atom #{})
+                     units (normalize/normalize (binding [*transformed* transformed]
+                                                  (run-kondo (vec (keys by-canonical)) mode (:dir config)))
                                                 {:external? (:external? (modes mode))})]
                  (for [p part
                        :let [c (canonical p)]]
                    {:path p
                     :unit-key (unit-key mode config (fingerprint/sha256 c) p)
-                    :elements (get units c [])})))))
+                    :elements (cond-> (get units c [])
+                                (@transformed c) (conj {:kind :ref :name normalize/transformed-ref :lang #{}}))})))))
 
 (defn jar-key
   "The key of a jar with `jar-hash` analyzed with `config`."

@@ -111,10 +111,14 @@
                                     (when (some some? entry) [(str s) (digest entry)]))))
                           syms)
         [group-cfgs ns-cfgs] ((juxt filter remove) (fn [[k]] (groups k)) config-in-ns)
+        ;; top-level keys of no clj-kondo meaning (:metabase/modules): only
+        ;; hooks read them
+        custom (into {} (filter (fn [[k]] (and (keyword? k) (namespace k)))) cfg)
         ns-entries (into {}
                          (keep (fn [[n c]] (when-let [c (without-linters c)] [(str "ns:" n) (digest c)])))
                          ns-cfgs)]
-    {:global (digest (-> cfg
+    {:custom (digest custom)
+     :global (digest (-> (apply dissoc cfg (keys custom))
                          (dissoc :linters :lint-as :hooks :config-in-call :config-in-ns :output :analysis
                                  ;; where things are, not what they say (hook code is
                                  ;; hashed by content, per symbol)
@@ -128,9 +132,11 @@
      :entries (merge sym-entries ns-entries)}))
 
 (defn diff
-  "How two signatures differ: {:global-same? bool, :changed #{entry keys}}."
+  "How two signatures differ: {:global-same? :custom-same? :changed #{entry
+  keys}}."
   [a b]
   {:global-same? (= (:global a) (:global b))
+   :custom-same? (= (:custom a) (:custom b))
    :changed (into #{}
                   (filter #(not= (get (:entries a) %) (get (:entries b) %)))
                   (concat (keys (:entries a)) (keys (:entries b))))})
