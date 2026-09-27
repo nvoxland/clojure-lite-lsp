@@ -71,3 +71,33 @@
 (deftest unknown-commands-are-refused
   (with-project [proj files]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown query" (run proj "frobnicate" "x")))))
+
+(deftest positions-from-results-work-anywhere-in-the-project
+  ;; results are relative to the project root: fed back from a
+  ;; subdirectory, they must still find the file
+  (with-project [proj files]
+    (let [from-sub (assoc (ctx proj) :cwd (f/path proj "src/app"))]
+      (is (= ["src/app/a.clj:2:7: (defn greet"]
+             (lines (commands/text from-sub ["definition" "src/app/b.clj:2:18"])))))))
+
+(deftest positions-inside-library-sources
+  ;; a definition in a jar comes back as its extracted source; a position
+  ;; in it is a target like any other
+  (with-project [proj {"src/app/a.clj" "(ns app.a)\n(defn f [xs] (keep identity xs))\n"}]
+    (let [c (ctx proj)
+          [{:keys [path line column]}] (:results (commands/run c ["definition" "clojure.core/keep"]))]
+      (is (str/ends-with? path "clojure/core.clj"))
+      (is (seq (:results (commands/run c ["doc" (str path ":" line ":" column)])))))))
+
+(deftest keywords-by-name
+  (with-project [proj {"src/app/k.clj" "(ns app.k)\n(def m {:k 1})\n(:k m)\n"}]
+    (is (= #{"src/app/k.clj:2:9: (def m {:k 1})" "src/app/k.clj:3:2: (:k m)"}
+           (set (lines (text proj "references" ":k")))))))
+
+(deftest results-are-limited
+  (with-project [proj files]
+    (let [t (commands/text (ctx proj) ["references" "app.a/greet"] {:limit 1})]
+      (is (= 2 (count (lines t))))
+      (is (str/includes? (last (lines t)) "2 more")))
+    (is (= 1 (count (:results (commands/run (ctx proj) ["references" "app.a/greet"] {:limit 1})))))
+    (is (= 3 (:total (commands/run (ctx proj) ["references" "app.a/greet"] {:limit 1}))))))

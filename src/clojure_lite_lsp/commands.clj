@@ -26,7 +26,12 @@
   the project root)."
   [{:keys [cwd root]} path]
   (let [f (io/file path)]
-    (.getCanonicalPath (if (.isAbsolute f) f (io/file (or cwd root) path)))))
+    (.getCanonicalPath
+     (cond
+       (.isAbsolute f) f
+       ;; as typed from where the caller is, else as results show it
+       (and cwd (.exists (io/file cwd path))) (io/file cwd path)
+       :else (io/file root path)))))
 
 (defn- target
   "{:position [path row col]} or {:symbol s}."
@@ -69,13 +74,15 @@
 
 (defn- rows [ctx locs] (vec (distinct (keep #(row ctx %) locs))))
 
+(defn- file-lines [path]
+  (try (with-open [r (io/reader (io/file path))] (vec (line-seq r)))
+       (catch Exception _ [])))
+
 (defn- source-line
-  "Line `n` (1-based) of the file at `path`, trimmed, or nil."
-  [path n]
-  (try
-    (with-open [r (io/reader (io/file path))]
-      (some-> (nth (line-seq r) (dec n) nil) str/trim))
-    (catch Exception _ nil)))
+  "Line `n` (1-based) of the file at `path`, trimmed, or nil. Files are
+  read once per command (`:lines-of` in ctx)."
+  [{:keys [lines-of] :or {lines-of file-lines}} path n]
+  (some-> (get (lines-of path) (dec n)) str/trim))
 
 (defn- shown-path
   "`path` relative to the project root when it's under it."
@@ -94,7 +101,7 @@
   (fn [ctx arg] {:results (rows ctx (f ctx arg))}))
 
 (defn- location-text [ctx {:keys [path line] :as r}]
-  (str (at ctx r) ": " (source-line path line)))
+  (str (at ctx r) ": " (source-line ctx path line)))
 
 (def commands
   [{:name "definition"
@@ -176,27 +183,32 @@
 
 (defn run
   "Run query command `args` ([name arg]) in `ctx` ({:c :p :root :home
-  :cwd}): {:results [...]}."
-  [ctx [cmd arg]]
+  :cwd}): {:results [...] :total n}, at most `limit` results."
+  [ctx [cmd arg] & [{:keys [limit]}]]
   (let [{:keys [run]} (or (by-name cmd)
                           (throw (ex-info (str "Unknown query command: " cmd ". Commands: "
                                                (str/join ", " (map :name commands)))
-                                          {:command cmd})))]
+                                          {:command cmd :usage true})))]
     (when (str/blank? arg)
-      (throw (ex-info (str "Usage: query " cmd " " (:usage (by-name cmd))) {:command cmd})))
-    (run ctx arg)))
+      (throw (ex-info (str "Usage: query " cmd " " (:usage (by-name cmd))) {:command cmd :usage true})))
+    (let [{:keys [results] :as r} (run ctx arg)]
+      (cond-> (assoc r :total (count results))
+        limit (update :results #(vec (take limit %)))))))
 
 (defn format-text
   "The results of command `cmd` as text, one result a line."
-  [ctx cmd {:keys [results]}]
-  (if (seq results)
-    (str/join "\n" (map #((:line (by-name cmd)) ctx %) results))
-    "No results."))
+  [ctx cmd {:keys [results total]}]
+  (let [ctx (assoc ctx :lines-of (memoize file-lines))
+        more (- (or total (count results)) (count results))]
+    (if (seq results)
+      (str (str/join "\n" (map #((:line (by-name cmd)) ctx %) results))
+           (when (pos? more) (str "\n... " more " more (--limit to see them)")))
+      "No results.")))
 
 (defn text
   "Run query command `args` and give its results as text."
-  [ctx [cmd :as args]]
-  (format-text ctx cmd (run ctx args)))
+  [ctx [cmd :as args] & [opts]]
+  (format-text ctx cmd (run ctx args opts)))
 
 (defn help
   "What `query` can do."

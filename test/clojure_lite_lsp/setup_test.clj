@@ -102,3 +102,56 @@
 (deftest the-agent-must-be-one-known
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"claude, codex"
                         (setup/setup! {:agent "emacs" :dir (str (tu/temp-dir)) :home (str (tu/temp-dir))}))))
+
+(defn codex-toml [before]
+  (let [dir (.getCanonicalPath (tu/temp-dir))]
+    (io/make-parents (io/file dir ".codex/config.toml"))
+    (spit (io/file dir ".codex/config.toml") before)
+    (run-setup "codex" dir)
+    (slurp-in dir ".codex/config.toml")))
+
+(deftest codex-config-edits-are-careful
+  (testing "a quoted header, a trailing comment: found, not duplicated; the user's keys kept"
+    (doseq [header ["[mcp_servers.\"clojure-lite-lsp\"]" "[mcp_servers.clojure-lite-lsp]  # ours"]]
+      (let [toml (codex-toml (str header "\ncommand = \"old\"\ntool_timeout_sec = 120\n"))]
+        (is (= 1 (count (re-seq #"(?m)^\[mcp_servers\." toml))) header)
+        (is (str/includes? toml "tool_timeout_sec = 120"))
+        (is (str/includes? toml "command = \"clojure-lite-lsp\""))
+        (is (str/includes? toml "args = [\"mcp\"]")))))
+  (testing "defined inline under [mcp_servers]: left as it is"
+    (let [before "[mcp_servers]\nclojure-lite-lsp = { command = \"x\", args = [\"mcp\"] }\n"]
+      (is (= before (codex-toml before)))))
+  (testing "a multi-line array in the table after is kept whole"
+    (let [toml (codex-toml "[mcp_servers.clojure-lite-lsp]\ncommand = \"old\"\n\n[other]\nlist = [\n  [\"a\"],\n  [\"b\"],\n]\n")]
+      (is (str/includes? toml "[other]\nlist = [\n  [\"a\"],\n  [\"b\"],\n]\n")))))
+
+(deftest a-damaged-section-is-left-to-the-user
+  (let [dir (.getCanonicalPath (tu/temp-dir))
+        damaged "# Agents\n<!-- clojure-lite-lsp:start -->\nmine\n"]
+    (spit (io/file dir "AGENTS.md") damaged)
+    (let [{:keys [result]} (run-setup "codex" dir)]
+      (is (= damaged (slurp-in dir "AGENTS.md")))
+      (is (some #(str/includes? % "AGENTS.md") (:notes result))))))
+
+(deftest the-directory-must-exist
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Not a directory"
+                        (setup/setup! {:agent "codex" :dir "/no/such/dir" :home (str (tu/temp-dir))}))))
+
+(deftest setup-arguments
+  (is (= {:agents ["claude" "codex"] :dir "x" :index? false}
+         (setup/parse-args ["--agent" "claude,codex" "x" "--no-index"])))
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown option" (setup/parse-args ["--agent" "claude" "--no-sync"])))
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"one directory" (setup/parse-args ["--agent" "claude" "a" "b"]))))
+
+(deftest a-failed-install-isnt-reported-as-written
+  (let [dir (.getCanonicalPath (tu/temp-dir))
+        {:keys [result]} (run-setup "claude" dir :exits {["claude" "plugin" "install"] 1})]
+    (is (not (some #{".claude/settings.json"} (:wrote result))))))
+
+(deftest agent-clis-dont-hang-setup
+  (testing "stdin is closed: a command reading it ends"
+    (is (= 0 (:exit (setup/run-command ["cat"] (str (tu/temp-dir)))))))
+  (testing "a command that doesn't end is stopped"
+    (let [start (System/currentTimeMillis)]
+      (is (not= 0 (:exit (setup/run-command ["sleep" "10"] (str (tu/temp-dir)) {:timeout-ms 300}))))
+      (is (< (- (System/currentTimeMillis) start) 5000)))))

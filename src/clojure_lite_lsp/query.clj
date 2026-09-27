@@ -27,10 +27,18 @@
     fr (assoc :form [fr fc fer fec])))
 
 (defn file-unit
-  "The unit of project `p`'s file at `path`, or of an opened library file."
+  "The unit of project `p`'s file at `path`: a project file, an opened
+  library file, or an extracted library source (<home>/sources/<jar hash
+  hex>/<entry>, clojure-lite-lsp.sources) as its jar entry's."
   [c p path]
   (or (db/query-value c "SELECT unit_id FROM project_file WHERE project_id = ? AND path = ?" p path)
-      (db/query-value c "SELECT unit_id FROM dep_file WHERE path = ?" path)))
+      (db/query-value c "SELECT unit_id FROM dep_file WHERE path = ?" path)
+      (when-let [[_ jar-hex entry] (re-find #"[/\\]sources[/\\]([0-9a-f]{64})[/\\](.+)$" (str path))]
+        (db/query-value c "SELECT je.unit_id FROM jar j
+                           JOIN project_jar pj ON pj.jar_id = j.id AND pj.project_id = ?
+                           JOIN jar_entry je ON je.jar_id = j.id AND je.entry_path = ?
+                           WHERE hex(j.jar_hash) = upper(?) LIMIT 1"
+                        p (str/replace entry "\\" "/") jar-hex))))
 
 (defn- contains-pos?
   "Is [row col] in the element's name? `end?` counts the position just
@@ -199,11 +207,18 @@
 
 (defn symbol-elements
   "The definitions a symbol names in project `p`: \"ns/name\" a var,
-  \"ns\" a namespace. Usable wherever elements at a position are."
+  \"ns\" a namespace, \":kw\" or \":ns/kw\" a keyword. Usable wherever
+  elements at a position are."
   [c p sym]
-  (if-let [[_ ns name] (re-matches #"([^/]+)/(.+)" sym)]
-    (without-declares (definitions c p :var-def ns name))
-    (definitions c p :ns-def nil sym)))
+  (cond
+    (str/starts-with? sym ":")
+    (let [[_ ns name] (re-matches #":(?:([^/]+)/)?(.+)" sym)]
+      [{:kind :keyword-usage :ns ns :name name :lang #{:clj :cljs}}])
+
+    :else
+    (if-let [[_ ns name] (re-matches #"([^/]+)/(.+)" sym)]
+      (without-declares (definitions c p :var-def ns name))
+      (definitions c p :ns-def nil sym))))
 
 (defn definition-of-elements
   "Where the things `els` mean are defined: locations."

@@ -38,12 +38,24 @@
                                                       "ns/name (a var), ns (a namespace), or file:line:col (1-based)"
                                                       (subs usage 1 (dec (count usage))))}
                               :project {:type "string"
-                                        :description "The project directory (default: the server's working directory)"}}
+                                        :description "The project directory (default: the one containing the server's working directory)"}
+                              :limit {:type "integer"
+                                      :description "At most this many results (default 100)"}}
                  :required ["target"]}})
 
+(def ^:private sync-deadline-ms
+  "How long a call waits for the index: under clients' tool timeouts
+  (Codex's is 60 s). Past it, the call answers from what's indexed, and
+  says indexing goes on."
+  40000)
+
 (defn- call [{:keys [opts cwd]} {:keys [name arguments]}]
-  (let [{:keys [target project]} arguments
-        {:keys [exit out]} (cli/query! opts (cond-> [name (str target)] project (conj "--project" project)) {:cwd cwd})]
+  (let [{:keys [target project limit]} arguments
+        {:keys [exit out]} (try
+                             (cli/query! opts (cond-> [name (str target) "--limit" (str (or limit 100))]
+                                                project (conj "--project" project))
+                                         {:cwd cwd :deadline-ms sync-deadline-ms})
+                             (catch Exception e {:exit 1 :out (str "Failed: " (ex-message e))}))]
     {:content [{:type "text" :text out}] :isError (not= 0 exit)}))
 
 (defn- respond [ctx {:keys [method params]}]
@@ -57,6 +69,18 @@
     "tools/list" {:tools (mapv tool commands/commands)}
     "tools/call" (call ctx params)
     ::unknown))
+
+(defn- answer
+  "The response to one message, or nil for a notification."
+  [ctx {:keys [id method] :as msg}]
+  (when (some? id)
+    (let [result (try (respond ctx msg)
+                      (catch Exception e {::error (ex-message e)}))]
+      (merge {:jsonrpc "2.0" :id id}
+             (cond
+               (= ::unknown result) {:error {:code -32601 :message (str "Unsupported: " method)}}
+               (::error result) {:error {:code -32603 :message (::error result)}}
+               :else {:result result})))))
 
 (defn run!
   "Serve MCP on `in`/`out` until the input ends. `opts` are
@@ -72,14 +96,8 @@
           (let [msg (try (json/parse-string line true) (catch Exception _ ::bad))]
             (cond
               (= ::bad msg) (send! {:jsonrpc "2.0" :id nil :error {:code -32700 :message "Parse error"}})
-              ;; notifications (initialized, cancelled): nothing to answer
-              (nil? (:id msg)) nil
-              :else
-              (let [result (try (respond ctx msg)
-                                (catch Exception e {::error (ex-message e)}))]
-                (send! (merge {:jsonrpc "2.0" :id (:id msg)}
-                              (cond
-                                (= ::unknown result) {:error {:code -32601 :message (str "Unsupported: " (:method msg))}}
-                                (::error result) {:error {:code -32603 :message (::error result)}}
-                                :else {:result result})))))))
+              ;; a batch: answered as one, notifications left out
+              (sequential? msg) (let [answers (vec (keep #(answer ctx %) msg))]
+                                  (when (seq answers) (send! answers)))
+              :else (some-> (answer ctx msg) send!))))
         (recur)))))

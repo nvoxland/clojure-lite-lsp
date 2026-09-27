@@ -65,16 +65,11 @@
       (println "Dropped" projects "project(s)," jars "jar(s)," units "analyzed file(s)."))))
 
 (defn- setup-project [args]
-  (let [[agents dirs index?] (loop [[a & more] args agents [] dirs [] index? true]
-                               (cond
-                                 (nil? a) [agents dirs index?]
-                                 (= "--agent" a) (recur (rest more) (into agents (str/split (str (first more)) #",")) dirs index?)
-                                 (= "--no-index" a) (recur more agents dirs false)
-                                 :else (recur more agents (conj dirs a) index?)))
-        dir (or (first dirs) (System/getProperty "user.dir"))]
+  (let [{:keys [agents dir index?]} (setup/parse-args args)
+        dir (or dir (System/getProperty "user.dir"))]
     (when (empty? agents)
-      (println (str "Usage: clojure-lite-lsp setup --agent <" (str/join "|" (sort (keys setup/agents))) "> [dir] [--no-index]"))
-      (System/exit 2))
+      (throw (ex-info (str "Usage: clojure-lite-lsp setup --agent <" (str/join "|" (sort (keys setup/agents))) "> [dir] [--no-index]")
+                      {:usage true})))
     (doseq [[i agent] (map-indexed vector agents)
             :let [{:keys [wrote notes]} (setup/setup! {:agent agent :dir dir :home (home)
                                                        ;; once, after the last agent
@@ -101,7 +96,7 @@
     "setup" (do (try (setup-project args)
                      (catch clojure.lang.ExceptionInfo e
                        (println (ex-message e))
-                       (System/exit 2)))
+                       (System/exit (if (:usage (ex-data e)) 2 1))))
                 (shutdown-agents)
                 (System/exit 0))
     "query" (let [{:keys [exit out]} (cli/query! {:home (home)} args {:cwd (System/getProperty "user.dir")})]

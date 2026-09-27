@@ -65,56 +65,117 @@
 
 (defn- json-str [x] (str (json/generate-string x {:pretty true}) "\n"))
 
-(defn- merge-json!
-  "Merge `f` into the JSON object in `path` (created if missing)."
-  [dir path f]
-  (let [file (io/file dir path)
-        m (if (.isFile file) (json/parse-string (slurp file)) {})]
-    (write! dir path (json-str (f m)))))
-
 (def ^:private start-marker "<!-- clojure-lite-lsp:start -->")
 (def ^:private end-marker "<!-- clojure-lite-lsp:end -->")
 
 (defn- replace-section
-  "`text` with its marked clojure-lite-lsp section replaced by `section`,
-  or `section` appended."
-  [text section]
+  "[text note]: `text` with its marked clojure-lite-lsp section replaced by
+  `section`, or `section` appended. A damaged section (a marker missing or
+  repeated, or out of order) is left for the user: [text note]."
+  [text section file]
   (let [block (str start-marker "\n" section end-marker "\n")
+        starts (count (re-seq (re-pattern (java.util.regex.Pattern/quote start-marker)) text))
+        ends (count (re-seq (re-pattern (java.util.regex.Pattern/quote end-marker)) text))
         start (str/index-of text start-marker)
         end (some-> (str/index-of text end-marker) (+ (count end-marker)))]
-    (if (and start end)
-      (str (subs text 0 start) (str/trim-newline block) (subs text end))
-      (str text (when (and (seq text) (not (str/ends-with? text "\n\n"))) (if (str/ends-with? text "\n") "\n" "\n\n"))
-           block))))
+    (cond
+      (= 0 starts ends)
+      [(str text (when (and (seq text) (not (str/ends-with? text "\n\n"))) (if (str/ends-with? text "\n") "\n" "\n\n"))
+            block)
+       nil]
 
-(defn- toml-table
-  "`toml` with table `header` ([a.b]) replaced by `body`, or appended."
-  [toml header body]
-  (let [lines (str/split-lines toml)
-        start (.indexOf ^java.util.List lines header)]
-    (if (neg? start)
-      (str toml (when (and (seq toml) (not (str/ends-with? toml "\n"))) "\n")
-           (when (seq toml) "\n") header "\n" body)
-      (let [end (or (some #(when (str/starts-with? (str/trim (nth lines %)) "[") %)
-                          (range (inc start) (count lines)))
-                    (count lines))
-            rest-lines (drop end lines)]
-        (str (str/join "\n" (take start lines)) (when (pos? start) "\n")
-             header "\n" body
-             (when (seq rest-lines) (str "\n" (str/join "\n" rest-lines) "\n")))))))
+      (and (= 1 starts ends) (< start end))
+      [(str (subs text 0 start) (str/trim-newline block) (subs text end)) nil]
+
+      :else
+      [text (str file "'s clojure-lite-lsp section is damaged (its " start-marker " / " end-marker
+                 " markers): fix or remove it, then run setup again")])))
+
+;;;; .codex/config.toml
+
+(defn- depth-change
+  "How many arrays `line` opens minus closes, outside strings and comments."
+  [^String line]
+  (loop [i 0 depth 0 quote nil]
+    (if (>= i (count line))
+      depth
+      (let [c (.charAt line i)]
+        (cond
+          quote (cond (= \\ c) (recur (+ i 2) depth quote)
+                      (= quote c) (recur (inc i) depth nil)
+                      :else (recur (inc i) depth quote))
+          (#{\" \'} c) (recur (inc i) depth c)
+          (= \# c) depth
+          (= \[ c) (recur (inc i) (inc depth) nil)
+          (= \] c) (recur (inc i) (dec depth) nil)
+          :else (recur (inc i) depth nil))))))
+
+(def ^:private header-re #"\s*\[\[?\s*[^\[\]]+\]\]?\s*(#.*)?")
+
+(defn- ours-header? [line]
+  (re-matches #"\s*\[\s*mcp_servers\s*\.\s*(\"clojure-lite-lsp\"|clojure-lite-lsp)\s*\]\s*(#.*)?" line))
+
+(defn- statements
+  "`toml`'s lines grouped into statements (a multi-line array is one), each
+  {:lines [...] :header? bool :key k}."
+  [toml]
+  (loop [[line & more] (str/split-lines toml) depth 0 current nil out []]
+    (if (nil? line)
+      (cond-> out current (conj current))
+      (let [continuing? (pos? depth)
+            depth' (+ depth (if (and (not continuing?) (re-matches header-re line)) 0 (depth-change line)))]
+        (if continuing?
+          (recur more depth' (update current :lines conj line) out)
+          (let [stmt {:lines [line]
+                      :header? (boolean (re-matches header-re line))
+                      :key (second (re-find #"^\s*(\"[^\"]+\"|[A-Za-z0-9_.-]+)\s*=" line))}]
+            (recur more depth' stmt (cond-> out current (conj current)))))))))
+
+(defn- codex-table
+  "[toml note]: `toml` with the clojure-lite-lsp MCP server's command and
+  args set, in its table (other keys kept) or a new one. Defined some other
+  way (an inline table, dotted keys): left as it is, with a note."
+  [toml]
+  (let [stmts (statements toml)
+        body ["command = \"clojure-lite-lsp\"" "args = [\"mcp\"]"]
+        text (fn [stmts] (str (str/join "\n" (mapcat :lines stmts)) "\n"))
+        ours (first (keep-indexed #(when (and (:header? %2) (ours-header? (first (:lines %2)))) %1) stmts))
+        elsewhere? (some #(and (not (:header? %)) (:key %)
+                               (re-find #"clojure-lite-lsp" (:key %)))
+                         stmts)]
+    (cond
+      ours
+      (let [[before [header & after]] (split-at ours stmts)
+            [table rest-stmts] (split-with (complement :header?) after)
+            kept (remove #(#{"command" "args"} (:key %)) table)]
+        [(text (concat before [header] (map (fn [l] {:lines [l]}) body) kept rest-stmts)) nil])
+
+      elsewhere?
+      [toml "the clojure-lite-lsp MCP server is already defined in .codex/config.toml (not as its own table): left as it is"]
+
+      :else
+      [(str toml (when (and (seq toml) (not (str/ends-with? toml "\n"))) "\n") (when (seq toml) "\n")
+            "[mcp_servers.clojure-lite-lsp]\n" (str/join "\n" body) "\n")
+       nil])))
 
 ;;;; agents' CLIs
 
 (defn run-command
-  "Run `cmd` in `cwd`: {:exit :out}; exit 127 when it can't be started."
-  [cmd cwd]
+  "Run `cmd` in `cwd`: {:exit :out}; exit 127 when it can't be started, 124
+  when it didn't end within `timeout-ms`. Its stdin is closed: nothing
+  waits on input that can't come."
+  [cmd cwd & [{:keys [timeout-ms] :or {timeout-ms 120000}}]]
   (try
     (let [p (-> (ProcessBuilder. ^java.util.List (vec cmd))
                 (.directory (io/file cwd))
                 (.redirectErrorStream true)
                 (.start))
-          out (slurp (.getInputStream p))]
-      {:exit (.waitFor p) :out out})
+          _ (.close (.getOutputStream p))
+          out (future (slurp (.getInputStream p)))]
+      (if (.waitFor p (long timeout-ms) java.util.concurrent.TimeUnit/MILLISECONDS)
+        {:exit (.exitValue p) :out @out}
+        (do (.destroyForcibly p)
+            {:exit 124 :out (str (str/join " " cmd) " didn't finish in " (quot timeout-ms 1000) " s")})))
     (catch java.io.IOException e {:exit 127 :out (ex-message e)})))
 
 (defn- has-cli? [run cli dir] (zero? (:exit (run [cli "--version"] dir))))
@@ -139,13 +200,14 @@
     (write! market ".claude-plugin/marketplace.json"
             (json-str {:name binary :owner author :description description
                        :plugins [{:name binary :source "./plugin" :description description}]}))
-    (let [claude-md (write! dir "CLAUDE.md"
-                            (replace-section (let [f (io/file dir "CLAUDE.md")] (if (.isFile f) (slurp f) ""))
-                                             (str "## Navigating Clojure code\n\n"
-                                                  "To find where Clojure code is defined, used or called, use "
-                                                  "`clojure-lite-lsp query` (the clojure-lite-lsp skill) or the LSP tool, "
-                                                  "not grep: they resolve aliases, refers and macros. "
-                                                  "`clojure-lite-lsp query` lists the commands.\n")))
+    (let [[claude-text claude-note] (replace-section (let [f (io/file dir "CLAUDE.md")] (if (.isFile f) (slurp f) ""))
+                                                     (str "## Navigating Clojure code\n\n"
+                                                          "To find where Clojure code is defined, used or called, use "
+                                                          "`clojure-lite-lsp query` (the clojure-lite-lsp skill) or the LSP tool, "
+                                                          "not grep: they resolve aliases, refers and macros. "
+                                                          "`clojure-lite-lsp query` lists the commands.\n")
+                                                     "CLAUDE.md")
+          claude-md (when-not claude-note (write! dir "CLAUDE.md" claude-text))
           skill (write! dir ".claude/skills/clojure-lite-lsp/SKILL.md"
                         (str "---\nname: " binary "\n"
                              "description: Use whenever you need where a Clojure var, function, macro or namespace "
@@ -158,35 +220,36 @@
               ;; registered before: take this version's plugin
               (run ["claude" "plugin" "marketplace" "update" binary] dir))
             (let [{:keys [exit out]} (run install dir)]
-              {:wrote [skill claude-md ".claude/settings.json"]
-               :notes (when-not (zero? exit) [(str "Installing the plugin failed: " out)])}))
-        {:wrote [skill claude-md]
+              {:wrote (remove nil? [skill claude-md (when (zero? exit) ".claude/settings.json")])
+               :notes (remove nil? [claude-note (when-not (zero? exit) (str "Installing the plugin failed: " out))])}))
+        {:wrote (remove nil? [skill claude-md])
          :notes [(str "claude isn't on PATH. With it, run in " dir ":\n"
                       "  claude plugin marketplace add " market "\n"
-                      "  " (str/join " " install))]}))))
+                      "  " (str/join " " install))
+                 claude-note]}))))
 
 (defn- codex! [{:keys [dir run]}]
   (let [config ".codex/config.toml"
         f (io/file dir config)
         agents (io/file dir "AGENTS.md")
         add ["codex" "mcp" "add" binary "--" binary "mcp"]
-        wrote [(write! dir config
-                       (toml-table (if (.isFile f) (slurp f) "")
-                                   (str "[mcp_servers." binary "]")
-                                   (str "command = \"" binary "\"\nargs = [\"mcp\"]\n")))
-               (write! dir "AGENTS.md"
-                       (replace-section (if (.isFile agents) (slurp agents) "")
-                                        (str "## Navigating Clojure code\n\n" (instructions "codex"))))]]
+        [toml toml-note] (codex-table (if (.isFile f) (slurp f) ""))
+        [md md-note] (replace-section (if (.isFile agents) (slurp agents) "")
+                                      (str "## Navigating Clojure code\n\n" (instructions "codex"))
+                                      "AGENTS.md")
+        wrote (remove nil? [(when-not toml-note (write! dir config toml))
+                            (when-not md-note (write! dir "AGENTS.md" md))])
+        notes (remove nil? [toml-note md-note])]
     (cond
       (not (has-cli? run "codex" dir))
-      {:wrote wrote :notes [(str "codex isn't on PATH. With it, run: " (str/join " " add))]}
+      {:wrote wrote :notes (conj (vec notes) (str "codex isn't on PATH. With it, run: " (str/join " " add)))}
 
       (zero? (:exit (run ["codex" "mcp" "get" binary] dir)))
-      {:wrote wrote}
+      {:wrote wrote :notes notes}
 
       :else
       (let [{:keys [exit out]} (run add dir)]
-        {:wrote wrote :notes (when-not (zero? exit) [(str "codex mcp add failed: " out)])}))))
+        {:wrote wrote :notes (cond-> (vec notes) (not (zero? exit)) (conj (str "codex mcp add failed: " out)))}))))
 
 (def agents
   "The agents `setup` knows, and what it does for each."
@@ -200,7 +263,24 @@
   (let [f (or (agents agent)
               (throw (ex-info (str "Unknown agent: " agent ". Agents: " (str/join ", " (sort (keys agents))))
                               {:agent agent})))
+        _ (when-not (.isDirectory (io/file dir))
+            (throw (ex-info (str "Not a directory: " dir) {:dir dir})))
         dir (.getCanonicalPath (io/file dir))
         result (f {:dir dir :home home :run run})]
     (when index! (index! dir))
     result))
+
+(defn parse-args
+  "`setup`'s arguments: {:agents [...] :dir :index?}."
+  [args]
+  (let [{:keys [agents dirs index?]}
+        (loop [[a & more] args acc {:agents [] :dirs [] :index? true}]
+          (cond
+            (nil? a) acc
+            (= "--agent" a) (recur (rest more) (update acc :agents into (remove str/blank? (str/split (str (first more)) #","))))
+            (= "--no-index" a) (recur more (assoc acc :index? false))
+            (str/starts-with? a "--") (throw (ex-info (str "Unknown option: " a) {:usage true}))
+            :else (recur more (update acc :dirs conj a))))]
+    (when (> (count dirs) 1)
+      (throw (ex-info (str "setup takes one directory, not " (count dirs)) {:usage true})))
+    {:agents agents :dir (first dirs) :index? index?}))

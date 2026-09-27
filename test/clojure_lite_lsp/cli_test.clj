@@ -94,3 +94,23 @@
           (is (= 2 exit))
           (is (clojure.string/includes? out "definition"))))
       (finally (stop! h daemons)))))
+
+(deftest query-outside-a-project-and-failures
+  (let [h (home)
+        daemons (atom [])
+        o (opts h daemons)
+        bare (str (clojure-lite-lsp.test-util/temp-dir))]
+    (try
+      (testing "not in a Clojure project: said so, exit 1"
+        (let [{:keys [exit out]} (cli/query! o ["definition" "a/b"] {:cwd bare})]
+          (is (= 1 exit))
+          (is (clojure.string/includes? out "Clojure project"))))
+      (testing "a failure that isn't a usage error: exit 1, without the usage text"
+        (let [{:keys [exit out]} (cli/query! o ["definition" "a/b" "--project" "/no/such/dir"] {:cwd bare})]
+          (is (= 1 exit))
+          (is (not (clojure.string/includes? out "Commands:")))))
+      (testing "--limit"
+        (let [root (project! {"src/app/a.clj" "(ns app.a)\n(defn g [] 1)\n(g) (g) (g)\n"})
+              {:keys [out]} (cli/query! o ["references" "app.a/g" "--limit" "1"] {:cwd root})]
+          (is (= 2 (count (clojure.string/split-lines out))))))
+      (finally (stop! h daemons)))))
