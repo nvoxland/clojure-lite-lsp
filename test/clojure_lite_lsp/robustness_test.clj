@@ -39,6 +39,27 @@
                              {:config cfg :mode :project :shards 8}))
     (is (= 1 @most))))
 
+(deftest a-hook-is-looked-up-once-per-config
+  ;; clj-kondo empties its hook cache whenever it sees another config
+  ;; object, and each concurrent run has its own: the lookups (loading the
+  ;; code, hashing its file) would repeat at nearly every hooked call
+  (let [hook "(ns hooks.named (:require [clj-kondo.hooks-api :as api])) (defn named [{:keys [node]}] {:node (api/list-node [(api/token-node 'def) (api/token-node 'gen) (api/token-node 1)])})"
+        root (project! (into {".clj-kondo/config.edn" "{:hooks {:analyze-call {acme/named hooks.named/named}}}"
+                              ".clj-kondo/hooks/named.clj" hook
+                              "src/acme.clj" "(ns acme) (defmacro named [])"}
+                             (for [i (range 16)] [(str "src/app/f" i ".clj") (str "(ns app.f" i " (:require [acme])) (acme/named) (acme/named) (acme/named)")])))
+        cfg (kc/project-config! (tu/temp-dir) root [])
+        lookups (atom 0)
+        real @#'clj-kondo.impl.hooks/hook-fn*]
+    (with-redefs [clj-kondo.impl.hooks/hook-fn* (fn [ctx config ns-sym var-sym & more]
+                                                  (when (= 'named (symbol (name var-sym))) (swap! lookups inc))
+                                                  (apply real ctx config ns-sym var-sym more))]
+      (reset! @#'analyze/hooks-config nil)
+      (let [res (analyze/analyze-files (vec (for [i (range 16)] (str root "/src/app/f" i ".clj")))
+                                       {:config cfg :mode :project :shards 8})]
+        (is (every? (fn [{:keys [elements]}] (some #(= "gen" (:name %)) elements)) res) "the hook still runs")))
+    (is (= 1 @lookups))))
+
 (deftest a-retried-batch-keeps-the-analysis-started
   ;; cancelling it would stop only the outer task, leaving its clj-kondo
   ;; runs going beside the next analysis

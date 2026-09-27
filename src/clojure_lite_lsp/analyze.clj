@@ -65,6 +65,14 @@
 
 (def ^:private hook-lock (Object.))
 
+(def ^:private resolved-hooks
+  "The hook (or nil) for each [ns-sym var-sym] under the config clj-kondo
+  last loaded (hooks-config). clj-kondo's own cache is emptied whenever it
+  sees another config object, and each concurrent run has its own: it
+  would look the hook up (load its code, hash its file) at nearly every
+  hooked call."
+  (atom {}))
+
 (def ^:private watch-hooks
   ;; questions about namespaces are answered by clojure-lite-lsp
   (delay
@@ -73,7 +81,16 @@
     ;; its vars. Lookups take turns; running the hooks doesn't.
     (wrap-var! #'clj-kondo.impl.hooks/hook-fn
                (fn [hook-fn]
-                 (fn [& args] (locking hook-lock (apply hook-fn args)))))
+                 (fn [ctx config ns-sym var-sym & more]
+                   (let [k [ns-sym var-sym]]
+                     (if-let [e (find @resolved-hooks k)]
+                       (val e)
+                       (locking hook-lock
+                         (if-let [e (find @resolved-hooks k)]
+                           (val e)
+                           (let [h (apply hook-fn ctx config ns-sym var-sym more)]
+                             (swap! resolved-hooks assoc k h)
+                             h))))))))
     (wrap-var! #'clj-kondo.hooks-api/ns-analysis*
                (fn [ns-analysis*]
                  (fn [lang ns-sym]
@@ -95,8 +112,10 @@
   configs (clojure-lite-lsp.indexer), so this can't pull hooks from under one."
   [config-dir]
   (when (not= config-dir @hooks-config)
-    (clj-kondo.impl.hooks/reset-ctx!)
-    (reset! hooks-config config-dir)))
+    (locking hook-lock
+      (clj-kondo.impl.hooks/reset-ctx!)
+      (reset! resolved-hooks {})
+      (reset! hooks-config config-dir))))
 
 (defn- run-kondo [lint mode config-dir]
   (let [{:keys [skip-lint analysis]} (modes mode)]
