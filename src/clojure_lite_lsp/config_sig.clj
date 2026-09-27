@@ -38,9 +38,22 @@
     (apply str (map #(format "%02x" %) bs))))
 
 (defn- without-linters
-  "A config section's analysis settings: nil when only linters are left."
+  "A config section's analysis settings: nil when only linters are left.
+  :unresolved-namespace counts: its findings are kept as elements."
   [m]
-  (when (map? m) (not-empty (dissoc m :linters :output))))
+  (when (map? m)
+    (let [kept (get-in m [:linters :unresolved-namespace])]
+      (not-empty (cond-> (dissoc m :linters :output)
+                   kept (assoc :unresolved-namespace kept))))))
+
+(def ^:private any-alias
+  "Reads ::alias/kw without the file's aliases (a hook's requires are all
+  that's needed from it)."
+  (reify clojure.lang.LispReader$Resolver
+    (currentNS [_] 'user)
+    (resolveClass [_ sym] sym)
+    (resolveAlias [_ sym] sym)
+    (resolveVar [_ sym] sym)))
 
 ;;;; hook code
 
@@ -86,7 +99,7 @@
   :use, and in top-level (require ...) and (use ...) calls."
   [^File f]
   (try
-    (let [forms (binding [*read-eval* false]
+    (let [forms (binding [*read-eval* false *reader-resolver* any-alias]
                   (let [r (PushbackReader. (StringReader. (slurp f)))]
                     (doall (take-while #(not= ::eof %) (repeatedly #(read {:eof ::eof :read-cond :allow} r))))))
           unquote-spec #(if (and (seq? %) (= 'quote (first %))) (second %) %)]
@@ -104,7 +117,7 @@
               spec (rest form)
               lib (libs (unquote-spec spec))]
           lib))))
-    (catch Exception _ nil)))
+    (catch Exception _ ::unreadable)))
 
 (defn- hook-code
   "The code of hook namespace `ns-sym` and the hook namespaces it requires,
@@ -114,10 +127,14 @@
     (if-let [[n & more] (seq todo)]
       (if (seen n)
         (recur more seen code)
-        (let [fs (ns-files files n)]
-          (recur (into (vec more) (mapcat required-namespaces fs))
-                 (conj seen n)
-                 (into code (map (fn [f] [n (slurp f)]) fs)))))
+        (let [fs (ns-files files n)
+              requires (map required-namespaces fs)]
+          (if (some #{::unreadable} requires)
+            ;; which code it uses can't be told: all of the config dir's
+            (sort-by (comp str first) (for [[rel f] files] [rel (slurp f)]))
+            (recur (into (vec more) (apply concat requires))
+                   (conj seen n)
+                   (into code (map (fn [f] [n (slurp f)]) fs))))))
       (sort-by (comp str first) code))))
 
 ;;;; signature
@@ -173,6 +190,8 @@
                                  :cfg-dir :classpath :use-import-dir :config-paths :auto-load-configs
                                  :skip-lint)
                          (assoc :other-hooks (dissoc hooks :analyze-call :macroexpand)
+                                ;; its findings are kept as elements
+                                :unresolved-namespace (get-in cfg [:linters :unresolved-namespace])
                                 :ns-groups (filterv #(or (analysis-groups (:name %))
                                                          (some (fn [s] (= (str (:name %)) (namespace s))) group-syms))
                                                     ns-groups)

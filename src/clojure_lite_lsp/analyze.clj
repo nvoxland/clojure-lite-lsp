@@ -63,9 +63,17 @@
   [serve lang ns-sym]
   (or (when serve (serve lang ns-sym)) (kondo-answer lang ns-sym)))
 
+(def ^:private hook-lock (Object.))
+
 (def ^:private watch-hooks
   ;; questions about namespaces are answered by clojure-lite-lsp
   (delay
+    ;; finding a hook loads its code into clj-kondo's one, process-wide
+    ;; interpreter: two concurrent runs loading the same namespace can lose
+    ;; its vars. Lookups take turns; running the hooks doesn't.
+    (wrap-var! #'clj-kondo.impl.hooks/hook-fn
+               (fn [hook-fn]
+                 (fn [& args] (locking hook-lock (apply hook-fn args)))))
     (wrap-var! #'clj-kondo.hooks-api/ns-analysis*
                (fn [ns-analysis*]
                  (fn [lang ns-sym]

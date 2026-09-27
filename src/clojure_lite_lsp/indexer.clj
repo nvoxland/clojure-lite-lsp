@@ -258,7 +258,12 @@
                     (doseq [{:keys [path ord external?]} group
                             :when (not (changed path))]
                       (snapshot/set-file-unit! w p path (ids path) {:ord ord :external? external?})))
-                  (doseq [path changed] (queue/enqueue! c p :file path 1))))
+                  ;; changed while analyzed: again. Unreadable: left out,
+                  ;; until it changes (it would be queued forever)
+                  (doseq [path changed]
+                    (if (.canRead (io/file path))
+                      (queue/enqueue! c p :file path 1)
+                      (binding [*out* *err*] (println "clojure-lite-lsp: can't read" path "- skipped"))))))
               (recheck-dependents! ix p))}))
 
 (defn- delete-files! [{:keys [w] :as ix} p paths]
@@ -301,9 +306,11 @@
                                                 WHERE pj.project_id = ? AND j.jar_hash = ?" p jar-hash))]
             :when (and jar-path (.isFile (io/file path)))]
       (let [config (kc/jar-config! cache-dir jar-context jar-path)
-            [{:keys [unit-key elements]}] (analyze/analyze-files [path] {:config config :mode :dep-file :shards shards})
-            [u] (writer/write-units! w [[unit-key elements]])]
-        (snapshot/set-dep-file-unit! w path jar-hash u)))))
+            [{:keys [unit-key elements]}] (analyze/analyze-files [path] {:config config :mode :dep-file :shards shards})]
+        ;; changed while analyzed (re-extracted): next time it's opened
+        (when unit-key
+          (let [[u] (writer/write-units! w [[unit-key elements]])]
+            (snapshot/set-dep-file-unit! w path jar-hash u)))))))
 
 (defn- environment-failure?
   "Did the machine fail, rather than the input: a full disk or an I/O
@@ -354,7 +361,9 @@
     (queue/done! c batch)
     batch
     (catch java.util.concurrent.ExecutionException e (failed! ix batch (or (.getCause e) e)))
-    (catch Exception e (failed! ix batch e))))
+    ;; Throwable: an Error (out of memory) must drop its batch too, not end
+    ;; the daemon and leave the batch first in line for the next
+    (catch Throwable e (failed! ix batch e))))
 
 (defn- run-batch!
   "Process a batch of a kind that isn't pipelined. Returns the batch, or
@@ -369,7 +378,7 @@
         :dep-file (index-dep-files! ix project-id paths))
       (queue/done! c batch)
       batch
-      (catch Exception e (failed! ix batch e)))))
+      (catch Throwable e (failed! ix batch e)))))
 
 (defn step!
   "Advance the queue by one batch. Returns something truthy while there is
@@ -388,8 +397,10 @@
     (cond
       (= :retry finished)
       ;; the batch just started is abandoned too: its rows stay queued
-      (do (some-> started :job :analysis future-cancel)
-          (reset! in-flight nil)
+      ;; the batch just started stays in flight, its analysis running: it's
+      ;; written on the next try (cancelling it would stop only its outer
+      ;; task, leaving its clj-kondo runs going beside the next analysis)
+      (do (reset! in-flight started)
           :retry)
 
       started

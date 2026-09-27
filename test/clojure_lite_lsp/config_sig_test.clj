@@ -110,3 +110,16 @@
         changed (str hooks-a " (defn x [])")]
     (is (= #{"acme/one" "acme/two"} (:changed (diff (both hooks-a hooks-a) (both hooks-a changed)))))
     (is (= #{"acme/one" "acme/two"} (:changed (diff (both hooks-a hooks-a) (both changed hooks-a)))))))
+
+(deftest hook-code-with-auto-resolved-keywords
+  ;; ::alias/kw can't be read without the hook's aliases; its requires must
+  ;; still be followed
+  (let [a-code "(ns hooks.a (:require [clj-kondo.hooks-api :as api] [hooks.util :as u])) (def k ::api/x) (defn m [{:keys [node]}] {:node node})"
+        cfg #(assoc base-config "hooks/a.clj" a-code "hooks/util.clj" %)]
+    (is (= #{"acme/one" "acme/two"}
+           (:changed (diff (cfg "(ns hooks.util)") (cfg "(ns hooks.util) (defn h [])")))))))
+
+(deftest the-one-linter-analysis-uses-counts
+  ;; csl keeps :unresolved-namespace findings: its settings change results
+  (is (false? (:global-same? (diff base-config
+                                   (with-config #(assoc-in % [:linters :unresolved-namespace :exclude] '[foo])))))))

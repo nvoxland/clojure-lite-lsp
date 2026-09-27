@@ -24,16 +24,18 @@
     (.digest md)))
 
 (defn content-hash!
-  "The content hash of the file at `path`, or nil if it doesn't exist. Uses
-  and updates the fingerprint memo through writer connection `c`."
+  "The content hash of the file at `path`, or nil if it doesn't exist or
+  can't be read. Uses and updates the fingerprint memo through writer
+  connection `c`."
   [c path]
   (let [f (io/file path)]
-    (when (.isFile ^File f)
+    (when (and (.isFile ^File f) (.canRead ^File f))
       (let [mtime (.lastModified ^File f)
             size (.length ^File f)]
         (or (db/query-value c "SELECT content_hash FROM fingerprint WHERE path = ? AND mtime = ? AND size = ?"
                             path mtime size)
-            (let [h (sha256 f)]
+            ;; gone or unreadable since the check: as if missing
+            (when-let [h (try (sha256 f) (catch java.io.IOException _ nil))]
               (db/execute! c "INSERT INTO fingerprint (path, mtime, size, content_hash) VALUES (?, ?, ?, ?)
                               ON CONFLICT (path) DO UPDATE
                               SET mtime = excluded.mtime, size = excluded.size, content_hash = excluded.content_hash"

@@ -92,10 +92,27 @@
   (db/execute! c "DELETE FROM fingerprint WHERE path NOT IN (
                     SELECT path FROM project_file UNION SELECT path FROM project_jar)"))
 
+(def ^:private sweep-after-units
+  "Dead units that make a symbol sweep worth it right away."
+  2000)
+
+(def ^:private sweep-every-ms (* 24 60 60 1000))
+
+(defn- sweep?
+  "Sweep symbols now? It scans every symbol reference in the index, holding
+  the write lock: after a project or jar went, many units, a day since the
+  last, or when asked (`sweep` :always, csl gc). Not after a few edits."
+  [c sweep projects jars dead]
+  (or (= :always sweep)
+      (and (pos? (+ projects jars dead))
+           (or (pos? projects) (pos? jars) (> dead sweep-after-units)
+               (let [last (some-> (db/query-value c "SELECT value FROM meta WHERE key = 'last_sweep'") parse-long)]
+                 (or (nil? last) (> (- (System/currentTimeMillis) last) sweep-every-ms)))))))
+
 (defn collect!
   "Collect garbage through writer `w`. Returns what was dropped:
   {:projects :jars :units}."
-  [{:keys [c] :as w} {:keys [project-max-age-ms] :or {project-max-age-ms default-project-max-age-ms}}]
+  [{:keys [c] :as w} {:keys [project-max-age-ms sweep] :or {project-max-age-ms default-project-max-age-ms}}]
   (try
     (let [[projects jars dep-files] (writer/with-write-tx w
                                       (writer/save-high-water! w)
@@ -109,8 +126,11 @@
       ;; as good as at once
       (doseq [us (partition-all batch dead)]
         (writer/with-write-tx w (delete-units! c us)))
-      (when (pos? (+ projects jars (count dead)))
-        (writer/with-write-tx w (sweep-symbols! c)))
+      (when (sweep? c sweep projects jars (count dead))
+        (writer/with-write-tx w
+          (sweep-symbols! c)
+          (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sweep', ?)"
+                       (str (System/currentTimeMillis)))))
       (writer/with-write-tx w (prune-fingerprints! c))
       (db/pragma! c "incremental_vacuum")
       {:projects projects :jars jars :units (count dead)})

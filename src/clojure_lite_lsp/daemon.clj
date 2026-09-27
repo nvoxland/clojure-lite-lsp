@@ -108,7 +108,7 @@
   units nothing uses yet."
   [{:keys [c w] :as ix} requests]
   (indexer/drain! ix)
-  (let [result (try (gc/collect! w {})
+  (let [result (try (gc/collect! w {:sweep :always})
                     (catch Exception e {:error (ex-message e)}))]
     (db/with-tx c
       (doseq [r requests]
@@ -171,7 +171,7 @@
   [ix opts]
   (loop [state {:last-work (System/currentTimeMillis) :collected? true :seen-version nil :last-beat 0}]
     (let [[k v] (try (tick ix opts state)
-                     (catch Exception e
+                     (catch Throwable e
                        (binding [*out* *err*] (println "clojure-lite-lsp: daemon loop failed:" (ex-message e)))
                        (Thread/sleep (long (:retry-ms opts)))
                        [:next (assoc state :seen-version nil)]))]

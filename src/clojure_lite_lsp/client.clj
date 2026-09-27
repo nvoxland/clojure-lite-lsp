@@ -22,8 +22,8 @@
   ([c] (db/execute! c "UPDATE daemon SET stop_requested = 1 WHERE id = 1"))
   ([c pid] (db/execute! c "UPDATE daemon SET stop_requested = 1 WHERE id = 1 AND pid = ?" pid)))
 
-(defn- wait-until [pred]
-  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+(defn- wait-until [pred & [ms]]
+  (let [deadline (+ (System/currentTimeMillis) (or ms timeout-ms))]
     (loop []
       (cond (pred) true
             (< (System/currentTimeMillis) deadline) (do (Thread/sleep 20) (recur))
@@ -100,17 +100,22 @@
   versions, the older one uses the newer daemon rather than the two
   replacing each other's over and over. (Versions with different schemas
   don't meet: each has its own index, `daemon/paths`.)"
-  [{:keys [home version spawn!] :or {version version/version}}]
+  [{:keys [home version spawn!] :or {version version/version} :as opts}]
   (let [{:keys [db daemon-lock spawn-lock dir]} (daemon/paths home)
         _ (.mkdirs (io/file dir))
         spawn! (or spawn! #(spawn-daemon! home))
         live? #(lock/held? daemon-lock)
         current #(when-let [{v :version :as d} (running db daemon-lock)]
                    (when-not (older? v version) d))]
-    (when-let [{:keys [pid] v :version} (running db daemon-lock)]
-      (when (older? v version)
-        (with-open [c (db/open-client db)] (request-stop! c pid))
-        (wait-until #(not (live?)))))
+    (if-let [{:keys [pid] v :version} (when-let [d (running db daemon-lock)] (when (older? (:version d) version) d))]
+      ;; an older one: ask it to stop. Mid-way through a long step it stays
+      ;; until the step ends; meanwhile it still serves, and a later call
+      ;; starts this version once it's gone (rather than every enqueue
+      ;; waiting for it)
+      (do (with-open [c (db/open-client db)] (request-stop! c pid))
+          (if (wait-until #(not (live?)) 2000)
+            (ensure-daemon! opts)
+            :running))
     (if (current)
       :running
       (let [held (lock/lock! spawn-lock timeout-ms)]
@@ -123,4 +128,4 @@
                 (when-not (and (wait-until live?) (running db daemon-lock))
                   (throw (ex-info "The clojure-lite-lsp daemon did not start; see daemon.log" {:home home})))
                 :spawned))
-          (finally (lock/release! held)))))))
+          (finally (lock/release! held))))))))
