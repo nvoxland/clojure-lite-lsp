@@ -410,7 +410,8 @@
   name first, then prefixes, then the project's own before dependencies:
   [{:kind :ns :name :location}]."
   [c p query {:keys [limit] :or {limit 100}}]
-  (let [ids (matching-name-ids c query (* 3 limit))]
+  ;; a blank query matches every name: sorting them all answers nothing useful
+  (let [ids (when-not (str/blank? query) (matching-name-ids c query (* 3 limit)))]
     (when (seq ids)
       ;; driven by the names (definition_name), not by every unit the
       ;; project sees
@@ -452,21 +453,54 @@
   {:ns ns :name name
    :locations (located c p (best (definitions c p :var-def ns name)))})
 
+(defn- definitions-by-ids
+  "Definitions of `kind` project `p` can see for [ns-id name-id] pairs,
+  best precedence only: {pair [{:unit-id :pos}]}. One query per few
+  hundred pairs."
+  [c p kind pairs]
+  (into {}
+        (mapcat (fn [batch]
+                  (->> (apply db/query c (str "SELECT d.ns, d.name, d.unit_id, pu.ord,
+                                                      d.name_row, d.name_col, d.name_end_row, d.name_end_col
+                                               FROM definition d
+                                               JOIN project_unit pu ON pu.unit_id = d.unit_id AND pu.project_id = ?
+                                               WHERE d.kind = ? AND (d.ns, d.name) IN (VALUES "
+                                              (str/join "," (repeat (count batch) "(?, ?)")) ")")
+                              p (kinds/code kind) (apply concat batch))
+                       (map (fn [[n nm u ord nr nc ner nec]] {:pair [n nm] :unit-id u :ord ord :pos [nr nc ner nec]}))
+                       (group-by :pair)
+                       (map (fn [[pair defs]] [pair (best defs)])))))
+        (partition-all 400 (distinct pairs))))
+
+(defn- sym-texts
+  "{id text} for sym `ids`."
+  [c ids]
+  (into {}
+        (mapcat #(apply db/query c (str "SELECT id, text FROM sym WHERE id IN ("
+                                        (str/join "," (repeat (count %) "?")) ")") %))
+        (partition-all 500 (distinct (filter #(and % (pos? %)) ids)))))
+
 (defn incoming-calls
   "Who calls `ns`/`name`: [{:caller {:ns :name :locations} :calls
   [locations of the calls]}]. Top-level calls have the namespace as
-  caller (:name nil)."
+  caller (:name nil). A popular var has thousands of callers: they are
+  looked up and located together, not one by one."
   [c p ns name]
-  (->> (usage-rows c p ns name [:var-usage])
-       (group-by (juxt :from-ns-id :from-var-id))
-       (mapv (fn [[[from-ns-id from-var-id] calls]]
-               (let [from-ns (sym-text c from-ns-id)
-                     from-var (sym-text c from-var-id)]
-               {:caller (if from-var
-                          (var-item c p from-ns from-var)
-                          {:ns from-ns :name nil
-                           :locations (located c p (definitions c p :ns-def nil from-ns))})
-                :calls (located c p calls)})))))
+  (let [groups (group-by (juxt :from-ns-id :from-var-id) (usage-rows c p ns name [:var-usage]))
+        texts (sym-texts c (mapcat key groups))
+        ;; a caller is its var definition, or for top-level calls its ns
+        pair-of (fn [[from-ns from-var]] (if (and from-var (pos? from-var)) [from-ns from-var] [0 from-ns]))
+        var-defs (definitions-by-ids c p :var-def (keep (fn [[_ v :as k]] (when (and v (pos? v)) (pair-of k))) (keys groups)))
+        ns-defs (definitions-by-ids c p :ns-def (keep (fn [[_ v :as k]] (when-not (and v (pos? v)) (pair-of k))) (keys groups)))
+        defs-of #(get (if (zero? (first %)) ns-defs var-defs) %)
+        where (units-locations c p (map :unit-id (mapcat defs-of (map pair-of (keys groups)))))]
+    (mapv (fn [[[from-ns from-var :as k] calls]]
+            {:caller {:ns (texts from-ns) :name (texts from-var)
+                      :locations (vec (for [{:keys [unit-id pos]} (defs-of (pair-of k))
+                                            loc (where unit-id)]
+                                        (assoc loc :pos pos)))}
+             :calls (located c p calls)})
+          groups)))
 
 (defn- form-contains? [[fr fc fer fec] [r col]]
   (and (or (> r fr) (and (= r fr) (>= col fc)))

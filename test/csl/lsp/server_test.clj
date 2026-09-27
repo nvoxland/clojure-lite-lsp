@@ -319,3 +319,23 @@
                                            (frame "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}")))]
     (is (= -32600 (get-in (second responses) [:error :code])))
     (is (= 0 code))))
+
+(deftest symbol-search-doesnt-wait-for-extraction
+  ;; each library hit would be a jar opened and a file written, per
+  ;; keystroke: the files are extracted in the background instead
+  (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)"})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
+        real csl.sources/extract!]
+    (request! "initialize" {:rootUri (convert/path->uri root)})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (with-redefs [csl.sources/extract! (fn [home loc] (Thread/sleep 1000) (real home loc))]
+      (let [started (System/currentTimeMillis)
+            hits (request! "workspace/symbol" {:query "mapcat"})]
+        (is (< (- (System/currentTimeMillis) started) 900))
+        (let [f (io/file (convert/uri->path (get-in (first (filter #(= "mapcat" (:name %)) hits)) [:location :uri])))]
+          (is (loop [n 0] (or (.isFile f) (when (< n 100) (Thread/sleep 50) (recur (inc n)))))
+              "the file is there soon after"))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))

@@ -14,7 +14,6 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [csl.fingerprint :as fingerprint]
    [csl.sources :as sources])
   (:import
    [java.io File]
@@ -43,33 +42,34 @@
                              (str/split-lines text)))
         [1 1 1 1])))
 
-(def ^:private hashes (atom {}))
+(def ^:private zip-prefixes (atom {}))
 
-(defn- file-hash
-  "The content hash of a jar or zip, remembered while it's unchanged."
+(defn- top-dirs
+  "The top-level directories of zip `path` (src.zip's modules): kept, not
+  its tens of thousands of entry names."
   [path]
   (let [f (io/file path)
-        k [path (.lastModified f) (.length f)]]
-    (or (@hashes k)
-        (let [h (fingerprint/sha256 f)] (swap! hashes assoc k h) h))))
-
-(def ^:private zip-entries (atom {}))
+        k [(str path) (.lastModified f) (.length f)]]
+    (or (@zip-prefixes k)
+        (let [dirs (with-open [z (JarFile. (str path))]
+                     (into (sorted-set) (keep #(second (re-find #"^([^/]+)/" (.getName ^JarEntry %))))
+                           (enumeration-seq (.entries z))))]
+          (swap! zip-prefixes assoc k dirs)
+          dirs))))
 
 (defn- entry-ending-with
-  "The entry of zip `path` that is, or ends with /, `suffix` (src.zip puts
-  each class under its module: java.base/java/io/File.java)."
+  "The entry of zip `path` that is `suffix`, or that under a top-level
+  directory (src.zip puts each class under its module:
+  java.base/java/io/File.java)."
   [path suffix]
-  (let [names (or (@zip-entries path)
-                  (let [ns (with-open [z (JarFile. (str path))]
-                             (mapv #(.getName ^JarEntry %) (enumeration-seq (.entries z))))]
-                    (swap! zip-entries assoc path ns)
-                    ns))]
-    (first (filter #(or (= % suffix) (str/ends-with? % (str "/" suffix))) names))))
+  (with-open [z (JarFile. (str path))]
+    (or (when (.getEntry z suffix) suffix)
+        (first (filter #(.getEntry z ^String %) (map #(str % "/" suffix) (top-dirs path)))))))
 
 (defn- from-zip [home zip entry-suffix]
   (when (and zip (.isFile (io/file zip)))
     (when-let [entry (entry-ending-with zip entry-suffix)]
-      (sources/extract! home {:path zip :entry entry :jar-hash (file-hash zip)}))))
+      (sources/extract! home {:path zip :entry entry :jar-hash (sources/file-hash zip)}))))
 
 (defn- sources-jar [jar]
   (str/replace jar #"\.jar$" "-sources.jar"))

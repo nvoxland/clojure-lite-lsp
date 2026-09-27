@@ -89,15 +89,18 @@
     (some->> (buffers/->buffer buffers path pos) (assoc loc :pos))))
 
 (defn- as-file
-  "A location in a jar as its extracted file, unless the client asked for
-  jar: or zipfile: URIs."
-  [{:keys [opts]} {:keys [entry] :as loc}]
-  (if (and entry (= "file" (:dependency-scheme opts "file")))
-    (assoc (dissoc loc :entry :jar-hash) :path (sources/extract! (:home opts) loc))
-    loc))
+  "A location in a jar as its extracted file (`extract` is
+  sources/extract! or extract-soon!), unless the client asked for jar: or
+  zipfile: URIs. nil when it can't be extracted."
+  ([state loc] (as-file state loc sources/extract!))
+  ([{:keys [opts]} {:keys [entry] :as loc} extract]
+   (if (and entry (= "file" (:dependency-scheme opts "file")))
+     (when-let [path (extract (:home opts) loc)]
+       (assoc (dissoc loc :entry :jar-hash) :path path))
+     loc)))
 
 (defn- lsp-location [{:keys [opts] :as state} loc]
-  (convert/location (as-file state loc) opts))
+  (some-> (as-file state loc) (convert/location opts)))
 
 (defn- java-source-dirs
   "Where a project's .java files may be: its classpath dirs, and the usual
@@ -124,9 +127,10 @@
 (defn- lsp-locations [state p locs]
   (->> locs
        (keep #(resolve-java state p %))
-       (map #(as-file state %))
+       (keep #(as-file state %))
        (keep #(in-buffer state %))
-       (mapv #(lsp-location state %))))
+       (keep #(lsp-location state %))
+       vec))
 
 (defn- with-project
   "Call (f c p path row col) for a text-position request, or return `none`."
@@ -207,11 +211,15 @@
       (if-let [{:keys [p]} (project-of state path)] (document-symbols state path p) []))
 
     "workspace/symbol"
+    ;; library hits are extracted in the background: each would be a jar
+    ;; opened and a file written, on every keystroke
     (vec (for [{:keys [p]} @projects
                {:keys [kind ns name location]} (q/workspace-symbols @reader p (:query params) {:limit 200})
-               :when location]
-           {:name name :kind (symbol-kinds kind 13) :containerName ns
-            :location (lsp-location state location)}))
+               :let [loc (some->> (as-file state location sources/extract-soon!)
+                                  (in-buffer state)
+                                  (lsp-location state))]
+               :when loc]
+           {:name name :kind (symbol-kinds kind 13) :containerName ns :location loc}))
 
     "textDocument/prepareCallHierarchy"
     (with-project state params [] (fn [c p path row col]

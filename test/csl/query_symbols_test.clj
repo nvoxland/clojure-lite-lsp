@@ -35,7 +35,10 @@
           (is (= #{["app.core" "frob"] ["app.core" "frobnicate"]} (set (take 2 found))))
           (is (some #{["clojure.core" "frequencies"]} found) "dependencies too")))
       (testing "only definitions the project can see"
-        (is (empty? (search "zzzqqq")))))))
+        (is (empty? (search "zzzqqq"))))
+      (testing "a blank query (every name matches) finds nothing rather than sorting them all"
+        (is (empty? (search "")))
+        (is (empty? (search "  ")))))))
 
 (deftest call-hierarchy
   (with-project [proj {"src/a.clj" "(ns a)\n(defn leaf [] 1)\n(defn mid [] (leaf) (leaf))\n(defn top [] (mid) (str (leaf)))"

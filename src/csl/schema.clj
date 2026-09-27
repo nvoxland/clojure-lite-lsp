@@ -4,7 +4,7 @@
 
 (def version
   "Bump on any change to the DDL below or to the meaning of stored values."
-  6)
+  7)
 
 (def ddl
   ["CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"
@@ -137,6 +137,8 @@
       priority INTEGER NOT NULL,
       enqueued_at INTEGER NOT NULL,
       PRIMARY KEY (project_id, kind, path)) WITHOUT ROWID"
+   ;; each enqueue takes max(enqueued_at)
+   "CREATE INDEX pending_order ON pending (enqueued_at)"
 
    ;; daemon registry; liveness is the daemon.lock file lock, not this row
    "CREATE TABLE daemon (

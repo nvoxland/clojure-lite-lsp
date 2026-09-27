@@ -9,10 +9,12 @@
   extraction."
   (:require
    [clojure.java.io :as io]
-   [clojure.string :as str])
+   [clojure.string :as str]
+   [csl.fingerprint :as fingerprint])
   (:import
    [java.io File]
    [java.nio.file Files StandardCopyOption]
+   [java.util.concurrent ExecutorService Executors ThreadFactory]
    [java.util.jar JarFile]))
 
 (set! *warn-on-reflection* true)
@@ -34,19 +36,61 @@
   ^File [home]
   (.getCanonicalFile (io/file home "sources")))
 
+(def ^:private hashes (atom {}))
+
+(defn file-hash
+  "The content hash of a jar or zip, remembered while it's unchanged."
+  [path]
+  (let [f (io/file path)
+        k [(str path) (.lastModified f) (.length f)]]
+    (or (@hashes k)
+        (let [h (fingerprint/sha256 f)] (swap! hashes assoc k h) h))))
+
+(defn extracted-file
+  "Where jar location {:entry :jar-hash} is (or will be) extracted, or nil
+  when its entry would land outside the sources dir (zip-slip)."
+  ^File [home {:keys [entry jar-hash]}]
+  (let [dir (io/file (sources-dir home) (hex jar-hash))
+        f (.getCanonicalFile (io/file dir ^String entry))]
+    (when (str/starts-with? (str f) (str dir File/separator))
+      f)))
+
 (defn extract!
   "The path of jar location {:path jar :entry :jar-hash} extracted as a
-  file, extracting it if needed."
-  [home {:keys [path entry jar-hash]}]
-  (let [f (io/file (sources-dir home) (hex jar-hash) ^String entry)]
-    (when-not (.isFile f)
-      (io/make-parents f)
-      (let [tmp (io/file (.getParentFile f) (str "." (.getName f) ".tmp-" (System/nanoTime)))]
+  file, extracting it if needed. nil when that can't be done faithfully:
+  the entry would land outside the sources dir, the jar is gone or no
+  longer has the content its hash says (a replaced snapshot: its new
+  content must not be kept under the old hash), or it lacks the entry."
+  [home {:keys [path entry jar-hash] :as loc}]
+  (when-let [f (extracted-file home loc)]
+    (if (.isFile f)
+      (str f)
+      (when (and (.isFile (io/file (str path)))
+                 (java.util.Arrays/equals ^bytes jar-hash ^bytes (file-hash path)))
         (with-open [jf (JarFile. (str path))]
-          (with-open [in (.getInputStream jf (.getJarEntry jf entry))]
-            (io/copy in tmp)))
-        (.setReadOnly tmp)
-        (Files/move (.toPath tmp) (.toPath f) (into-array [StandardCopyOption/ATOMIC_MOVE]))))
+          (when-let [je (.getJarEntry jf ^String entry)]
+            (io/make-parents f)
+            (let [tmp (io/file (.getParentFile f) (str "." (.getName f) ".tmp-" (System/nanoTime)))]
+              (with-open [in (.getInputStream jf je)]
+                (io/copy in tmp))
+              (.setReadOnly tmp)
+              (Files/move (.toPath tmp) (.toPath f) (into-array [StandardCopyOption/ATOMIC_MOVE])))
+            (str f)))))))
+
+(defonce ^:private ^ExecutorService extractor
+  ;; one at a time, off the editor's request thread
+  (Executors/newSingleThreadExecutor
+   (reify ThreadFactory
+     (newThread [_ r] (doto (Thread. r "csl-extract") (.setDaemon true))))))
+
+(defn extract-soon!
+  "The path jar location `loc` will be extracted to, extracting it in the
+  background: for results listed before anyone picks one (symbol search).
+  nil when it can't be extracted there."
+  [home loc]
+  (when-let [f (extracted-file home loc)]
+    (when-not (.isFile f)
+      (.submit extractor ^Runnable (fn [] (try (extract! home loc) (catch Exception _ nil)))))
     (str f)))
 
 (defn source-of

@@ -16,7 +16,6 @@
   an alias: whether it holds depends on the project."
   (:require
    [clojure.java.io :as io]
-   [clojure.string :as str]
    [csl.config-sig :as config-sig]
    [csl.db :as db]
    [csl.ns-analysis :as nsa]
@@ -54,14 +53,12 @@
           d))))
 
 (defn- references-any?
-  "Does unit `u` reference any of `refs` (\"ns/name\" or \"ns:name\")?"
+  "Does unit `u` reference any of `refs` (a set of \"ns/name\" or
+  \"ns:name\")? One query for the unit's refs, however many changed."
   [c u refs]
   (when (seq refs)
-    (let [ids (keep #(db/query-value c "SELECT id FROM sym WHERE text = ?" %) refs)]
-      (and (seq ids)
-           (some? (apply db/query-value c (str "SELECT 1 FROM unit_ref WHERE unit_id = ? AND ref IN ("
-                                               (str/join "," (repeat (count ids) "?")) ") LIMIT 1")
-                         u ids))))))
+    (some (fn [[text]] (contains? refs text))
+          (db/query c "SELECT s.text FROM unit_ref r JOIN sym s ON s.id = r.ref WHERE r.unit_id = ?" u))))
 
 (defn ns-deps
   "The answers unit `u`'s hooks got: [[lang ns-sym digest]]."

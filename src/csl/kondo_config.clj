@@ -123,6 +123,9 @@
         (.mkdirs tmp)
         (doseq [[path ^bytes bs] files]
           (let [f (io/file tmp ^String path)]
+            ;; paths come from jars: none may leave the config dir (zip-slip)
+            (when-not (str/starts-with? (.getCanonicalPath f) (str (.getCanonicalPath tmp) File/separator))
+              (throw (ex-info (str "Config file outside its dir: " path) {:path path})))
             (io/make-parents f)
             (Files/write (.toPath f) bs ^"[Ljava.nio.file.OpenOption;" (into-array java.nio.file.OpenOption []))))
         ;; atomic, so a crash never leaves a half-written config under its hash
