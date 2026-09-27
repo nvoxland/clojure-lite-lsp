@@ -17,7 +17,7 @@
 (def version
   "Bump when normalization changes what it produces: it is part of every
   unit key, so all analysis is redone."
-  4)
+  5)
 
 (def project-analysis-options
   {:arglists true
@@ -85,6 +85,9 @@
     (:defined-by->lint-as e) (assoc :defined-by-lint-as (sname (:defined-by->lint-as e)))
     (:doc e) (assoc :doc (:doc e))
     (:arglist-strs e) (assoc-in [:extra :arglist-strs] (vec (:arglist-strs e)))
+    ;; for hooks that ask about a namespace (csl.ns-analysis)
+    (:fixed-arities e) (assoc-in [:extra :fixed-arities] (set (:fixed-arities e)))
+    (:varargs-min-arity e) (assoc-in [:extra :varargs-min-arity] (:varargs-min-arity e))
     ;; potemkin/import-vars: where the var really lives
     (:imported-ns e) (assoc-in [:extra :imported-ns] (sname (:imported-ns e)))))
 

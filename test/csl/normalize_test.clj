@@ -41,6 +41,9 @@
              (select-keys f [:kind :ns :name :lang :pos :form :defined-by :doc]))))
     (testing "arglists are kept for hover"
       (is (= ["[x]"] (get-in f [:extra :arglist-strs]))))
+    (testing "arities are kept for hooks that ask about a namespace (csl.ns-analysis)"
+      (is (= #{1} (get-in f [:extra :fixed-arities])))
+      (is (nil? (get-in f [:extra :varargs-min-arity]))))
     (testing "flags"
       (is (= #{} (:flags f)))
       (is (= #{:macro} (:flags m)))

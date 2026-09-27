@@ -56,11 +56,15 @@
     (.digest md)))
 
 (defn unit-key-hash
-  "The unit key: a SHA-256 over every input to a file's analysis."
-  ^bytes [{:keys [config-hash] :as unit-key}]
+  "The unit key: a SHA-256 over every input to a file's analysis,
+  including the answers its hooks got about other namespaces (:ns-deps,
+  csl.ns-analysis)."
+  ^bytes [{:keys [config-hash ns-deps] :as unit-key}]
   (let [md (MessageDigest/getInstance "SHA-256")]
     (.update md (base-key-hash unit-key))
     (.update md ^bytes config-hash)
+    (doseq [^String d ns-deps]
+      (.update md (.getBytes (str d "\u0000") StandardCharsets/UTF_8)))
     (.digest md)))
 
 (defn reload-state!

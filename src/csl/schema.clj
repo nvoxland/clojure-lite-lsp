@@ -4,7 +4,7 @@
 
 (def version
   "Bump on any change to the DDL below or to the meaning of stored values."
-  5)
+  6)
 
 (def ddl
   ["CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"
@@ -29,6 +29,8 @@
    ;; analysis depends on the config only for these
    "CREATE TABLE unit_ref (unit_id INTEGER NOT NULL, ref INTEGER NOT NULL,
       PRIMARY KEY (unit_id, ref)) WITHOUT ROWID"
+   ;; the units with a ref: those that asked about a namespace (csl.ns-analysis)
+   "CREATE INDEX unit_ref_ref ON unit_ref (ref)"
 
    ;; a jar (or the JDK's src.zip) as one unit of work
    "CREATE TABLE jar (

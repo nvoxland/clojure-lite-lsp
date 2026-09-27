@@ -8,13 +8,19 @@
   under K2 when their global parts agree and no symbol the unit references
   (unit_ref) has a different entry. Such a unit is found by its base key
   (the same file, clj-kondo and options) and given K2's key as an alias,
-  so the next lookup is direct."
+  so the next lookup is direct.
+
+  A unit whose hooks asked about other namespaces (csl.ns-analysis) is
+  valid only where the answers are still the same. It has its own key
+  (the answers are part of it), is found only this way, and never gets
+  an alias: whether it holds depends on the project."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
    [csl.config-sig :as config-sig]
    [csl.db :as db]
    [csl.normalize :as normalize]
+   [csl.ns-analysis :as nsa]
    [csl.writer :as writer]))
 
 (set! *warn-on-reflection* true)
@@ -58,6 +64,19 @@
                                                (str/join "," (repeat (count ids) "?")) ") LIMIT 1")
                          u ids))))))
 
+(defn ns-deps
+  "The answers unit `u`'s hooks got: [[lang ns-sym digest]]."
+  [c u]
+  (keep (comp nsa/parse-ref first)
+        (db/query c "SELECT s.text FROM unit_ref r JOIN sym s ON s.id = r.ref
+                     WHERE r.unit_id = ? AND s.text >= 'nsa:' AND s.text < 'nsa;'" u)))
+
+(defn- hold?
+  "Would hooks get the answers `deps` recorded today? `digest-of` (fn [lang
+  ns-sym]) gives today's; nil means they can't be checked."
+  [deps digest-of]
+  (every? (fn [[lang ns-sym d]] (and digest-of (= d (digest-of lang ns-sym)))) deps))
+
 (def ^:private candidates-to-try
   "How many analyses of the same file under other configs to consider."
   5)
@@ -65,8 +84,9 @@
 (defn unit-for
   "The unit for `unit-key`: the one with that key, else one analyzed under
   another config that is equally valid under this one (recorded as an alias
-  through writer `w`). nil when the file needs analyzing."
-  [r {:keys [c] :as w} unit-key]
+  through writer `w`). nil when the file needs analyzing. `digest-of`
+  checks units whose hooks asked about namespaces (`hold?`)."
+  [r {:keys [c] :as w} unit-key digest-of]
   (or (writer/unit-id c unit-key)
       (some (fn [[u other-config]]
               (let [{:keys [global-same? changed custom-readers]} (config-diff r other-config (:config-hash unit-key))
@@ -75,6 +95,8 @@
                     ;; (csl.analyze records those as xform: refs)
                     changed (into changed (map normalize/transformed-ref) custom-readers)]
                 (when (and global-same? (not (references-any? c u changed)))
-                  (writer/add-unit-key! w unit-key u)
-                  u)))
+                  (let [deps (ns-deps c u)]
+                    (when (hold? deps digest-of)
+                      (when (empty? deps) (writer/add-unit-key! w unit-key u))
+                      u)))))
             (take candidates-to-try (writer/units-with-base c unit-key)))))

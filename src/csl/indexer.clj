@@ -25,6 +25,7 @@
    [csl.db :as db]
    [csl.fingerprint :as fingerprint]
    [csl.kondo-config :as kc]
+   [csl.ns-analysis :as nsa]
    [csl.queue :as queue]
    [csl.reuse :as reuse]
    [csl.snapshot :as snapshot]
@@ -35,9 +36,11 @@
 
 (set! *warn-on-reflection* true)
 
-(defrecord Indexer [c w cache-dir shards contexts batch-sizes in-flight reuser]
+(defrecord Indexer [c w reader cache-dir shards contexts batch-sizes in-flight reuser requeued]
   Closeable
-  (close [_] (.close ^java.sql.Connection c)))
+  (close [_]
+    (when (realized? reader) (.close ^java.sql.Connection @reader))
+    (.close ^java.sql.Connection c)))
 
 (defn default-cache-dir []
   (io/file (System/getProperty "user.home") ".cache" "clojure-sqlite-lsp"))
@@ -48,13 +51,17 @@
   [{:keys [db-path cache-dir shards batch-sizes] :or {shards 8}}]
   (let [c (db/open-writer db-path)]
     (map->Indexer {:c c :w (writer/writer c)
+                   ;; for analysis, which runs beside the loop thread's writes
+                   :reader (delay (db/open-reader db-path))
                    :cache-dir (or cache-dir (default-cache-dir))
                    :shards shards
                    :batch-sizes batch-sizes
                    :contexts (atom {})
                    ;; the batch being analyzed: {:batch :job}
                    :in-flight (atom nil)
-                   :reuser (reuse/reuser (or cache-dir (default-cache-dir)))})))
+                   :reuser (reuse/reuser (or cache-dir (default-cache-dir)))
+                   ;; {[project path] [unit answers]}: see recheck-dependents!
+                   :requeued (atom {})})))
 
 ;;;; project context: what analysis of a project's files and jars needs
 
@@ -107,11 +114,48 @@
   (when-let [h (fingerprint/content-hash! c path)]
     (analyze/unit-key mode config h path)))
 
+(defn- serve-fn
+  "Answers for hooks asking about a namespace (csl.ns-analysis), as project
+  `p` sees it: for analysis, off the loop thread."
+  [{:keys [reader]} p]
+  (fn [lang ns-sym]
+    (let [r @reader]
+      (locking r (nsa/index-answer r p lang ns-sym)))))
+
+(defn- digest-fn
+  "Digests of today's answers in project `p`, on the loop thread."
+  [{:keys [c]} p]
+  (memoize (fn [lang ns-sym]
+             (nsa/digest (analyze/answer (fn [l n] (nsa/index-answer c p l n)) lang ns-sym)))))
+
 (defn- existing-unit
   "The unit for a file's key: analyzed under this config, or under another
-  whose differences don't touch what the file references (csl.reuse)."
-  [{:keys [w reuser]} unit-key]
-  (when unit-key (reuse/unit-for reuser w unit-key)))
+  whose differences don't touch what the file references (csl.reuse), and
+  whose hooks' answers `digest-of` finds still hold."
+  [{:keys [w reuser]} unit-key digest-of]
+  (when unit-key (reuse/unit-for reuser w unit-key digest-of)))
+
+(defn- recheck-dependents!
+  "Queue the files of project `p` whose hooks' answers no longer hold.
+
+  A file is queued again for the same unit and the same answers only once:
+  had analyzing it again given back that unit, nothing would change, and it
+  would be queued forever."
+  [{:keys [c requeued] :as ix} p]
+  (when-let [marker (db/query-value c "SELECT id FROM sym WHERE text = ?" nsa/marker)]
+    (let [digest-of (digest-fn ix p)]
+      (doseq [[u] (db/query c "SELECT r.unit_id FROM unit_ref r
+                               JOIN project_unit pu ON pu.unit_id = r.unit_id AND pu.project_id = ?
+                               WHERE r.ref = ?" p marker)
+              :let [deps (reuse/ns-deps c u)
+                    today (mapv (fn [[lang ns-sym]] (digest-of lang ns-sym)) deps)]
+              :when (not= (map last deps) today)
+              [path] (db/query c "SELECT path FROM project_file WHERE project_id = ? AND unit_id = ?" p u)]
+        (if (= [u today] (@requeued [p path]))
+          (binding [*out* *err*]
+            (println "csl: analysis of" path "doesn't match what its hooks are told; left as is"))
+          (do (swap! requeued assoc [p path] [u today])
+              (queue/enqueue! c p :file path 1)))))))
 
 ;;;; work
 
@@ -136,22 +180,35 @@
           wanted (into {} (for [dir (concat source-dirs (map :path external-dirs))
                                 path (source-files dir)]
                             [path (file-placement ctx path)]))]
-      (doseq [batch (partition-all files-per-tx (concat (keys wanted) (remove wanted (keys current))))]
-        (writer/with-write-tx w
-          (doseq [path batch]
-            (if-let [{:keys [ord external?] :as placement} (wanted path)]
-              (let [u (existing-unit ix (file-unit-key ix placement path))
-                    before (current path)]
-                (when-not (= before {:unit-id u :external? external? :ord ord})
-                  (snapshot/set-file-unit! w p path u {:ord ord :external? external?}))
-                (when-not u (queue/enqueue! c p :file path 1)))
-              (snapshot/remove-file! w p path))))))))
+      (let [missing (atom [])
+            link! (fn [path {:keys [ord external?]} u]
+                    (when-not (= (current path) {:unit-id u :external? external? :ord ord})
+                      (snapshot/set-file-unit! w p path u {:ord ord :external? external?})))]
+        (doseq [batch (partition-all files-per-tx (concat (keys wanted) (remove wanted (keys current))))]
+          (writer/with-write-tx w
+            (doseq [path batch]
+              (if-let [placement (wanted path)]
+                (if-let [u (existing-unit ix (file-unit-key ix placement path) nil)]
+                  (link! path placement u)
+                  (swap! missing conj path))
+                (snapshot/remove-file! w p path)))))
+        ;; a file whose hooks asked about other namespaces can only be
+        ;; checked once everything else is linked
+        (let [digest-of (digest-fn ix p)]
+          (doseq [batch (partition-all files-per-tx @missing)]
+            (writer/with-write-tx w
+              (doseq [path batch
+                      :let [placement (wanted path)
+                            u (existing-unit ix (file-unit-key ix placement path) digest-of)]]
+                (link! path placement u)
+                (when-not u (queue/enqueue! c p :file path 1))))))))))
 
 (defn- files-job
   "Index project or external-dir files that changed. Returns a job:
   {:analysis (a future of the clj-kondo work) :write (fn [analysis])}."
   [{:keys [c w shards] :as ix} p paths]
   (let [ctx (context ix p)
+        digest-of (digest-fn ix p)
         placed (for [path paths
                      :let [f (io/file path)]]
                  (if (.isFile f)
@@ -162,11 +219,12 @@
                           :let [placement (first group)]]
                       {:mode mode :config config :group group
                        :known (into {} (for [{:keys [path]} group]
-                                         [path (existing-unit ix (file-unit-key ix placement path))]))}))]
+                                         [path (existing-unit ix (file-unit-key ix placement path) digest-of)]))}))
+        serve (serve-fn ix p)]
     {:analysis (future
                  (mapv (fn [{:keys [mode config known]}]
                          (analyze/analyze-files (vec (keep (fn [[path u]] (when-not u path)) known))
-                                                {:config config :mode mode :shards shards}))
+                                                {:config config :mode mode :shards shards :serve serve}))
                        groups))
      :write (fn [analysis]
               (doseq [{:keys [path gone?]} placed :when gone?]
@@ -177,10 +235,12 @@
                                  (zipmap (map :path fresh) fresh-ids))]
                   (writer/with-write-tx w
                     (doseq [{:keys [path ord external?]} group]
-                      (snapshot/set-file-unit! w p path (ids path) {:ord ord :external? external?}))))))}))
+                      (snapshot/set-file-unit! w p path (ids path) {:ord ord :external? external?})))))
+              (recheck-dependents! ix p))}))
 
-(defn- delete-files! [{:keys [w]} p paths]
-  (doseq [path paths] (snapshot/remove-file! w p path)))
+(defn- delete-files! [{:keys [w] :as ix} p paths]
+  (doseq [path paths] (snapshot/remove-file! w p path))
+  (recheck-dependents! ix p))
 
 (defn- jars-job
   "Analyze jars (those not indexed yet) and link them into the project.
@@ -205,7 +265,8 @@
               (let [written (into {} (for [{:keys [jar jar-key entries]} analyzed]
                                        [jar (snapshot/write-jar! w jar-key (map (juxt :entry-path :unit-key :elements) entries))]))]
                 (doseq [{:keys [path ord jar-id]} todo]
-                  (snapshot/link-jar! w p ord (or jar-id (written path))))))}))
+                  (snapshot/link-jar! w p ord (or jar-id (written path))))
+                (recheck-dependents! ix p)))}))
 
 (defn- index-dep-files!
   [{:keys [c w cache-dir shards] :as ix} p paths]

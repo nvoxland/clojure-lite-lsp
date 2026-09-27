@@ -30,7 +30,9 @@
                      :else v))
                  x))
 
-(defn- digest [x]
+(defn digest
+  "SHA-256 hex of `x`, the same for equal values."
+  [x]
   (let [^String text (binding [*print-length* nil *print-level* nil] (pr-str (canonical x)))
         bs (.digest (MessageDigest/getInstance "SHA-256") (.getBytes text "UTF-8"))]
     (apply str (map #(format "%02x" %) bs))))
