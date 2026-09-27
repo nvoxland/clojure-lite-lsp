@@ -37,25 +37,30 @@
   (update-vals modes (fn [m] (sha256 (pr-str [normalize/version (dissoc m :external?)])))))
 
 (def ^:dynamic *transformed*
-  "While analyzing: an atom collecting the files (canonical paths) in which
-  a hook returned a new node, which is how clj-kondo itself tells a
-  transformation from a hook that only lints."
+  "While analyzing: an atom collecting [file macro] pairs (canonical paths)
+  where the macro's hook returned a new node, which is how clj-kondo itself
+  tells a transformation from a hook that only lints."
   nil)
 
 (defonce ^:private watch-hooks
   ;; wrap clj-kondo's hook lookup, once, so each hook call is compared with
   ;; what it was given
+  ;; (the original is kept on the var, so reloading this namespace wraps it
+  ;; afresh rather than twice)
   (delay
-    (alter-var-root
-     #'clj-kondo.impl.hooks/hook-fn
-     (fn [hook-fn]
-       (fn [ctx & args]
-         (when-let [f (apply hook-fn ctx args)]
-           (fn [{:keys [node] :as m}]
-             (let [r (f m)]
-               (when (and *transformed* (:node r) (not (identical? node (:node r))))
-                 (swap! *transformed* conj (:filename ctx)))
-               r))))))))
+    (let [v #'clj-kondo.impl.hooks/hook-fn
+          hook-fn (or (::original (meta v)) @v)]
+      (alter-meta! v assoc ::original hook-fn)
+      (alter-var-root
+       v
+       (constantly
+        (fn [ctx config ns-sym var-sym & more]
+          (when-let [f (apply hook-fn ctx config ns-sym var-sym more)]
+            (fn [{:keys [node] :as m}]
+              (let [r (f m)]
+                (when (and *transformed* (:node r) (not (identical? node (:node r))))
+                  (swap! *transformed* conj [(:filename ctx) (symbol (str ns-sym) (str var-sym))]))
+                r)))))))))
 
 (defn- run-kondo [lint mode config-dir]
   (let [{:keys [skip-lint analysis]} (modes mode)]
@@ -104,6 +109,7 @@
              (fn [part]
                (let [by-canonical (into {} (map (fn [p] [(canonical p) p])) part)
                      transformed (atom #{})
+                     xforms (delay (update-vals (group-by first @transformed) #(map second %)))
                      units (normalize/normalize (binding [*transformed* transformed]
                                                   (run-kondo (vec (keys by-canonical)) mode (:dir config)))
                                                 {:external? (:external? (modes mode))})]
@@ -111,8 +117,9 @@
                        :let [c (canonical p)]]
                    {:path p
                     :unit-key (unit-key mode config (fingerprint/sha256 c) p)
-                    :elements (cond-> (get units c [])
-                                (@transformed c) (conj {:kind :ref :name normalize/transformed-ref :lang #{}}))})))))
+                    :elements (into (get units c [])
+                                    (map (fn [s] {:kind :ref :name (normalize/transformed-ref s) :lang #{}}))
+                                    (get @xforms c))})))))
 
 (defn jar-key
   "The key of a jar with `jar-hash` analyzed with `config`."

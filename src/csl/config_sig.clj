@@ -98,6 +98,7 @@
         hook (fn [h] (cond
                        (symbol? h) [h (when-let [n (namespace h)] (hook-code files (symbol n)))]
                        :else h))
+        hook-text (fn [h] (pr-str (hook h)))
         {:keys [lint-as hooks config-in-call config-in-ns ns-groups]} cfg
         {:keys [analyze-call macroexpand]} hooks
         groups (set (keep :name ns-groups))
@@ -117,7 +118,15 @@
         ns-entries (into {}
                          (keep (fn [[n c]] (when-let [c (without-linters c)] [(str "ns:" n) (digest c)])))
                          ns-cfgs)]
-    {:custom (digest custom)
+    {:custom (update-vals custom digest)
+     ;; which custom keys each hooked macro's hook code mentions
+     :mentions (into {}
+                     (keep (fn [s]
+                             (let [text (str (some-> (get analyze-call s) hook-text)
+                                             (some-> (get macroexpand s) hook-text))]
+                               (when (seq text)
+                                 [(str s) (into #{} (filter #(str/includes? text (subs (str %) 1))) (keys custom))]))))
+                     (concat (keys analyze-call) (keys macroexpand)))
      :global (digest (-> (apply dissoc cfg (keys custom))
                          (dissoc :linters :lint-as :hooks :config-in-call :config-in-ns :output :analysis
                                  ;; where things are, not what they say (hook code is
@@ -132,11 +141,17 @@
      :entries (merge sym-entries ns-entries)}))
 
 (defn diff
-  "How two signatures differ: {:global-same? :custom-same? :changed #{entry
-  keys}}."
+  "How two signatures differ: {:global-same? :changed #{entry keys}
+  :custom-changed #{custom keys} :custom-readers #{macros whose hook code
+  mentions a changed custom key}}."
   [a b]
-  {:global-same? (= (:global a) (:global b))
-   :custom-same? (= (:custom a) (:custom b))
-   :changed (into #{}
-                  (filter #(not= (get (:entries a) %) (get (:entries b) %)))
-                  (concat (keys (:entries a)) (keys (:entries b))))})
+  (let [differs (fn [k] (into #{}
+                              (filter #(not= (get (k a) %) (get (k b) %)))
+                              (concat (keys (k a)) (keys (k b)))))
+        custom-changed (differs :custom)]
+    {:global-same? (= (:global a) (:global b))
+     :custom-changed custom-changed
+     :changed (differs :entries)
+     :custom-readers (into #{}
+                           (keep (fn [[s ks]] (when (some custom-changed ks) s)))
+                           (concat (:mentions a) (:mentions b)))}))

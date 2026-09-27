@@ -69,10 +69,11 @@
   [r {:keys [c] :as w} unit-key]
   (or (writer/unit-id c unit-key)
       (some (fn [[u other-config]]
-              (let [{:keys [global-same? custom-same? changed]} (config-diff r other-config (:config-hash unit-key))
-                    ;; custom keys reach analysis only through hooks that
-                    ;; transform (csl.analyze marks those files)
-                    changed (cond-> changed (not custom-same?) (conj normalize/transformed-ref))]
+              (let [{:keys [global-same? changed custom-readers]} (config-diff r other-config (:config-hash unit-key))
+                    ;; a changed custom key reaches analysis only through a
+                    ;; hook that reads it and transformed a call in the file
+                    ;; (csl.analyze records those as xform: refs)
+                    changed (into changed (map normalize/transformed-ref) custom-readers)]
                 (when (and global-same? (not (references-any? c u changed)))
                   (writer/add-unit-key! w unit-key u)
                   u)))
