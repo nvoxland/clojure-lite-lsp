@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build the clojure-lite-lsp native binary (if needed) and link it into ~/.local/bin, where
-# the Zed extension finds it on PATH.
+# Build the clojure-lite-lsp native binary (if needed) and link it into
+# ~/.local/bin, where the editor extensions (zed/, vscode/) find it on PATH.
 #
-#   zed/install-server            build if target/clojure-lite-lsp is missing, then link
-#   zed/install-server --rebuild  always build first
+#   bin/install-server            build if target/clojure-lite-lsp is missing, then link
+#   bin/install-server --rebuild  always build first
 #
 # Building needs GraalVM: set JAVA_HOME to it, or have native-image on PATH.
 set -euo pipefail
@@ -20,5 +20,6 @@ echo "Linked $bin_dir/clojure-lite-lsp -> $repo/target/clojure-lite-lsp ($("$bin
 
 case ":$PATH:" in
   *":$bin_dir:"*) ;;
-  *) echo "Note: $bin_dir is not on your PATH; add it, or set lsp.clojure-lite-lsp.binary.path in Zed." ;;
+  *) echo "Note: $bin_dir is not on your PATH; add it, or set the path in your editor's settings" \
+          "(Zed: lsp.clojure-lite-lsp.binary.path, VS Code: clojure-lite-lsp.path)." ;;
 esac

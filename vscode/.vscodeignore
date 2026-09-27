@@ -1,0 +1,8 @@
+src/**
+out/test/**
+out/e2e/**
+**/*.map
+tsconfig.json
+install
+.gitignore
+.vscode-test/**

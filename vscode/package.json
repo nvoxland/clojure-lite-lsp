@@ -1,0 +1,74 @@
+{
+  "name": "clojure-lite-lsp",
+  "displayName": "clojure-lite-lsp",
+  "description": "A low-memory, read-only Clojure language server: navigation, references, hover, symbols and call hierarchy from a shared index.",
+  "version": "0.1.0",
+  "publisher": "nvoxland",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nvoxland/clojure-lite-lsp"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:clojure"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "clojure-lite-lsp",
+      "properties": {
+        "clojure-lite-lsp.path": {
+          "type": "string",
+          "default": "",
+          "description": "The clojure-lite-lsp executable. Empty: found on PATH."
+        },
+        "clojure-lite-lsp.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "lsp"
+          ],
+          "description": "Arguments that start the language server."
+        },
+        "clojure-lite-lsp.env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Environment variables for the server, e.g. CLOJURE_LITE_LSP_HOME for a separate index."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "clojure-lite-lsp.restart",
+        "title": "clojure-lite-lsp: Restart the language server"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "test": "tsc -p . && node --test out/test/*.test.js",
+    "package": "vsce package --skip-license",
+    "test:e2e": "tsc -p . && node out/e2e/run.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.6.0"
+  }
+}

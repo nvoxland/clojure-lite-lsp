@@ -10,8 +10,8 @@ this server instead of clojure-lsp.
 1. Build the server and put `clojure-lite-lsp` on your PATH:
 
    ```sh
-   zed/install-server            # builds target/clojure-lite-lsp if needed, links ~/.local/bin/clojure-lite-lsp
-   zed/install-server --rebuild  # after pulling changes
+   bin/install-server            # builds target/clojure-lite-lsp if needed, links ~/.local/bin/clojure-lite-lsp
+   bin/install-server --rebuild  # after pulling changes
    ```
 
    Building needs GraalVM (`JAVA_HOME` pointing at it, or `native-image` on

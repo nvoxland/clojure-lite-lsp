@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Build, test and package the VS Code extension, then install it into VS Code.
+#
+#   vscode/install
+#
+# The server itself: bin/install-server. Needs Node.js (npm).
+set -euo pipefail
+cd "$(dirname "$0")"
+
+npm ci --no-fund --no-audit
+npm test
+npm run package
+
+code_cli="$(command -v code || true)"
+if [[ -z "$code_cli" && -x "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" ]]; then
+  code_cli="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+fi
+vsix="$(ls -t clojure-lite-lsp-*.vsix | head -1)"
+if [[ -n "$code_cli" ]]; then
+  "$code_cli" --install-extension "$vsix" --force
+  echo "Installed $vsix. Reload VS Code's window to use it."
+else
+  echo "VS Code's 'code' command wasn't found: install $PWD/$vsix with 'Extensions: Install from VSIX...'."
+fi
