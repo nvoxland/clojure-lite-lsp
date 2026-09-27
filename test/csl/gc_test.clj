@@ -141,3 +141,28 @@
         (file! w p "/a/kept.clj" "(ns kept)")
         (gc/collect! w {})
         (is (= [["/a/kept.clj"]] (db/query c "SELECT path FROM fingerprint")))))))
+
+(deftest usages-at-one-spot-are-all-collected
+  ;; two usages at the same position, kind and language, of different
+  ;; vars (an unresolved-namespace finding beside an analysis usage): GC
+  ;; finds a unit's usages through its file elements, so both need one
+  (with-writer
+    (fn [w c]
+      (let [p (snapshot/ensure-project! c "/a")
+            usage (fn [ns] {:kind :var-usage :ns ns :name "f" :lang #{:clj} :pos [1 1 1 5] :flags #{}})
+            [u] (writer/write-units! w [[(unit-key "twins") [(usage "one") (usage "two")]]])]
+        (snapshot/set-file-unit! w p "/a/x.clj" u {:ord 0})
+        (is (= 2 (count-of c "usage WHERE unit_id = ?" u)))
+        (snapshot/remove-file! w p "/a/x.clj")
+        (gc/collect! w {})
+        (is (zero? (count-of c "usage WHERE unit_id = ?" u)))))))
+
+(deftest ids-are-not-reused-after-collection
+  ;; something still keyed by a collected id must not come to mean a new row
+  (with-writer
+    (fn [w c]
+      (let [p (snapshot/ensure-project! c "/a")
+            gone (file! w p "/a/gone.clj" "(ns gone) (defn g [] 1)")]
+        (snapshot/remove-file! w p "/a/gone.clj")
+        (gc/collect! w {})
+        (is (< gone (file! w p "/a/new.clj" "(ns fresh) (defn n [] 1)")))))))

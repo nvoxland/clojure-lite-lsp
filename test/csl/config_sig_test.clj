@@ -83,3 +83,30 @@
                  (update "config.edn" (fn [c] (pr-str (assoc (read-string c) :acme/modules %)))))]
     (is (= #{"acme/one" "acme/two"}
            (:custom-readers (sig/diff (sig/signature (config-dir (cfg {:a 1}))) (sig/signature (config-dir (cfg {:a 2})))))))))
+
+(deftest hooks-on-an-ns-group-are-global
+  ;; a hook keyed on a group (my-group/deftest) applies to whatever
+  ;; namespaces match it: no file references it by that name
+  (let [with-group #(with-config (fn [c] (assoc c :ns-groups [{:pattern "app\\..*" :name 'app-group}]
+                                                :hooks {:analyze-call {'app-group/deft %}})))]
+    (is (false? (:global-same? (diff (with-group 'hooks.a/m) (with-group 'hooks.b/m)))))))
+
+(deftest hook-code-follows-every-kind-of-require
+  (let [helper "(ns hooks.util) (defn h [])"
+        cfg (fn [a-code util-code]
+              (-> base-config
+                  (assoc "hooks/a.clj" a-code "hooks/util.clj" util-code "hooks/other.clj" "(ns hooks.other)")))]
+    (doseq [[how a-code] [["a prefix list" "(ns hooks.a (:require [hooks [util :as u] other])) (defn m [{:keys [node]}] {:node node})"]
+                          ["a top-level require" "(ns hooks.a) (require '[hooks.util :as u]) (defn m [{:keys [node]}] {:node node})"]
+                          ["a :use" "(ns hooks.a (:use hooks.util)) (defn m [{:keys [node]}] {:node node})"]]]
+      (testing how
+        (is (= #{"acme/one" "acme/two"}
+               (:changed (diff (cfg a-code helper) (cfg a-code (str helper " (defn h2 [])"))))))))))
+
+(deftest a-hook-namespace-in-two-places-counts-both
+  ;; which one clj-kondo loads isn't csl's to guess: a change to either
+  ;; counts
+  (let [both (fn [root imported] (assoc base-config "hooks/a.clj" root "imports/acme/lib/hooks/a.clj" imported))
+        changed (str hooks-a " (defn x [])")]
+    (is (= #{"acme/one" "acme/two"} (:changed (diff (both hooks-a hooks-a) (both hooks-a changed)))))
+    (is (= #{"acme/one" "acme/two"} (:changed (diff (both hooks-a hooks-a) (both changed hooks-a)))))))

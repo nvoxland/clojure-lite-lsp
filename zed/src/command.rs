@@ -25,9 +25,15 @@ pub struct Launch {
 }
 
 /// The launch command: `override_.path` if set, else the PATH lookup `which`.
-/// Arguments default to `csl lsp`; settings can replace them. Env from settings
-/// applies either way.
-pub fn resolve(override_: Option<Override>, which: Option<String>) -> Result<Launch, String> {
+/// Arguments default to `csl lsp`; settings can replace them. The env is the
+/// user's shell environment (the indexer the server starts runs `clojure` or
+/// `lein`, which a Zed started from the Dock can't find otherwise), with env
+/// from settings over it.
+pub fn resolve(
+    override_: Option<Override>,
+    which: Option<String>,
+    shell_env: Vec<(String, String)>,
+) -> Result<Launch, String> {
     let o = override_.unwrap_or_default();
     let command = o.path.or(which).ok_or_else(|| {
         format!(
@@ -40,6 +46,18 @@ pub fn resolve(override_: Option<Override>, which: Option<String>) -> Result<Lau
         args: o
             .arguments
             .unwrap_or_else(|| DEFAULT_ARGS.iter().map(|s| s.to_string()).collect()),
-        env: o.env,
+        env: merge_env(shell_env, o.env),
     })
+}
+
+/// `base` with `over`'s values replacing (or adding to) it, in order.
+fn merge_env(base: Vec<(String, String)>, over: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut env = base;
+    for (k, v) in over {
+        match env.iter_mut().find(|(ek, _)| *ek == k) {
+            Some(e) => e.1 = v,
+            None => env.push((k, v)),
+        }
+    }
+    env
 }

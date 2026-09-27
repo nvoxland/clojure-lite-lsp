@@ -71,7 +71,7 @@ passed through. For example, to keep a separate index while trying it out:
 - `csl status` in a terminal shows the indexer, the index, and each project's
   files and jars, including how many jars are shared with other projects.
 - **dev: open language server logs** shows the server's stderr. The indexer
-  logs to `~/.cache/clojure-sqlite-lsp/daemon.log`.
+  logs to `~/.cache/clojure-sqlite-lsp/v<n>/daemon.log`.
 - A project's classpath comes from `deps.edn` (aliases `:dev` and `:test` by
   default), `project.clj` or `bb.edn`. A `.csl.edn` at the project root can
   change that:

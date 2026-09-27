@@ -28,6 +28,9 @@
   `progress` with {root pending-count} as it goes. Returns {:files {root
   indexed-file-count}}. `opts` are csl.client/ensure-daemon!'s."
   [opts dirs progress]
+  (doseq [d dirs]
+    (when-not (.isDirectory (io/file d))
+      (throw (ex-info (str "Not a directory: " d) {:dir d}))))
   (client/ensure-daemon! opts)
   (with-open [c (db/open-client (:db (daemon/paths (:home opts))))]
     (let [projects (into {} (for [d dirs

@@ -71,13 +71,23 @@
   "Load ids, symbols and searchable names from the database: everything
   the writer keeps in memory."
   [{:keys [c ids ^HashMap syms ^HashSet searchable]}]
-  (reset! ids {:sym (db/query-value c "SELECT coalesce(max(id), 0) FROM sym")
-               :unit (db/query-value c "SELECT coalesce(max(id), 0) FROM unit")
-               :definition (db/query-value c "SELECT coalesce(max(id), 0) FROM definition")})
+  ;; never below a high-water mark GC left (`save-high-water!`): an id
+  ;; something may still hold must not come to mean a new row
+  (let [top (fn [table]
+              (max (db/query-value c (str "SELECT coalesce(max(id), 0) FROM " table))
+                   (or (some-> (db/query-value c "SELECT value FROM meta WHERE key = ?" (str "max_id_" table)) parse-long)
+                       0)))]
+    (reset! ids {:sym (top "sym") :unit (top "unit") :definition (top "definition")}))
   (.clear syms)
   (doseq [[id text] (db/query c "SELECT id, text FROM sym")] (.put syms text id))
   (.clear searchable)
   (doseq [[id] (db/query c "SELECT rowid FROM name_fts")] (.add searchable id)))
+
+(defn save-high-water!
+  "Record the highest ids handed out, before deleting rows (GC)."
+  [{:keys [c ids]}]
+  (doseq [[k v] @ids]
+    (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)" (str "max_id_" (name k)) (str v))))
 
 (defn writer
   "A writer for connection `c`, which must be the only writer of analysis."

@@ -52,28 +52,58 @@
                     [(str/replace (subs (str f) base) File/separator "/") f])))
           (file-seq (io/file dir)))))
 
-(defn- ns-file
-  "The source file of hook namespace `ns-sym` in the config dir."
+(defn- ns-files
+  "The source files of hook namespace `ns-sym` in the config dir: all of
+  them, when it's in more than one place (the config's own and an
+  import): which one clj-kondo loads isn't for csl to guess."
   [files ns-sym]
   (let [path (str/replace (munge (str ns-sym)) "." "/")]
-    (some (fn [ext]
-            (some (fn [[rel f]] (when (or (= rel (str path ext)) (str/ends-with? rel (str "/" path ext))) f))
-                  files))
-          [".clj" ".cljc" ".bb" ".clj_kondo"])))
+    (or (some (fn [ext]
+                (not-empty (vec (keep (fn [[rel f]] (when (or (= rel (str path ext)) (str/ends-with? rel (str "/" path ext))) f))
+                                      (sort-by key files)))))
+              [".clj" ".cljc" ".bb" ".clj_kondo"])
+        [])))
+
+(defn- libs
+  "The namespaces a require/use spec names: a symbol, a vector
+  [lib & opts], or a prefix list (prefix lib-or-vector ...)."
+  [spec]
+  (cond
+    (symbol? spec) [spec]
+    (and (sequential? spec) (symbol? (first spec)))
+    (let [[head & more] spec]
+      (if (and (seq more) (every? #(or (symbol? %) (sequential? %)) more)
+               (not (keyword? (first more))))
+        ;; a prefix list
+        (for [m more
+              lib (libs m)]
+          (symbol (str head "." lib)))
+        [head]))
+    :else []))
 
 (defn- required-namespaces
-  "The namespaces a source file's ns form requires."
+  "The namespaces a source file requires: in its ns form's :require and
+  :use, and in top-level (require ...) and (use ...) calls."
   [^File f]
   (try
-    (let [form (binding [*read-eval* false]
-                 (read {:eof nil :read-cond :allow} (PushbackReader. (StringReader. (slurp f)))))]
-      (when (and (seq? form) (= 'ns (first form)))
-        (for [clause (rest form)
-              :when (and (seq? clause) (= :require (first clause)))
+    (let [forms (binding [*read-eval* false]
+                  (let [r (PushbackReader. (StringReader. (slurp f)))]
+                    (doall (take-while #(not= ::eof %) (repeatedly #(read {:eof ::eof :read-cond :allow} r))))))
+          unquote-spec #(if (and (seq? %) (= 'quote (first %))) (second %) %)]
+      (distinct
+       (concat
+        (for [form forms
+              :when (and (seq? form) (= 'ns (first form)))
+              clause (rest form)
+              :when (and (seq? clause) (#{:require :use} (first clause)))
               spec (rest clause)
-              :let [lib (if (sequential? spec) (first spec) spec)]
-              :when (symbol? lib)]
-          lib)))
+              lib (libs spec)]
+          lib)
+        (for [form forms
+              :when (and (seq? form) ('#{require use} (first form)))
+              spec (rest form)
+              lib (libs (unquote-spec spec))]
+          lib))))
     (catch Exception _ nil)))
 
 (defn- hook-code
@@ -84,9 +114,10 @@
     (if-let [[n & more] (seq todo)]
       (if (seen n)
         (recur more seen code)
-        (if-let [f (ns-file files n)]
-          (recur (into (vec more) (required-namespaces f)) (conj seen n) (conj code [n (slurp f)]))
-          (recur more (conj seen n) code)))
+        (let [fs (ns-files files n)]
+          (recur (into (vec more) (mapcat required-namespaces fs))
+                 (conj seen n)
+                 (into code (map (fn [f] [n (slurp f)]) fs)))))
       (sort-by (comp str first) code))))
 
 ;;;; signature
@@ -104,9 +135,13 @@
         {:keys [lint-as hooks config-in-call config-in-ns ns-groups]} cfg
         {:keys [analyze-call macroexpand]} hooks
         groups (set (keep :name ns-groups))
+        ;; entries keyed on a group (app-group/deft) apply to whatever
+        ;; namespaces match it: no file references them by that name
+        group-keyed? #(contains? groups (some-> (namespace %) symbol))
         ;; a group only reaches analysis through config-in-ns for it
         analysis-groups (into #{} (keep (fn [[g c]] (when (and (groups g) (without-linters c)) g))) config-in-ns)
-        syms (into #{} (concat (keys lint-as) (keys analyze-call) (keys macroexpand) (keys config-in-call)))
+        [group-syms syms] ((juxt filter remove) group-keyed?
+                           (into #{} (concat (keys lint-as) (keys analyze-call) (keys macroexpand) (keys config-in-call))))
         sym-entries (into {}
                           (keep (fn [s]
                                   (let [entry [(get lint-as s)
@@ -138,7 +173,14 @@
                                  :cfg-dir :classpath :use-import-dir :config-paths :auto-load-configs
                                  :skip-lint)
                          (assoc :other-hooks (dissoc hooks :analyze-call :macroexpand)
-                                :ns-groups (filterv #(analysis-groups (:name %)) ns-groups)
+                                :ns-groups (filterv #(or (analysis-groups (:name %))
+                                                         (some (fn [s] (= (str (:name %)) (namespace s))) group-syms))
+                                                    ns-groups)
+                                :group-keyed (into {} (for [s group-syms]
+                                                        [s [(get lint-as s)
+                                                            (some-> (get analyze-call s) hook)
+                                                            (some-> (get macroexpand s) hook)
+                                                            (without-linters (get config-in-call s))]]))
                                 ;; config for a group of namespaces applies to whichever
                                 ;; namespaces match it: global
                                 :group-config (into {} (keep (fn [[g c]] (when-let [c (without-linters c)] [g c]))) group-cfgs))

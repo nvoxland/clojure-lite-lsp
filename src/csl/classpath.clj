@@ -108,15 +108,43 @@
         cmd (command root cfg)]
     (classify root (when cmd (parse (run cmd root))) cfg)))
 
+(defn- user-build-files
+  "Build files outside the project that shape its classpath."
+  []
+  [(io/file (or (System/getenv "CLJ_CONFIG") (io/file (System/getProperty "user.home") ".clojure")) "deps.edn")
+   (io/file (System/getProperty "user.home") ".lein" "profiles.clj")])
+
+(defn- local-roots
+  "The :local/root dirs of the deps.edn at `root` (its :deps and its
+  aliases' deps), absolute."
+  [root]
+  (let [f (file root "deps.edn")]
+    (when (.isFile f)
+      (let [edn (try (read-edn f) (catch Exception _ nil))
+            dep-maps (cons (:deps edn)
+                           (mapcat (juxt :extra-deps :replace-deps :override-deps) (vals (:aliases edn))))]
+        (for [deps dep-maps
+              [_ coord] deps
+              :let [dir (:local/root coord)]
+              :when (string? dir)]
+          (.getCanonicalPath (let [d (io/file dir)] (if (.isAbsolute d) d (io/file root dir)))))))))
+
 (defn- spec-hash
-  "A hash of everything the classpath is computed from."
+  "A hash of everything the classpath is computed from: the project's
+  build files, its :local/root deps' (transitively), and the user's."
   ^bytes [root cmd]
-  (let [md (MessageDigest/getInstance "SHA-256")]
+  (let [md (MessageDigest/getInstance "SHA-256")
+        add! (fn [label ^File f]
+               (.update md (.getBytes (str label "\u0000") "UTF-8"))
+               (when (.isFile f) (.update md (.getBytes (slurp f) "UTF-8"))))]
     (.update md (.getBytes (pr-str cmd) "UTF-8"))
-    (doseq [name build-files
-            :let [f (file root name)]]
-      (.update md (.getBytes (str name "\u0000") "UTF-8"))
-      (when (.isFile f) (.update md (.getBytes (slurp f) "UTF-8"))))
+    (loop [todo [(.getCanonicalPath (io/file root))] seen #{}]
+      (when-let [[dir & more] (seq todo)]
+        (if (seen dir)
+          (recur more seen)
+          (do (doseq [name build-files] (add! (str dir "/" name) (file dir name)))
+              (recur (into (vec more) (local-roots dir)) (conj seen dir))))))
+    (doseq [f (user-build-files)] (add! (str f) f))
     (.digest md)))
 
 (defn memoized!

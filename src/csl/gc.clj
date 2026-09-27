@@ -98,6 +98,7 @@
   [{:keys [c] :as w} {:keys [project-max-age-ms] :or {project-max-age-ms default-project-max-age-ms}}]
   (try
     (let [[projects jars dep-files] (writer/with-write-tx w
+                                      (writer/save-high-water! w)
                                       [(drop-stale-projects! c project-max-age-ms)
                                        (drop-dead-jars! c)
                                        (drop-orphan-dep-files! c)])

@@ -26,7 +26,7 @@ impl zed::Extension for ClojureSqliteLspExtension {
                 arguments: b.arguments,
                 env: b.env.map(|m| m.into_iter().collect()).unwrap_or_default(),
             });
-        let launch = resolve(override_, worktree.which(BINARY_NAME))?;
+        let launch = resolve(override_, worktree.which(BINARY_NAME), worktree.shell_env())?;
         Ok(zed::Command {
             command: launch.command,
             args: launch.args,

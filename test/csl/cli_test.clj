@@ -59,3 +59,8 @@
       (let [runs (doall (for [_ (range 3)] (future (cli/gc! o))))]
         (is (every? map? (map #(deref % 60000 :hung) runs))))
       (finally (stop! h daemons)))))
+
+(deftest index-refuses-what-isnt-a-directory
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Not a directory"
+                        (cli/index! {:home (home) :spawn! #(throw (ex-info "no daemon needed" {}))}
+                                    ["/no/such/dir"] (fn [_])))))

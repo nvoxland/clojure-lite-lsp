@@ -88,3 +88,16 @@
         (let [other (project! {"deps.edn" "{" "src" :dir})]
           (is (thrown? Exception (classpath/memoized! c (snapshot/ensure-project! c other) other
                                                       {:run (fn [_ _] (throw (ex-info "Error" {})))}))))))))
+
+(deftest a-local-dependencys-build-file-counts
+  ;; a :local/root dep's own deps can change the classpath
+  (with-open [c (db/open-writer (tu/temp-db-path))]
+    (let [lib (project! {"deps.edn" "{:paths [\"src\"]}"})
+          root (project! {"deps.edn" (pr-str {:paths ["src"] :deps {'acme/lib {:local/root lib}}}) "src" :dir})
+          p (snapshot/ensure-project! c root)
+          runs (atom 0)
+          run (fn [_ _] (swap! runs inc) "src")]
+      (classpath/memoized! c p root {:run run})
+      (spit (io/file lib "deps.edn") "{:paths [\"src\"] :deps {other/dep {:mvn/version \"1.0\"}}}")
+      (classpath/memoized! c p root {:run run})
+      (is (= 2 @runs)))))

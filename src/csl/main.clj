@@ -9,6 +9,7 @@
    [csl.cli :as cli]
    [csl.daemon :as daemon]
    [csl.db :as db]
+   [csl.lock :as lock]
    [csl.lsp.server :as server]
    [csl.status :as status]
    [csl.version :as version])
@@ -21,13 +22,16 @@
       (str (io/file (System/getProperty "user.home") ".cache" "clojure-sqlite-lsp"))))
 
 (defn- status [h]
-  (let [{:keys [db]} (daemon/paths h)]
+  (let [{:keys [db daemon-lock]} (daemon/paths h)]
     (if-not (.isFile (io/file db))
       (println "No index at" db)
       (with-open [c (db/open-reader db)]
-        ;; the WAL holds recent writes until they are checkpointed
-        (status/print! (status/data c)
-                       (quot (+ (.length (io/file db)) (.length (io/file (str db "-wal")))) 1048576))))))
+        (try
+          ;; the WAL holds recent writes until they are checkpointed
+          (status/print! (status/data c {:daemon-alive? (lock/held? daemon-lock)})
+                         (quot (+ (.length (io/file db)) (.length (io/file (str db "-wal")))) 1048576))
+          (catch java.sql.SQLException _
+            (println "The index at" db "is still being created")))))))
 
 (def ^:private usage
   "Usage: csl lsp | index [<project-dir>...] | gc | status | version")
@@ -55,7 +59,10 @@
             (shutdown-agents)
             (System/exit code))
     "index" (do (if (seq args)
-                  (index-projects args)
+                  (try (index-projects args)
+                       (catch clojure.lang.ExceptionInfo e
+                         (println (ex-message e))
+                         (System/exit 1)))
                   (daemon/run! {:home (home)}))
                 (shutdown-agents)
                 (System/exit 0))

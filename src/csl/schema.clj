@@ -116,7 +116,9 @@
       local_id INTEGER,
       form_row INTEGER, form_col INTEGER,
       form_end_row INTEGER, form_end_col INTEGER,
-      PRIMARY KEY (unit_id, name_row, name_col, kind, lang)) WITHOUT ROWID"
+      -- ns and name too: GC finds a unit's usage rows through these, so
+      -- every usage key needs its own row (two usages can share a spot)
+      PRIMARY KEY (unit_id, name_row, name_col, kind, lang, ns, name)) WITHOUT ROWID"
 
    ;; Java classes are recorded per jar, not as units: one unit per .class
    ;; file cost a unit, jar_entry and project_unit row each (Phase 1)

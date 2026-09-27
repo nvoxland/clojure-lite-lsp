@@ -31,3 +31,11 @@
           (let [out (with-out-str (status/print! (status/data (:c ix))))]
             (is (str/includes? out a))
             (is (re-find #"jars: 5 \(4 shared with other projects\)" out))))))))
+
+(deftest a-daemon-that-died-isnt-reported-running
+  ;; its row outlives a crash; its lock doesn't
+  (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (csl.db/execute! (:c ix) "INSERT INTO daemon (id, pid, version, started_at, heartbeat_at, stop_requested)
+                              VALUES (1, 4242, 'x', 0, 0, 0)")
+    (is (nil? (:daemon (status/data (:c ix) {:daemon-alive? false}))))
+    (is (= 4242 (get-in (status/data (:c ix) {:daemon-alive? true}) [:daemon :pid])))))
