@@ -4,6 +4,8 @@ A low-memory, read-only Clojure language server, for editors and coding agents.
 
 - **Navigation**: definitions, references, implementations, hover docs, file
   outlines, symbol search and call hierarchy (callers and callees).
+- **While you type**: occurrence highlighting, argument hints, and renaming
+  locals.
 - **One shared index**: analysis comes from
   [clj-kondo](https://github.com/clj-kondo/clj-kondo) and is stored in one
   SQLite index for every project on the machine. A library is analyzed once;
@@ -12,7 +14,8 @@ A low-memory, read-only Clojure language server, for editors and coding agents.
 - **Light**: each editor's server process is about 20 MB, and indexing
   happens in a shared background process that exits when idle.
 
-It doesn't edit code: no diagnostics, formatting, completion or refactoring.
+Apart from renaming locals, it doesn't edit code: no diagnostics, formatting,
+completion or project-wide refactoring.
 
 **Documentation: <https://nvoxland.github.io/clojure-lite-lsp/>** (sources in
 [`docs/`](docs/); preview with `poetry install --with docs && poetry run mkdocs serve`).

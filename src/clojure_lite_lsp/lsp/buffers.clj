@@ -71,7 +71,7 @@
         base (if (.isFile f) (slurp f) text)]
     (swap! store assoc path (entry base text))))
 
-(defn- offset
+(defn offset
   "The index in `text` of an LSP position. Characters are UTF-16 units,
   which is how Java strings count."
   [^String text {:keys [line character]}]
@@ -127,6 +127,19 @@
            (if (and e saved) (entry saved current) e))))
 
 (defn close! [store path] (swap! store dissoc path))
+
+(defn text
+  "The text of `path` as the editor has it: its open buffer, else the file."
+  [store path]
+  (or (:current (@store path))
+      (let [f (io/file path)] (when (.isFile f) (slurp f)))))
+
+(defn position
+  "The LSP position of index `i` in `text`."
+  [^String text i]
+  (let [before (subs text 0 (min i (count text)))
+        nl (.lastIndexOf before "\n")]
+    {:line (count (filter #(= \newline %) before)) :character (- (count before) (inc nl))}))
 
 (defn- shift [store path pos f]
   (if-let [{m :map :keys [base current]} (@store path)]

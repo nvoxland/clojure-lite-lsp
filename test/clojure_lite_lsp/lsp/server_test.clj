@@ -355,3 +355,49 @@
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))
+
+(defn end-of [text] (let [lines (str/split text #"\n" -1)] {:line (dec (count lines)) :character (count (last lines))}))
+
+(deftest editing-helpers
+  (let [a "(ns app.a)\n(defn greet\n  \"Says hello.\"\n  [who]\n  (str who who))\n(defn twice [x] (greet x) (greet x))\n"
+        b "(ns app.b (:require [app.a :as a]))\n(a/greet 1)\n"
+        root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" a "src/app/b.clj" b})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
+        doc {:uri (uri root "src/app/a.clj")}]
+    (request! "initialize" {:rootUri (convert/path->uri root)})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (notify! "textDocument/didOpen" {:textDocument (assoc doc :languageId "clojure" :version 1 :text a)})
+    (testing "highlights: definitions write, uses read"
+      (is (= #{[(pos-of a "greet\n") 3] [(pos-of a "greet x") 2] [(pos-of a "greet x))") 2]}
+             (set (map (juxt (comp :start :range) :kind)
+                       (request! "textDocument/documentHighlight" (at root "src/app/a.clj" "greet x"))))))
+      (is (= 3 (count (request! "textDocument/documentHighlight" (at root "src/app/a.clj" "who who"))))))
+    (testing "rename: locals only"
+      (is (= "who" (:placeholder (request! "textDocument/prepareRename" (at root "src/app/a.clj" "who who")))))
+      (is (nil? (request! "textDocument/prepareRename" (at root "src/app/a.clj" "greet x"))))
+      (let [edits (get-in (request! "textDocument/rename" (assoc (at root "src/app/a.clj" "who who") :newName "person"))
+                          [:changes (keyword (:uri doc))])]
+        (is (= 3 (count edits)))
+        (is (every? #(= "person" (:newText %)) edits)))
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"name"
+                            (request! "textDocument/rename" (assoc (at root "src/app/a.clj" "who who") :newName "not valid")))))
+    (testing "signature help while typing a new call"
+      (let [typed (str a "(greet ")]
+        (notify! "textDocument/didChange" {:textDocument (assoc doc :version 2) :contentChanges [{:text typed}]})
+        (let [{:keys [signatures activeParameter]} (request! "textDocument/signatureHelp" {:textDocument doc :position (end-of typed)})]
+          (is (= ["greet [who]"] (map :label signatures)))
+          (is (= 0 activeParameter))
+          (is (str/includes? (str (:documentation (first signatures))) "Says hello.")))
+        (let [typed (str a "(str \"x\" ")]
+          (notify! "textDocument/didChange" {:textDocument (assoc doc :version 3) :contentChanges [{:text typed}]})
+          (is (some #(str/includes? (:label %) "str") (:signatures (request! "textDocument/signatureHelp" {:textDocument doc :position (end-of typed)})))
+              "clojure.core"))))
+    (testing "through an alias"
+      (let [bdoc {:uri (uri root "src/app/b.clj")}
+            typed (str b "(a/greet ")]
+        (notify! "textDocument/didOpen" {:textDocument (assoc bdoc :languageId "clojure" :version 1 :text typed)})
+        (is (= ["greet [who]"] (map :label (:signatures (request! "textDocument/signatureHelp" {:textDocument bdoc :position (end-of typed)})))))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))

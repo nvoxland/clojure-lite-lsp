@@ -13,6 +13,9 @@
 | `textDocument/documentSymbol` | The file's namespaces and definitions |
 | `workspace/symbol` | Definitions by name, exact matches first |
 | `textDocument/prepareCallHierarchy`, `callHierarchy/incomingCalls`, `outgoingCalls` | Callers and callees |
+| `textDocument/documentHighlight` | The occurrences of what's under the cursor in the file: definitions and bindings as writes, uses as reads |
+| `textDocument/prepareRename`, `rename` | Locals only: every place the local is written, all in one file. Anything else is refused, so editors offer rename only on locals. |
+| `textDocument/signatureHelp` | The arglists of the call being typed, with the current argument. A call the index hasn't seen yet is resolved by name: through the file's aliases, its own namespace, then `clojure.core` |
 
 Documents sync incrementally; `didSave` and `workspace/didChangeWatchedFiles`
 (registered dynamically) queue re-indexing. Progress is reported with
@@ -24,8 +27,10 @@ its ClojureScript definition, and a clj macro counts for cljs callers through
 
 ## Not supported
 
-Diagnostics, completion, formatting, code actions, renaming and semantic
-tokens. clojure-lite-lsp is read-only by design.
+Diagnostics, completion, formatting, code actions, renaming vars and
+namespaces, and semantic tokens. Apart from renaming locals, clojure-lite-lsp
+doesn't edit code: edits across files, made from an index, could be wrong
+whenever the index is behind.
 
 ## Initialization options
 

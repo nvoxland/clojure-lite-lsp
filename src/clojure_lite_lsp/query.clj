@@ -399,6 +399,75 @@
        distinct
        vec))
 
+;;;; within a file
+
+(def ^:private occurrence-kinds
+  "The kinds that are occurrences of the same thing, by the element under
+  the cursor's kind."
+  (let [var-kinds #{:var-def :var-usage :symbol-usage}
+        ns-kinds #{:ns-def :ns-usage :ns-alias}
+        kw-kinds #{:keyword-def :keyword-usage}]
+    {:var-def var-kinds :var-usage var-kinds :symbol-usage var-kinds
+     :ns-def ns-kinds :ns-usage ns-kinds :ns-alias ns-kinds
+     :keyword-def kw-kinds :keyword-usage kw-kinds}))
+
+(def ^:private write-kinds #{:var-def :ns-def :keyword-def :local})
+
+(defn- occurrences-of
+  "The elements of unit `u` that are occurrences of `el`: the same local,
+  or the same var, namespace or keyword."
+  [c u {:keys [kind ns name local-id]}]
+  (->> (if (#{:local :local-usage} kind)
+         (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                          " WHERE fe.unit_id = ? AND fe.local_id = ? AND fe.kind IN (?, ?)")
+                   u local-id (kinds/code :local) (kinds/code :local-usage))
+         (when-let [ks (occurrence-kinds kind)]
+           (apply db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                                  " WHERE fe.unit_id = ? AND fe.ns = ? AND fe.name = ? AND fe.kind IN ("
+                                  (str/join "," (repeat (count ks) "?")) ")")
+                  u (sym-id c ns) (sym-id c name) (map kinds/code ks))))
+       (map row->element)))
+
+(defn highlights
+  "The occurrences, in project `p`'s file at `path`, of what's at a
+  position: [{:pos :write?}], :write? for definitions and bindings."
+  [c p path row col]
+  (when-let [u (file-unit c p path)]
+    (->> (elements-at c p path row col)
+         (mapcat #(occurrences-of c u %))
+         (map (fn [{:keys [pos kind]}] {:pos pos :write? (contains? write-kinds kind)}))
+         distinct
+         vec)))
+
+(defn local-occurrences
+  "When a local is at the position: {:name :positions}, every place its
+  name is written (binding and uses), all in this file. nil otherwise:
+  renaming anything else would touch other files."
+  [c p path row col]
+  (when-let [u (file-unit c p path)]
+    (when-let [el (first (filter (comp #{:local :local-usage} :kind) (elements-at c p path row col)))]
+      {:name (:name el)
+       :positions (vec (distinct (map :pos (occurrences-of c u el))))})))
+
+(defn resolve-symbol
+  "The var definitions a symbol written as `text` (\"alias/name\",
+  \"ns/name\" or \"name\") can mean in project `p`'s file at `path`, for
+  text the index hasn't seen (a call being typed): through the file's
+  aliases, else the file's own namespace, else clojure.core (cljs.core in
+  ClojureScript). Referred vars aren't followed."
+  [c p path text]
+  (when-let [u (file-unit c p path)]
+    (let [els (map row->element (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                                                  " WHERE fe.unit_id = ? AND fe.kind IN (?, ?)")
+                                          u (kinds/code :ns-alias) (kinds/code :ns-def)))
+          [qualifier name] (if-let [[_ q n] (re-matches #"([^/]+)/(.+)" text)] [q n] [nil text])
+          own (some #(when (= :ns-def (:kind %)) (:name %)) els)
+          core (if (str/ends-with? path ".cljs") "cljs.core" "clojure.core")
+          candidates (if qualifier
+                       [(or (some #(when (and (= :ns-alias (:kind %)) (= qualifier (:alias %))) (:ns %)) els) qualifier)]
+                       (remove nil? [own core]))]
+      (or (some #(seq (symbol-elements c p (str % "/" name))) candidates) []))))
+
 ;;;; symbols
 
 (def ^:private document-symbol-kinds [:ns-def :var-def :keyword-def])

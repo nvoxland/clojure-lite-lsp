@@ -16,6 +16,7 @@
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.lsp.buffers :as buffers]
    [clojure-lite-lsp.lsp.convert :as convert]
+   [clojure-lite-lsp.lsp.forms :as forms]
    [clojure-lite-lsp.lsp.jsonrpc :as rpc]
    [clojure-lite-lsp.query :as q]
    [clojure-lite-lsp.queue :as queue]
@@ -128,6 +129,79 @@
 
 ;;;; requests
 
+(defn- highlights [{:keys [buffers]} c p path row col]
+  (vec (keep (fn [{:keys [pos write?]}]
+               (when-let [bp (buffers/->buffer buffers path pos)]
+                 ;; DocumentHighlightKind: 2 read, 3 write
+                 {:range (convert/range bp) :kind (if write? 3 2)}))
+             (q/highlights c p path row col))))
+
+(defn- at-cursor
+  "Of `positions`, the one containing [row col]."
+  [positions row col]
+  (first (filter (fn [[r c _ ec]] (and (= r row) (<= c col ec))) positions)))
+
+(defn- prepare-rename [{:keys [buffers]} c p path row col]
+  ;; only locals: a var's rename would edit other files from the index
+  (when-let [{:keys [name positions]} (q/local-occurrences c p path row col)]
+    (when-let [bp (some->> (at-cursor positions row col) (buffers/->buffer buffers path))]
+      {:range (convert/range bp) :placeholder name})))
+
+(def ^:private symbol-name-re
+  "What a local can be renamed to: a plain symbol."
+  #"[^\s\d,;\\\"'`~@^()\[\]{}#:/][^\s,;\\\"'`~@^()\[\]{}/]*")
+
+(defn- rename [{:keys [buffers]} c p path row col new-name]
+  (when-not (and new-name (re-matches symbol-name-re new-name))
+    (throw (ex-info (str "Not a valid local name: " new-name) {})))
+  (let [{:keys [name positions]} (or (q/local-occurrences c p path row col)
+                                     (throw (ex-info "Only locals can be renamed" {})))
+        text (buffers/text buffers path)
+        ranges (for [pos positions]
+                 (let [bp (buffers/->buffer buffers path pos)
+                       r (some-> bp convert/range)
+                       start (some->> r :start (buffers/offset text))
+                       end (some->> r :end (buffers/offset text))]
+                   ;; what's there now must still be the name
+                   (when (and r (= name (subs text start end))) r)))]
+    (when (some nil? ranges)
+      (throw (ex-info (str "The code around " name " changed since it was saved: save it, then rename") {})))
+    {:changes {(convert/path->uri path) (mapv (fn [r] {:range r :newText new-name}) ranges)}}))
+
+(defn- signature [{:keys [ns name kind arglists doc]} arg]
+  (let [label-name (if (= :ns-def kind) name name)]
+    (for [arglist arglists
+          :let [label (str label-name " " arglist)
+                {:keys [params variadic]} (forms/arglist-params arglist)
+                offsets (loop [[t & more] params from (inc (count label-name)) out []]
+                          (if t
+                            (let [i (str/index-of label t from)]
+                              (recur more (+ i (count t)) (conj out [i (+ i (count t))])))
+                            out))]]
+      {:label label
+       :documentation (when doc {:kind "markdown" :value doc})
+       :parameters (mapv (fn [o] {:label o}) offsets)
+       :fits? (or (< arg (count params)) (some? variadic))
+       :active (cond (and variadic (>= arg variadic)) variadic
+                     :else arg)})))
+
+(defn- signature-help [{:keys [buffers reader] :as state} {:keys [textDocument position]}]
+  (when-let [path (client-path (:uri textDocument))]
+    (when-let [{:keys [p]} (project-of state path)]
+      (when-let [text (buffers/text buffers path)]
+        (when-let [{[start end] :head :keys [arg]} (forms/call-at text (buffers/offset text position))]
+          (let [c @reader
+                ;; the head where the index knows it, else resolved by name
+                [row col] (buffers/->indexed buffers path (convert/->kondo (buffers/position text start)))
+                infos (or (seq (when row (q/hover c p path row col)))
+                          (q/hover-of-elements c p (q/resolve-symbol c p path (subs text start end))))
+                sigs (vec (mapcat #(signature % arg) (filter (comp seq :arglists) infos)))]
+            (when (seq sigs)
+              (let [active (or (first (keep-indexed #(when (:fits? %2) %1) sigs)) 0)]
+                {:signatures (mapv #(dissoc % :fits? :active) sigs)
+                 :activeSignature active
+                 :activeParameter (:active (nth sigs active))}))))))))
+
 (defn- hover-markdown [{:keys [kind ns name doc arglists]}]
   (str/join "\n\n"
             (remove nil?
@@ -201,6 +275,18 @@
     (with-project state params []
       #(lsp-locations state %2 (q/references %1 %2 %3 %4 %5
                                           {:include-declaration? (get-in params [:context :includeDeclaration])})))
+
+    "textDocument/documentHighlight"
+    (with-project state params [] (fn [c p path row col] (highlights state c p path row col)))
+
+    "textDocument/prepareRename"
+    (with-project state params nil (fn [c p path row col] (prepare-rename state c p path row col)))
+
+    "textDocument/rename"
+    (with-project state params nil (fn [c p path row col] (rename state c p path row col (:newName params))))
+
+    "textDocument/signatureHelp"
+    (signature-help state params)
 
     "textDocument/hover"
     (with-project state params nil
@@ -282,7 +368,11 @@
                     :hoverProvider true
                     :documentSymbolProvider true
                     :workspaceSymbolProvider true
-                    :callHierarchyProvider true}
+                    :callHierarchyProvider true
+                    :documentHighlightProvider true
+                    ;; locals only (prepareRename refuses anything else)
+                    :renameProvider {:prepareProvider true}
+                    :signatureHelpProvider {:triggerCharacters ["(" " "]}}
      :serverInfo {:name "clojure-lite-lsp" :version (:version opts)}}))
 
 (defn- watch-files! [{:keys [send!]}]
