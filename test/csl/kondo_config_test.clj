@@ -104,3 +104,40 @@
       (let [n1 (kc/jar-config! cache ctx plain)]
         (is (= #{} (files-in (:dir n1))))
         (is (= (vec (:hash n1)) (vec (:hash (kc/neutral-config! cache)))))))))
+
+(deftest copied-dependency-configs-and-bookkeeping-do-not-change-the-project-config
+  ;; a main checkout has what clj-kondo copied in (dependency configs at
+  ;; <org>/<lib>/, bookkeeping files); a fresh worktree of the same branch
+  ;; has only what git tracks. Their project configs must be the same, or
+  ;; every file of the new worktree is analyzed again.
+  (let [j (jar! {"clj-kondo.exports/acme/lib/config.edn" "{:lint-as {acme.lib/defthing clojure.core/def}}"
+                 "clj-kondo.exports/acme/lib/hooks/h.clj" "(ns hooks.h)"})
+        entries [{:path j :kind :jar :ord 1}]
+        tracked {".clj-kondo/config.edn" "{:linters {:unused-binding {:level :off}}}"
+                 ".clj-kondo/hooks/mine.clj" "(ns hooks.mine)"}
+        fresh (project! tracked)
+        main (project! (merge tracked
+                              {".clj-kondo/acme/lib/config.edn" "{:lint-as {acme.lib/defthing clojure.core/def}}"
+                               ".clj-kondo/acme/lib/hooks/h.clj" "(ns hooks.h)"
+                               ".clj-kondo/imports/acme/lib/config.edn" "{:an-older copy}"
+                               ".clj-kondo/.lock" ""
+                               ".clj-kondo/.deps.edn.md5sum" "d41d8cd98f00b204e9800998ecf8427e"}))
+        cache (tu/temp-dir)]
+    (is (= (vec (:hash (kc/project-config! cache fresh entries)))
+           (vec (:hash (kc/project-config! cache main entries)))))
+    (testing "project-specific config still counts"
+      (let [custom (project! (merge tracked {".clj-kondo/myorg/custom/config.edn" "{:lint-as {my/m clojure.core/let}}"}))]
+        (is (not= (vec (:hash (kc/project-config! cache fresh entries)))
+                  (vec (:hash (kc/project-config! cache custom entries)))))))
+    (testing "and so does the project's own config.edn"
+      (let [changed (project! (assoc tracked ".clj-kondo/config.edn" "{}"))]
+        (is (not= (vec (:hash (kc/project-config! cache fresh entries)))
+                  (vec (:hash (kc/project-config! cache changed entries)))))))))
+
+(deftest exports-are-found-below-the-top
+  ;; like clj-kondo: a clj-kondo.exports segment anywhere (malli ships its
+  ;; config at resources/clj-kondo/clj-kondo.exports/metosin/malli/)
+  (let [d (project! {"clj-kondo/clj-kondo.exports/metosin/malli/config.edn" "{:lint-as {}}"})
+        j (jar! {"resources/clj-kondo.exports/acme/lib/config.edn" "{}"})]
+    (is (= #{"metosin/malli/config.edn"} (set (keys (kc/exports d)))))
+    (is (= #{"acme/lib/config.edn"} (set (keys (kc/exports j)))))))

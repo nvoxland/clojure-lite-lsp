@@ -27,8 +27,6 @@
 
 (set! *warn-on-reflection* true)
 
-(def ^:private exports-prefix "clj-kondo.exports/")
-
 (defn- jar-entries
   "[[name bytes] ...] for the jar's entries whose name matches `pred`."
   [jar pred]
@@ -38,22 +36,29 @@
          (mapv (fn [^JarEntry e]
                  [(.getName e) (with-open [in (.getInputStream jf e)] (.readAllBytes in))])))))
 
+(defn- export-path
+  "The part of `path` after a clj-kondo.exports segment, or nil. Like
+  clj-kondo, the segment can be anywhere: malli ships its config at
+  resources/clj-kondo/clj-kondo.exports/metosin/malli/."
+  [path]
+  (second (re-find #"(?:^|/)clj-kondo\.exports/(.+)$" path)))
+
 (defn exports
   "The clj-kondo configs a jar or directory exports, as {path bytes} with
-  paths relative to `clj-kondo.exports/`."
+  paths relative to their `clj-kondo.exports/`."
   [path]
   (let [f (io/file path)]
     (if (.isDirectory f)
-      (let [root (io/file f exports-prefix)
-            base (count (str root File/separator))]
+      (let [base (count (str f File/separator))]
         (into {}
-              (comp (filter #(.isFile ^File %))
-                    (map (fn [^File x] [(str/replace (subs (str x) base) File/separator "/")
-                                        (Files/readAllBytes (.toPath x))])))
-              (when (.isDirectory root) (file-seq root))))
+              (keep (fn [^File x]
+                      (when (.isFile x)
+                        (when-let [p (export-path (str/replace (subs (str x) base) File/separator "/"))]
+                          [p (Files/readAllBytes (.toPath x))]))))
+              (file-seq f)))
       (into {}
-            (map (fn [[n bs]] [(subs n (count exports-prefix)) bs]))
-            (jar-entries f #(str/starts-with? % exports-prefix))))))
+            (map (fn [[n bs]] [(export-path n) bs]))
+            (jar-entries f #(some? (export-path %)))))))
 
 (defn- pom-files [jar]
   (jar-entries jar #(re-matches #"META-INF/maven/[^/]+/[^/]+/pom\.(properties|xml)" %)))
@@ -124,16 +129,30 @@
         (Files/move (.toPath tmp) (.toPath dir) (into-array [StandardCopyOption/ATOMIC_MOVE]))))
     {:dir (str dir) :hash h}))
 
+(defn- lib-dir
+  "The <org>/<lib> an export's path starts with."
+  [path]
+  (str/join "/" (take 2 (str/split path #"/"))))
+
 (defn- own-config-files
-  "The project's `.clj-kondo` as {path bytes}, without clj-kondo's caches
-  and the files it generates."
-  [root]
+  "The project's own `.clj-kondo` config as {path bytes}. Left out, so that
+  a main checkout and a fresh worktree of the same branch get the same
+  config (else every file of the worktree is analyzed again):
+  - clj-kondo's caches and the files it generates;
+  - configs copied from dependencies (copy-configs puts them at
+    <org>/<lib>/, or imports/<org>/<lib>/): `exported` are the <org>/<lib>
+    dirs of the classpath's exports, which are imported afresh anyway;
+  - bookkeeping files at the top (.lock, .deps.edn.md5sum, ...)."
+  [root exported]
   (let [d (io/file root ".clj-kondo")
         base (count (str d File/separator))]
     (into {}
           (comp (filter #(.isFile ^File %))
                 (map (fn [^File f] [(str/replace (subs (str f) base) File/separator "/") f]))
-                (remove (fn [[path]] (re-find #"^(\.cache|inline-configs|gen-macros)/" path)))
+                (remove (fn [[path]]
+                          (or (re-find #"^(\.cache|inline-configs|gen-macros|imports)/" path)
+                              (re-find #"^\.[^/]*$" path)
+                              (exported (lib-dir path)))))
                 (map (fn [[path ^File f]] [path (Files/readAllBytes (.toPath f))])))
           (when (.isDirectory d) (file-seq d)))))
 
@@ -144,8 +163,10 @@
   "The config dir for project sources at `root`, whose classpath is
   `entries` (from csl.classpath). Returns {:dir :hash}."
   [cache-dir root entries]
-  (materialize! cache-dir (merge (own-config-files root)
-                                 (imports (map (comp exports :path) entries)))))
+  (let [exports-maps (map (comp exports :path) entries)
+        exported (into #{} (comp (mapcat keys) (map lib-dir)) exports-maps)]
+    (materialize! cache-dir (merge (own-config-files root exported)
+                                   (imports exports-maps)))))
 
 (defn jar-context
   "What `jar-config!` needs to know about a classpath's jars."
