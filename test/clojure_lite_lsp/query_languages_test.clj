@@ -39,3 +39,12 @@
   ;; still on it
   (with-project [proj files]
     (is (= (locs proj ["src/app/util.clj" "fmt ["]) (definition proj "src/app/a.clj" "u/fmt" (count "u/fmt"))))))
+
+(deftest namespace-references-cross-languages-only-where-the-namespace-doesnt
+  (with-project [proj files]
+    (testing "a clj-only macro namespace: cljs files requiring its macros use it"
+      (is (contains? (references proj "src/app/m.clj" "app.m")
+                     ["src/app/c.cljs" (f/at proj "src/app/c.cljs" "app.m")])))
+    (testing "a namespace with a file per language: each keeps its own"
+      (is (= #{"src/app/a.clj"} (set (map first (references proj "src/app/util.clj" "app.util")))))
+      (is (= #{"src/app/b.cljs"} (set (map first (references proj "src/app/util.cljs" "app.util"))))))))

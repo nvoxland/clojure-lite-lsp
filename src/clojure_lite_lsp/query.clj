@@ -324,9 +324,13 @@
     :java-class-usage (usage-rows c p nil name [:java-class-usage])
 
     (:ns-def :ns-usage :ns-alias)
-    (let [target (if (= :ns-def kind) name ns)]
-      (concat (usage-rows c p target target [:ns-usage :ns-alias] :langs (:lang el))
-              (when include-declaration? (in-lang el (definitions c p :ns-def nil target)))))
+    (let [target (if (= :ns-def kind) name ns)
+          defs (definitions c p :ns-def nil target)
+          ;; a namespace defined in one language only is what the other's
+          ;; code means by it too (cljs :require-macros of a clj namespace)
+          undefined-in (remove (set (mapcat :lang defs)) [:clj :cljs])]
+      (concat (usage-rows c p target target [:ns-usage :ns-alias] :langs (into (set (:lang el)) undefined-in))
+              (when include-declaration? (in-lang el defs))))
 
     []))
 

@@ -23,7 +23,8 @@ Documents sync incrementally; `didSave` and `workspace/didChangeWatchedFiles`
 
 Answers keep to the language asked about: in a `.cljs` file, a var resolves to
 its ClojureScript definition, and a clj macro counts for cljs callers through
-`:require-macros`.
+`:require-macros`. Likewise a namespace defined only in Clojure (a macro
+namespace) is referenced from the ClojureScript files that require it.
 
 ## Not supported
 
