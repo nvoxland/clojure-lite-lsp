@@ -136,6 +136,21 @@
   [{:keys [w reuser]} unit-key digest-of]
   (when unit-key (reuse/unit-for reuser w unit-key digest-of)))
 
+(def ^:private requeues-remembered
+  "How many (unit, answers) pairs of a file the requeue guard remembers."
+  8)
+
+(defn requeue?
+  "Should a file (`k`) whose analysis doesn't match its hooks' answers be
+  queued again, for `entry` [unit answers]? Once per entry: had analyzing
+  it given back one already seen, it would cycle forever. `seen` is an
+  atom {k [entry ...]}."
+  [seen k entry]
+  (if (some #{entry} (@seen k))
+    false
+    (do (swap! seen update k #(vec (take-last requeues-remembered (conj (or % []) entry))))
+        true)))
+
 (defn- recheck-dependents!
   "Queue the files of project `p` whose hooks' answers no longer hold.
 
@@ -152,14 +167,13 @@
                     today (mapv (fn [[lang ns-sym]] (digest-of lang ns-sym)) deps)]
               :when (not= (map last deps) today)
               [path] (db/query c "SELECT path FROM project_file WHERE project_id = ? AND unit_id = ?" p u)]
-        (if (= [u today] (@requeued [p path]))
+        (if (requeue? requeued [p path] [u today])
+          (queue/enqueue! c p :file path 1)
           ;; unless it's still waiting to be analyzed again, that didn't help
           (when-not (or (db/query-value c "SELECT 1 FROM pending WHERE project_id = ? AND kind = 'file' AND path = ?" p path)
                         (some #(= path (:path %)) (:batch @in-flight)))
             (binding [*out* *err*]
-              (println "csl: analysis of" path "doesn't match what its hooks are told; left as is")))
-          (do (swap! requeued assoc [p path] [u today])
-              (queue/enqueue! c p :file path 1)))))))
+              (println "csl: analysis of" path "doesn't match what its hooks are told; left as is"))))))))
 
 ;;;; work
 
@@ -217,7 +231,7 @@
                      :let [f (io/file path)]]
                  (if (.isFile f)
                    (assoc (file-placement ctx (.getCanonicalPath f)) :path (.getCanonicalPath f))
-                   {:path path :gone? true}))
+                   {:path (.getCanonicalPath f) :gone? true}))
         ;; files outside the project's dirs (:mode nil) are not part of it
         groups (vec (for [[[mode config] group] (group-by (juxt :mode :config) (filter :mode placed))
                           :let [placement (first group)]]
@@ -248,7 +262,7 @@
               (recheck-dependents! ix p))}))
 
 (defn- delete-files! [{:keys [w] :as ix} p paths]
-  (doseq [path paths] (snapshot/remove-file! w p path))
+  (doseq [path paths] (snapshot/remove-file! w p (.getCanonicalPath (io/file path))))
   (recheck-dependents! ix p))
 
 (defn- jars-job
@@ -374,7 +388,9 @@
     (cond
       (= :retry finished)
       ;; the batch just started is abandoned too: its rows stay queued
-      (do (reset! in-flight nil) :retry)
+      (do (some-> started :job :analysis future-cancel)
+          (reset! in-flight nil)
+          :retry)
 
       started
       (do (reset! in-flight started) (or finished (:batch started)))

@@ -67,9 +67,9 @@
     [(keyword l) (symbol n) d]))
 
 (defn index-answer
-  "The answer for `ns-sym` and `lang` from what project `p` sees: of the
-  units defining the namespace in files of that kind, the one first in
-  the project's precedence."
+  "The answer for `ns-sym` and `lang` from what project `p` sees: the vars
+  of the files of that kind defining the namespace (several, with in-ns)
+  at the best precedence."
   [c p lang ns-sym]
   (when-let [ns-id (db/query-value c "SELECT id FROM sym WHERE text = ?" (str ns-sym))]
     (let [ext (ext-langs lang)
@@ -83,9 +83,10 @@
                                  WHERE d.ns = ? AND d.kind = ?")
                          p ns-id (kinds/code :var-def))
           rows (filter (fn [[_ _ _ _ _ _ path]] (some-> ^String path (str/ends-with? (str "." ext)))) rows)
-          [_ first-unit] (first (sort (map (fn [[u ord]] [ord u]) rows)))]
-      (answer lang (for [[u _ nm lang-bits flags extra] (distinct rows)
-                         :when (= u first-unit)]
+          ;; every file of the namespace (in-ns) at the best precedence
+          top (when (seq rows) (apply min (map second rows)))]
+      (answer lang (for [[_ ord nm lang-bits flags extra] (distinct rows)
+                         :when (= ord top)]
                      {:ext ext :ns (str ns-sym) :name nm
                       :lang (kinds/bits->langs lang-bits)
                       :flags (kinds/bits->flags flags)

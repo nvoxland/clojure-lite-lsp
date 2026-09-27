@@ -132,3 +132,25 @@
     (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
       (sync-project! ix root)
       (is (= #{"src.clj" "checked.clj"} (analyzed-files ix root #(spit (io/file root "src/app/src.clj") src-fgh)))))))
+
+(deftest a-namespace-spread-over-files-is-answered-whole
+  ;; (in-ns 'app.src) in a second file: clj-kondo counts its vars as the
+  ;; namespace's too, so the answer has both files' vars
+  (let [root (project! {"deps.edn" "{:paths [\"src\"]}"
+                        ".clj-kondo/config.edn" config
+                        ".clj-kondo/hooks/re.clj" reexport-hook
+                        "src/app/re.clj" "(ns app.re) (defmacro reexport [src & syms])"
+                        "src/app/src.clj" "(ns app.src) (defn f [a] a)"
+                        "src/app/src_more.clj" "(in-ns 'app.src) (defn g [] 1)"
+                        "src/app/api.clj" "(ns app.api (:require [app.re :refer [reexport]])) (reexport app.src f g h)"})]
+    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir) :batch-sizes {:file 1}})]
+      (let [p (sync-project! ix root)]
+        (is (= #{"app.api/f" "app.api/g"} (api-defs (visible-defs (:c ix) p))))))))
+
+(deftest the-requeue-guard-catches-cycles
+  ;; analysis that alternates between two results must stop too
+  (let [seen (atom {})]
+    (is (true? (indexer/requeue? seen [1 "a"] [10 ["x"]])))
+    (is (true? (indexer/requeue? seen [1 "a"] [11 ["y"]])))
+    (is (false? (indexer/requeue? seen [1 "a"] [10 ["x"]])) "back to the first: a cycle")
+    (is (true? (indexer/requeue? seen [1 "b"] [10 ["x"]])) "per file")))

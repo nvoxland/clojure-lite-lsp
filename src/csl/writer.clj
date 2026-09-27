@@ -40,8 +40,10 @@
      :flush! (fn []
                (when (pos? (.size buf))
                  (with-open [ps (.prepareStatement c (sql (.size buf)))]
-                   (exec! ps)))
-               (when (realized? full) (.close ^PreparedStatement @full)))}))
+                   (exec! ps))))
+     ;; the full-size statement lives on the long-lived connection: closed
+     ;; whether or not the write succeeded
+     :close! (fn [] (when (realized? full) (.close ^PreparedStatement @full)))}))
 
 (defn base-key-hash
   "A SHA-256 over every input to a file's analysis except the clj-kondo
@@ -143,6 +145,14 @@
 (defn- flush-all! [batches]
   (doseq [b (vals batches)] ((:flush! b))))
 
+(defmacro ^:private with-batches
+  "Bind `sym` to fresh batches for the body, closing their statements
+  after."
+  [[sym c] & body]
+  `(let [~sym (batches ~c)]
+     (try ~@body
+          (finally (doseq [b# (vals ~sym)] ((:close! b#)))))))
+
 (defn- write-elements! [w batches unit-id elements]
   (let [sym #(intern-sym w (:sym batches) %)]
     (doseq [{:keys [kind lang pos form] :as el} elements
@@ -214,8 +224,8 @@
   `write-java-classes!`, and they are ignored here."
   [{:keys [c] :as w} units]
   (with-write-tx w
-    (let [bs (batches c)
-          ids (mapv (fn [[k elements]]
+    (with-batches [bs c]
+      (let [ids (mapv (fn [[k elements]]
                       (let [key-hash (unit-key-hash k)]
                         (or (existing-unit c key-hash)
                             (let [id (next-id! w :unit)]
@@ -229,14 +239,14 @@
                                 (write-elements! w bs id (remove #(= :java-class-def (:kind %)) others)))
                               id))))
                     units)]
-      (flush-all! bs)
-      ids)))
+        (flush-all! bs)
+        ids))))
 
 (defn write-java-classes!
   "Record jar `jar-id`'s Java classes, a seq of [class-name entry-path]."
   [{:keys [c] :as w} jar-id classes]
   (with-write-tx w
-    (let [bs (batches c)]
+    (with-batches [bs c]
       (doseq [[class-name entry-path] classes]
         ((:add! (:java-class bs)) [(intern-sym w (:sym bs) class-name) jar-id entry-path]))
       (flush-all! bs))))
