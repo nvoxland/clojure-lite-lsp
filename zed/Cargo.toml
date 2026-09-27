@@ -1,5 +1,5 @@
 [package]
-name = "zed_clojure_sqlite_lsp"
+name = "zed_clojure_lite_lsp"
 version = "0.1.0"
 edition = "2021"
 publish = false

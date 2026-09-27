@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build the csl native binary into target/csl.
+# Build the clojure-lite-lsp native binary into target/clojure-lite-lsp.
 #
 # Needs GraalVM (native-image) as JAVA_HOME or on the PATH.
-# CSL_MARCH picks the CPU target (default: native, the build machine's; on
+# CLOJURE_LITE_LSP_MARCH picks the CPU target (default: native, the build machine's; on
 # Apple silicon that is the M-series feature set). Portable builds can use
 # e.g. armv8.1-a or x86-64-v2, at the cost of slower content hashing (no SHA
 # instructions).
@@ -14,7 +14,7 @@ command -v "$NATIVE_IMAGE" >/dev/null || { echo "native-image not found (set JAV
 
 rm -rf classes && mkdir -p classes target
 # clj-kondo's native config expects dynaload's AOT mode
-clojure -J-Dborkdude.dynaload.aot=true -M:native -e "(compile 'csl.main)"
+clojure -J-Dborkdude.dynaload.aot=true -M:native -e "(compile 'clojure-lite-lsp.main)"
 
 "$NATIVE_IMAGE" \
   -cp "$(clojure -Spath -A:native)" \
@@ -23,6 +23,6 @@ clojure -J-Dborkdude.dynaload.aot=true -M:native -e "(compile 'csl.main)"
   --enable-native-access=ALL-UNNAMED \
   -H:+ReportExceptionStackTraces \
   -R:MaxHeapSize=64m \
-  -march="${CSL_MARCH:-native}" \
-  -o target/csl \
-  csl.main
+  -march="${CLOJURE_LITE_LSP_MARCH:-native}" \
+  -o target/clojure-lite-lsp \
+  clojure_lite_lsp.main

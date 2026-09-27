@@ -2,10 +2,10 @@
 //! (Zed settings or PATH). Kept free of zed types so it can be unit tested.
 
 /// The language server's id in Zed (settings live under `lsp.<SERVER_NAME>`).
-pub const SERVER_NAME: &str = "clojure-sqlite-lsp";
+pub const SERVER_NAME: &str = "clojure-lite-lsp";
 
 /// The executable looked up on PATH.
-pub const BINARY_NAME: &str = "csl";
+pub const BINARY_NAME: &str = "clojure-lite-lsp";
 
 /// The arguments that start the language server, unless settings say otherwise.
 pub const DEFAULT_ARGS: &[&str] = &["lsp"];
@@ -25,7 +25,7 @@ pub struct Launch {
 }
 
 /// The launch command: `override_.path` if set, else the PATH lookup `which`.
-/// Arguments default to `csl lsp`; settings can replace them. The env is the
+/// Arguments default to `clojure-lite-lsp lsp`; settings can replace them. The env is the
 /// user's shell environment (the indexer the server starts runs `clojure` or
 /// `lein`, which a Zed started from the Dock can't find otherwise), with env
 /// from settings over it.

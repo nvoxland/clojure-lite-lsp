@@ -6,9 +6,9 @@ mod command_tests;
 use command::{resolve, Override, BINARY_NAME, SERVER_NAME};
 use zed_extension_api::{self as zed, settings::LspSettings, LanguageServerId, Result};
 
-struct ClojureSqliteLspExtension;
+struct ClojureLiteLspExtension;
 
-impl zed::Extension for ClojureSqliteLspExtension {
+impl zed::Extension for ClojureLiteLspExtension {
     fn new() -> Self {
         Self
     }
@@ -35,4 +35,4 @@ impl zed::Extension for ClojureSqliteLspExtension {
     }
 }
 
-zed::register_extension!(ClojureSqliteLspExtension);
+zed::register_extension!(ClojureLiteLspExtension);
