@@ -1,4 +1,4 @@
-# Zed extension: Clojure (SQLite LSP)
+# Zed extension: clojure-lite-lsp
 
 Registers `clojure-lite-lsp lsp` as a language server for Zed's `Clojure` language. It
 registers only the server: the language itself (grammar, highlighting) comes
