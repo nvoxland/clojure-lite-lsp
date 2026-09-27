@@ -26,6 +26,7 @@
    [csl.fingerprint :as fingerprint]
    [csl.kondo-config :as kc]
    [csl.queue :as queue]
+   [csl.reuse :as reuse]
    [csl.snapshot :as snapshot]
    [csl.sources :as sources]
    [csl.writer :as writer])
@@ -34,7 +35,7 @@
 
 (set! *warn-on-reflection* true)
 
-(defrecord Indexer [c w cache-dir shards contexts batch-sizes in-flight]
+(defrecord Indexer [c w cache-dir shards contexts batch-sizes in-flight reuser]
   Closeable
   (close [_] (.close ^java.sql.Connection c)))
 
@@ -52,7 +53,8 @@
                    :batch-sizes batch-sizes
                    :contexts (atom {})
                    ;; the batch being analyzed: {:batch :job}
-                   :in-flight (atom nil)})))
+                   :in-flight (atom nil)
+                   :reuser (reuse/reuser (or cache-dir (default-cache-dir)))})))
 
 ;;;; project context: what analysis of a project's files and jars needs
 
@@ -105,6 +107,12 @@
   (when-let [h (fingerprint/content-hash! c path)]
     (analyze/unit-key mode config h path)))
 
+(defn- existing-unit
+  "The unit for a file's key: analyzed under this config, or under another
+  whose differences don't touch what the file references (csl.reuse)."
+  [{:keys [w reuser]} unit-key]
+  (when unit-key (reuse/unit-for reuser w unit-key)))
+
 ;;;; work
 
 (def ^:private files-per-tx 500)
@@ -132,7 +140,7 @@
         (writer/with-write-tx w
           (doseq [path batch]
             (if-let [{:keys [ord external?] :as placement} (wanted path)]
-              (let [u (some->> (file-unit-key ix placement path) (writer/unit-id c))
+              (let [u (existing-unit ix (file-unit-key ix placement path))
                     before (current path)]
                 (when-not (= before {:unit-id u :external? external? :ord ord})
                   (snapshot/set-file-unit! w p path u {:ord ord :external? external?}))
@@ -154,7 +162,7 @@
                           :let [placement (first group)]]
                       {:mode mode :config config :group group
                        :known (into {} (for [{:keys [path]} group]
-                                         [path (some->> (file-unit-key ix placement path) (writer/unit-id c))]))}))]
+                                         [path (existing-unit ix (file-unit-key ix placement path))]))}))]
     {:analysis (future
                  (mapv (fn [{:keys [mode config known]}]
                          (analyze/analyze-files (vec (keep (fn [[path u]] (when-not u path)) known))
