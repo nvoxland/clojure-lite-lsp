@@ -1,6 +1,7 @@
 // End to end: a real VS Code (downloaded into .vscode-test, with its own
 // profile) runs this extension against the installed clojure-lite-lsp on a
 // small project, with a throwaway index.
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -14,12 +15,20 @@ async function main(): Promise<void> {
   fs.writeFileSync(path.join(project, "src", "app", "a.clj"), '(ns app.a)\n\n(defn greet\n  "Says hello."\n  [who]\n  (str "hello " who))\n');
   fs.writeFileSync(path.join(project, "src", "app", "b.clj"), '(ns app.b\n  (:require [app.a :as a]))\n\n(defn main []\n  (a/greet "you"))\n');
   process.env.CLOJURE_LITE_LSP_HOME = path.join(tmp, "home");
-  await runTests({
-    extensionDevelopmentPath: path.resolve(__dirname, "..", ".."),
-    extensionTestsPath: path.resolve(__dirname, "suite"),
-    // short: VS Code puts a socket in it, and macOS caps socket paths at ~100 bytes
-    launchArgs: [project, "--disable-extensions", "--user-data-dir", fs.mkdtempSync("/tmp/cll-")],
-  });
+  // short: VS Code puts a socket in it, and macOS caps socket paths at ~100 bytes
+  const userData = fs.mkdtempSync("/tmp/cll-");
+  try {
+    await runTests({
+      extensionDevelopmentPath: path.resolve(__dirname, "..", ".."),
+      extensionTestsPath: path.resolve(__dirname, "suite"),
+      launchArgs: [project, "--disable-extensions", "--user-data-dir", userData],
+    });
+  } finally {
+    // the indexer the test started, and the throwaway dirs
+    spawnSync("clojure-lite-lsp", ["stop"], { env: process.env });
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(userData, { recursive: true, force: true });
+  }
 }
 
 main().catch((e) => {

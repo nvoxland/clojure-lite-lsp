@@ -14,12 +14,12 @@
 | `workspace/symbol` | Definitions by name, exact matches first |
 | `textDocument/prepareCallHierarchy`, `callHierarchy/incomingCalls`, `outgoingCalls` | Callers and callees |
 | `textDocument/documentHighlight` | The occurrences of what's under the cursor in the file: definitions and bindings as writes, uses as reads |
-| `textDocument/prepareRename`, `rename` | Locals only: every place the local is written, all in one file. Anything else is refused, so editors offer rename only on locals. |
+| `textDocument/prepareRename`, `rename` | Locals only: every place the local is written, all in one file (both languages of a `.cljc` file). Anything else is refused, so editors offer rename only on locals; so is a local whose code changed since the last save. |
 | `textDocument/signatureHelp` | The arglists of the call being typed, with the current argument. A call the index hasn't seen yet is resolved by name: through the file's aliases, its own namespace, then `clojure.core` |
 
 Documents sync incrementally; `didSave` and `workspace/didChangeWatchedFiles`
 (registered dynamically) queue re-indexing. Progress is reported with
-`$/progress` while the index builds.
+`$/progress` while the index builds, to clients that support it.
 
 Answers keep to the language asked about: in a `.cljs` file, a var resolves to
 its ClojureScript definition, and a clj macro counts for cljs callers through

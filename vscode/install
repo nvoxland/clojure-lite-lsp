@@ -11,10 +11,13 @@ npm ci --no-fund --no-audit
 npm test
 npm run package
 
-code_cli="$(command -v code || true)"
-if [[ -z "$code_cli" && -x "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" ]]; then
-  code_cli="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
-fi
+code_cli="$(command -v code || command -v code-insiders || true)"
+for app in "/Applications/Visual Studio Code.app" "$HOME/Applications/Visual Studio Code.app" \
+           "/Applications/Visual Studio Code - Insiders.app"; do
+  if [[ -z "$code_cli" && -x "$app/Contents/Resources/app/bin/code" ]]; then
+    code_cli="$app/Contents/Resources/app/bin/code"
+  fi
+done
 vsix="$(ls -t clojure-lite-lsp-*.vsix | head -1)"
 if [[ -n "$code_cli" ]]; then
   "$code_cli" --install-extension "$vsix" --force

@@ -71,6 +71,20 @@
               (keep-daemon! opts)
               (recur)))))))
 
+(defn stop!
+  "Stop the indexer, once it finishes its batch: :stopped, or
+  :not-running. Editors and queries start it again when they need it."
+  [{:keys [home]}]
+  (let [{:keys [db daemon-lock]} (daemon/paths home)]
+    (if-not (lock/held? daemon-lock)
+      :not-running
+      (with-open [c (db/open-client db)]
+        (client/request-stop! c)
+        (loop [n 0]
+          (cond (not (lock/held? daemon-lock)) :stopped
+                (< n 3000) (do (Thread/sleep 20) (recur (inc n)))
+                :else (throw (ex-info "The indexer didn't stop within a minute" {}))))))))
+
 ;;;; query
 
 (def ^:private project-markers ["deps.edn" "project.clj" "bb.edn" ".clojure-lite-lsp.edn"])

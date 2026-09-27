@@ -24,10 +24,13 @@ Clojure extension. Turn one off ([VS Code](../editors/vscode.md)).
 
 ## Starting over
 
-The index is only a cache. Stop editors, then delete it:
+The index is only a cache. Close editors, stop the indexer, then delete it:
 
 ```sh
+clojure-lite-lsp stop
 rm -rf ~/.cache/clojure-lite-lsp
 ```
 
-The next editor or query rebuilds it.
+The next editor or query rebuilds the index. The same directory holds the
+Claude Code plugin's marketplace, so for projects set up for Claude Code, run
+`clojure-lite-lsp setup --agent claude` in them again.

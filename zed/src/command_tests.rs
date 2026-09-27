@@ -81,3 +81,17 @@ fn the_shell_environment_is_passed_on_with_settings_over_it() {
         ]
     );
 }
+
+#[test]
+fn a_path_setting_can_start_with_tilde() {
+    let o = Override {
+        path: Some("~/bin/clojure-lite-lsp".into()),
+        arguments: None,
+        env: vec![],
+    };
+    let shell = vec![("HOME".into(), "/home/me".into())];
+    assert_eq!(
+        resolve(Some(o), None, shell).unwrap().command,
+        "/home/me/bin/clojure-lite-lsp"
+    );
+}

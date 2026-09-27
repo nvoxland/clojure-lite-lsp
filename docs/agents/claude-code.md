@@ -31,8 +31,8 @@ run instead.
 ## How Claude uses it
 
 - **The LSP tool**, from a file position. The plugin asks the server to wait
-  for the project's index before answering (`waitForIndex`), so Claude never
-  gets an answer from a half-built index.
+  for the project's index before answering (`waitForIndex`, up to two
+  minutes), so Claude doesn't get an answer from a half-built index.
 - **`clojure-lite-lsp query`**, by symbol name (`app.core/foo`), through the
   skill. Claude tends to reach for this when it knows a name but not a
   position.

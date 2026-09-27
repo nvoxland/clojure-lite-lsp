@@ -5,7 +5,7 @@ line. It's what agents use (directly, through Claude Code's skill, or as MCP
 tools), and it's handy in a terminal or a script.
 
 ```sh
-clojure-lite-lsp query <command> <argument> [--json] [--no-sync] [--project <dir>]
+clojure-lite-lsp query <command> <argument> [--json] [--no-sync] [--limit <n>] [--project <dir>]
 ```
 
 ## Targets
@@ -14,9 +14,11 @@ Most commands take a **target**:
 
 - `ns/name`: a var, e.g. `clojure.string/join` or `my.app.core/handler`.
 - `ns`: a namespace, e.g. `my.app.core`.
+- `:kw` or `:ns/kw`: a keyword.
 - `file:line:col`: whatever is at that position, 1-based as editors and
-  compilers print them, e.g. `src/my/app/core.clj:42:10`. The file is relative
-  to the current directory.
+  compilers print them, e.g. `src/my/app/core.clj:42:10`. A relative file is
+  looked for from the current directory, then the project root, so paths from
+  results work as they are. Positions in extracted library sources work too.
 
 ## Commands
 
@@ -56,17 +58,18 @@ Says hello.
 src/app/a.clj:2:7
 ```
 
-`--json` prints `{"results": [...]}`: each result has `path`, `line`,
-`column`, `end-line` and `end-column`, plus the command's own fields (`symbol`,
-`caller`, `callee`, `arglists`, `doc`, `kind`).
+`--json` prints `{"results": [...], "total": n}`: each result has `path`,
+`line`, `column`, `end-line` and `end-column`, plus the command's own fields
+(`symbol`, `caller`, `callee`, `arglists`, `doc`, `kind`).
 
-When nothing matches, it prints `No results.`
+At most `--limit` results are shown (default 200), followed by how many more
+there are. When nothing matches, it prints `No results.`
 
 ## Freshness
 
 The project is the one containing the current directory (the nearest directory
-with a `deps.edn`, `project.clj`, `bb.edn` or `.clojure-lite-lsp.edn`), or
-`--project <dir>`.
+with a `deps.edn`, `project.clj`, `bb.edn` or `.clojure-lite-lsp.edn`), or the
+one containing `--project <dir>`. Outside any project, `query` says so.
 
 Before answering, `query` brings that project's index up to date, so recent
 edits are included: about a second on a big project when little changed. The
@@ -78,5 +81,5 @@ from the index as it is, in a few milliseconds.
 | Code | |
 |---|---|
 | `0` | Answered (possibly `No results.`). |
-| `1` | The project isn't indexed (with `--no-sync`), or there's no index yet. |
-| `2` | An unknown command or a missing argument. |
+| `1` | Couldn't answer: not in a Clojure project, not indexed yet (with `--no-sync`), no index, or a failure (the indexer didn't start, a missing `--project` directory). |
+| `2` | A usage error: an unknown command or option, or a missing argument. |

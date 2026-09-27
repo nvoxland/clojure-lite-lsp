@@ -38,8 +38,13 @@ export function findOnPath(
  * Arguments default to `clojure-lite-lsp lsp`; env from settings is added to the
  * editor's own.
  */
-export function resolve(settings: Settings, which: string | undefined): Launch {
-  const command = settings.path?.trim() || which;
+export function resolve(settings: Settings, which: string | undefined, home?: string): Launch {
+  const configured = settings.path?.trim();
+  // settings often say ~/...: no shell expands it for a spawned process
+  const command =
+    (configured && home && (configured === "~" || configured.startsWith("~/"))
+      ? path.join(home, configured.slice(1))
+      : configured) || which;
   if (!command) {
     throw new Error(
       `${BINARY_NAME} not found on PATH. Install it (see the extension's README) ` +

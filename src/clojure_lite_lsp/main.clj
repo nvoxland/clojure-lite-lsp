@@ -45,6 +45,7 @@
        "  setup --agent <agent> [dir]  make a project ready for a coding agent: "
        (str/join ", " (sort (keys setup/agents))) "\n"
        "  gc                           collect garbage in the index now\n"
+       "  stop                         stop the indexer (it restarts when needed)\n"
        "  status                       the indexer, the index and its projects\n"
        "  version"))
 
@@ -93,6 +94,9 @@
                 (shutdown-agents)
                 (System/exit 0))
     "gc" (do (gc) (shutdown-agents) (System/exit 0))
+    "stop" (do (println (case (cli/stop! {:home (home)}) :stopped "Stopped the indexer." :not-running "The indexer isn't running."))
+               (shutdown-agents)
+               (System/exit 0))
     "setup" (do (try (setup-project args)
                      (catch clojure.lang.ExceptionInfo e
                        (println (ex-message e))

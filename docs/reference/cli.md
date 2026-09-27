@@ -9,6 +9,7 @@ clojure-lite-lsp <command>
   mcp                          the query commands as an MCP server, for agents (stdio)
   setup --agent <agent> [dir]  make a project ready for a coding agent: claude, codex
   gc                           collect garbage in the index now
+  stop                         stop the indexer (it restarts when needed)
   status                       the indexer, the index and its projects
   version
 ```
@@ -38,8 +39,8 @@ The language server, over stdio. See [Language server](lsp.md).
 ## `mcp`
 
 The [query commands](../guide/query.md) as an MCP server over stdio, for agents
-that speak MCP. The project is the server's working directory, or each call's
-`project` argument. See [Codex](../agents/codex.md).
+that speak MCP. The project is the one containing the server's working
+directory, or each call's `project` argument. See [Codex](../agents/codex.md).
 
 ## `setup`
 
@@ -49,6 +50,11 @@ clojure-lite-lsp setup --agent <claude|codex>[,...] [dir] [--no-index]
 
 Make a project (default: the current directory) ready for a coding agent. See
 [Agents](../agents/index.md).
+
+## `stop`
+
+Stop the indexer once it finishes its current batch. Editors and queries
+start it again when they need it.
 
 ## `status`
 
@@ -65,5 +71,6 @@ needed). Prints what was dropped.
 | Variable | |
 |---|---|
 | `CLOJURE_LITE_LSP_HOME` | Where the index and its files live (default `~/.cache/clojure-lite-lsp`). |
+| `CLJ_CONFIG` | Where the Clojure CLI's user `deps.edn` is, as for `clojure` itself. |
 | `CLOJURE_LITE_LSP_MARCH` | Build only: the CPU target for `bin/build-native` (default `native`). |
 | `CLOJURE_LITE_LSP_BIN_DIR` | Build only: where `bin/install-server` links the binary (default `~/.local/bin`). |

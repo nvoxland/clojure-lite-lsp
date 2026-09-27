@@ -35,7 +35,13 @@ pub fn resolve(
     shell_env: Vec<(String, String)>,
 ) -> Result<Launch, String> {
     let o = override_.unwrap_or_default();
-    let command = o.path.or(which).ok_or_else(|| {
+    // settings often say ~/...: no shell expands it for a spawned process
+    let home = shell_env.iter().find(|(k, _)| k == "HOME").map(|(_, v)| v.clone());
+    let path = o.path.map(|p| match (&home, p.strip_prefix("~/")) {
+        (Some(h), Some(rest)) => format!("{}/{}", h.trim_end_matches('/'), rest),
+        _ => p,
+    });
+    let command = path.or(which).ok_or_else(|| {
         format!(
             "{BINARY_NAME} not found on PATH. Install it (see zed/README.md) \
              or set lsp.{SERVER_NAME}.binary.path in Zed settings."

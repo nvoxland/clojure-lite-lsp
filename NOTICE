@@ -1,0 +1,9 @@
+clojure-lite-lsp
+Copyright 2026 Nathan Voxland
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The Zed extension (zed/) includes files from Zed's Clojure extension
+(https://github.com/zed-extensions/clojure), Copyright 2022-2024 Zed
+Industries, Inc., also under the Apache License, Version 2.0: see
+zed/NOTICE and zed/LICENSE-zed-clojure.

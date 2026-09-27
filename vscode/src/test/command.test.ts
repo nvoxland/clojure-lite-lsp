@@ -42,3 +42,8 @@ test("PATH lookup skips empty entries and finds nothing when absent", () => {
   assert.equal(findOnPath(path.delimiter + "/nowhere", exists([])), undefined);
   assert.equal(findOnPath(undefined, exists([])), undefined);
 });
+
+test("a path setting can start with ~", () => {
+  assert.equal(resolve({ path: "~/bin/clojure-lite-lsp" }, undefined, "/home/me").command,
+               path.join("/home/me", "bin/clojure-lite-lsp"));
+});

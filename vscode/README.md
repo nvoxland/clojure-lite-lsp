@@ -63,12 +63,13 @@ the language server**.
   to `~/.cache/clojure-lite-lsp/v<n>/daemon.log`.
 - A project's classpath comes from `deps.edn` (aliases `:dev` and `:test` by
   default), `project.clj` or `bb.edn`. A `.clojure-lite-lsp.edn` at the
-  project root can change that; see the Zed extension's README.
+  project root can change that; see
+  [Configuration](https://nvoxland.github.io/clojure-lite-lsp/guide/configuration/).
 
 ## Development
 
 - `npm test`: unit tests of how the server is found and launched.
 - `npm run test:e2e`: end to end, in a real VS Code (downloaded into
   `.vscode-test/`, with its own profile and a throwaway index): opens a small
-  project and checks that definition and hover are answered. Needs
-  `clojure-lite-lsp` on PATH.
+  project and checks definition, hover, highlights, signature help and
+  rename. Needs `clojure-lite-lsp` and the Clojure CLI on PATH.

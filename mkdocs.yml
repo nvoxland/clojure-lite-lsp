@@ -7,11 +7,11 @@ repo_url: https://github.com/nvoxland/clojure-lite-lsp
 edit_uri: edit/main/docs/
 docs_dir: docs
 site_dir: site
-dev_addr: '0.0.0.0:8000'
+dev_addr: '127.0.0.1:8000'
 
 theme:
   name: material
-  custom_dir: docs/overrides
+  custom_dir: overrides
   logo: assets/logo.svg
   favicon: assets/logo.svg
   font:

@@ -4,7 +4,7 @@
   "description": "A low-memory, read-only Clojure language server: navigation, references, hover, symbols and call hierarchy from a shared index.",
   "version": "0.1.0",
   "publisher": "nvoxland",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/nvoxland/clojure-lite-lsp"
@@ -58,7 +58,7 @@
   "scripts": {
     "compile": "tsc -p .",
     "test": "tsc -p . && node --test out/test/*.test.js",
-    "package": "vsce package --skip-license",
+    "package": "vsce package",
     "test:e2e": "tsc -p . && node out/e2e/run.js"
   },
   "dependencies": {

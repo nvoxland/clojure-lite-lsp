@@ -23,8 +23,8 @@ completion or project-wide refactoring.
 ## Install
 
 Build the native binary and put it on your PATH (needs
-[GraalVM](https://www.graalvm.org/): `JAVA_HOME` pointing at it, or
-`native-image` on PATH):
+[GraalVM](https://www.graalvm.org/), as `JAVA_HOME` or with `native-image` on
+PATH, and the [Clojure CLI](https://clojure.org/guides/install_clojure)):
 
 ```sh
 bin/install-server            # builds target/clojure-lite-lsp, links ~/.local/bin/clojure-lite-lsp
@@ -72,6 +72,7 @@ clojure-lite-lsp query callers app.core/foo --json
 clojure-lite-lsp index <dir>...                       # index projects and wait
 clojure-lite-lsp status                               # the indexer, the index, its projects
 clojure-lite-lsp gc                                   # collect garbage in the index now
+clojure-lite-lsp stop                                 # stop the indexer
 ```
 
 - **Targets**: a target is `ns/name` (a var), `ns` (a namespace) or
@@ -94,3 +95,8 @@ change that:
 
 The index lives in `~/.cache/clojure-lite-lsp` (`CLOJURE_LITE_LSP_HOME` moves
 it), and the indexer's log is in its `v<n>/daemon.log`.
+
+## License
+
+[Apache License 2.0](LICENSE). The Zed extension includes files from Zed's
+Clojure extension, also Apache 2.0: see [NOTICE](NOTICE).

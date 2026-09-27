@@ -114,3 +114,13 @@
               {:keys [out]} (cli/query! o ["references" "app.a/g" "--limit" "1"] {:cwd root})]
           (is (= 2 (count (clojure.string/split-lines out))))))
       (finally (stop! h daemons)))))
+
+(deftest stop-ends-the-indexer
+  (let [h (home)
+        daemons (atom [])
+        o (opts h daemons)]
+    (is (= :not-running (cli/stop! o)))
+    (cli/index! o [(project! {"src/a.clj" "(ns a)"})] (fn [_]))
+    (is (= :stopped (cli/stop! o)))
+    (is (not (clojure-lite-lsp.lock/held? (:daemon-lock (daemon/paths h)))))
+    (doseq [d @daemons] (deref d 30000 :timeout))))

@@ -9,8 +9,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-NATIVE_IMAGE="${JAVA_HOME:+$JAVA_HOME/bin/}native-image"
-command -v "$NATIVE_IMAGE" >/dev/null || { echo "native-image not found (set JAVA_HOME to a GraalVM)" >&2; exit 1; }
+# JAVA_HOME's native-image when it's a GraalVM, else the one on PATH
+if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/native-image" ]]; then
+  NATIVE_IMAGE="$JAVA_HOME/bin/native-image"
+elif command -v native-image >/dev/null; then
+  NATIVE_IMAGE="native-image"
+else
+  echo "native-image not found: set JAVA_HOME to a GraalVM, or put its native-image on PATH" >&2
+  exit 1
+fi
+command -v clojure >/dev/null || { echo "the Clojure CLI (clojure) is needed to build: https://clojure.org/guides/install_clojure" >&2; exit 1; }
 
 rm -rf classes && mkdir -p classes target
 # clj-kondo's native config expects dynaload's AOT mode

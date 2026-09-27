@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'overrides/**'
       - 'mkdocs.yml'
       - 'pyproject.toml'
       - 'poetry.lock'
@@ -12,11 +13,17 @@ on:
   pull_request:
     paths:
       - 'docs/**'
+      - 'overrides/**'
       - 'mkdocs.yml'
       - 'pyproject.toml'
       - 'poetry.lock'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
+
+# one deployment at a time, the latest winning
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -28,6 +35,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Python
+        id: python
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
@@ -43,7 +51,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .venv
-          key: venv-docs-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+          key: venv-docs-${{ runner.os }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install docs dependencies
         run: poetry install --with docs --no-interaction

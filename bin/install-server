@@ -10,6 +10,11 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 bin_dir="${CLOJURE_LITE_LSP_BIN_DIR:-$HOME/.local/bin}"
 
+case "${1:-}" in
+  ""|--rebuild) ;;
+  *) echo "Usage: bin/install-server [--rebuild]" >&2; exit 2 ;;
+esac
+
 if [[ "${1:-}" == "--rebuild" || ! -x "$repo/target/clojure-lite-lsp" ]]; then
   "$repo/bin/build-native"
 fi

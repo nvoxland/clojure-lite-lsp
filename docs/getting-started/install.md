@@ -5,9 +5,10 @@ built from source.
 
 ## Requirements
 
-- [GraalVM](https://www.graalvm.org/) 25 or later (`native-image`), to build.
-- The [Clojure CLI](https://clojure.org/guides/install_clojure), for
-  `deps.edn` projects. Leiningen and Babashka projects need `lein` or `bb`.
+- [GraalVM](https://www.graalvm.org/) 25 or later (`native-image`), to build:
+  as `JAVA_HOME`, or its `native-image` on `PATH`.
+- The [Clojure CLI](https://clojure.org/guides/install_clojure), to build, and
+  for `deps.edn` projects. Leiningen and Babashka projects need `lein` or `bb`.
 
 ## Build and install
 

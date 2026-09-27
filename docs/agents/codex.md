@@ -23,9 +23,14 @@ In the project's directory. It:
 ## The tools
 
 `definition`, `references`, `implementations`, `doc`, `callers`, `callees`,
-`symbols` and `outline`. Each takes a `target` (`ns/name`, `ns`, or
-`file:line:col`, 1-based) and an optional `project` directory, and answers as
+`symbols` and `outline`. Each takes a `target` (`ns/name`, `ns`, `:kw`, or
+`file:line:col`, 1-based), an optional `project` (a directory in the project;
+default: where Codex runs) and `limit` (default 100), and answers as
 `clojure-lite-lsp query` does: one `path:line:col: text` line per result.
+
+A call waits for the project's index at most 40 seconds (Codex gives a tool
+60). If indexing takes longer (a big project's first time), it answers from
+what's indexed so far and says indexing goes on.
 
 ```text
 mcp: clojure-lite-lsp/callers started
