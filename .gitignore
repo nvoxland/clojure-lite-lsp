@@ -4,3 +4,8 @@
 .nrepl-port
 classes/
 target/
+
+# docs site
+site/
+.venv/
+.DS_Store

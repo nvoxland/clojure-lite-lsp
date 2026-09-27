@@ -1,0 +1,122 @@
+site_name: clojure-lite-lsp
+site_description: A low-memory, read-only Clojure language server for editors and coding agents
+site_author: Nathan Voxland
+site_url: https://nvoxland.github.io/clojure-lite-lsp/
+repo_name: nvoxland/clojure-lite-lsp
+repo_url: https://github.com/nvoxland/clojure-lite-lsp
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+dev_addr: '0.0.0.0:8000'
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    # Dark mode (default)
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    # Light mode
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Why clojure-lite-lsp: why.md
+  - Getting Started:
+      - Install: getting-started/install.md
+      - First steps: getting-started/first-steps.md
+  - Editors:
+      - Zed: editors/zed.md
+      - VS Code: editors/vscode.md
+      - Other editors: editors/other.md
+  - Agents:
+      - Overview: agents/index.md
+      - Claude Code: agents/claude-code.md
+      - Codex: agents/codex.md
+  - Guide:
+      - Query commands: guide/query.md
+      - Configuration: guide/configuration.md
+      - How it works: guide/how-it-works.md
+  - Reference:
+      - Command line: reference/cli.md
+      - Language server: reference/lsp.md
+      - Troubleshooting: reference/troubleshooting.md
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - autorefs
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/nvoxland/clojure-lite-lsp
+
+extra_css:
+  - stylesheets/extra.css
+
+copyright: Copyright &copy; 2026 Nathan Voxland

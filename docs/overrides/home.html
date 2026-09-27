@@ -1,0 +1,69 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+  {{ super() }}
+
+  <section class="cl-hero">
+    <div class="cl-hero__inner">
+      <div class="cl-hero__brand">
+        <img src="assets/logo.svg" alt="clojure-lite-lsp logo">
+        <span>// clojure-lite-lsp</span>
+      </div>
+      <h1 class="cl-hero__title">
+        Clojure navigation for <em>every worktree</em>, every editor, every agent.
+      </h1>
+      <p class="cl-hero__sub">
+        A read-only Clojure language server built for many checkouts at once.
+        Analysis from clj-kondo goes into one shared index: a library is
+        analyzed once for the whole machine, a new worktree is ready in
+        seconds, and each editor's server costs about 20 MB.
+      </p>
+      <div class="cl-hero__cta">
+        <a href="getting-started/install/" class="primary">Install &nbsp;→</a>
+        <a href="why/">Why</a>
+        <a href="agents/">For agents</a>
+        <a href="https://github.com/nvoxland/clojure-lite-lsp">GitHub</a>
+      </div>
+      <div class="cl-hero__code"><span class="prompt">$</span> clojure-lite-lsp query callers metabase.util/select-keys-when
+src/metabase/collections/update.clj:120:20: metabase.collections.update/update-collection! calls it
+src/metabase/measures/api.clj:120:29: metabase.measures.api/write-check-and-update-measure! calls it
+src/metabase/segments/api.clj:98:21: metabase.segments.api/write-check-and-update-segment! calls it
+<span class="dim">...</span></div>
+    </div>
+  </section>
+
+  <section class="cl-section">
+    <h2>// what it gives you</h2>
+    <div class="cl-grid">
+      <div class="cl-card">
+        <h3>Navigation</h3>
+        <p>Go to definition, find references, implementations of protocols and multimethods, hover docs, file outlines, symbol search and call hierarchy.</p>
+      </div>
+      <div class="cl-card">
+        <h3>Built for worktrees</h3>
+        <p>Analysis is keyed by content: a second worktree of a project indexes only the files that differ, in about 3 seconds for Metabase.</p>
+      </div>
+      <div class="cl-card">
+        <h3>Low memory</h3>
+        <p>Each editor's server is a small native process that reads the shared index. The indexer runs once for the machine and exits when idle.</p>
+      </div>
+      <div class="cl-card">
+        <h3>For agents too</h3>
+        <p>Claude Code uses it through its LSP tool, Codex through MCP, and any agent through <code>clojure-lite-lsp query</code>. One command sets a project up.</p>
+      </div>
+      <div class="cl-card">
+        <h3>Branch-aware</h3>
+        <p>Switching to a branch with a different clj-kondo config re-analyzes only the files that config change can affect.</p>
+      </div>
+      <div class="cl-card">
+        <h3>Zed, VS Code and more</h3>
+        <p>Extensions for Zed and VS Code; any editor with an LSP client can run <code>clojure-lite-lsp lsp</code>.</p>
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block content %}{% endblock %}
+{% block footer %}
+  {{ super() }}
+{% endblock %}

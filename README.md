@@ -14,6 +14,9 @@ A low-memory, read-only Clojure language server, for editors and coding agents.
 
 It doesn't edit code: no diagnostics, formatting, completion or refactoring.
 
+**Documentation: <https://nvoxland.github.io/clojure-lite-lsp/>** (sources in
+[`docs/`](docs/); preview with `poetry install --with docs && poetry run mkdocs serve`).
+
 ## Install
 
 Build the native binary and put it on your PATH (needs

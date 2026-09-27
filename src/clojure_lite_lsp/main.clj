@@ -37,15 +37,15 @@
 
 (def ^:private usage
   (str "Usage: clojure-lite-lsp <command>\n\n"
-       "  query <command> <arg>     look things up: definitions, references, callers, ...\n"
-       "                            (clojure-lite-lsp query lists them)\n"
-       "  index [<project-dir>...]  index projects and wait; without dirs, run the indexer\n"
-       "  lsp                       the language server, for editors and agents (stdio)\n"
-       "  mcp                       the query commands as an MCP server, for agents (stdio)\n"
+       "  query <command> <arg>        look things up: definitions, references, callers, ...\n"
+       "                               (clojure-lite-lsp query lists them)\n"
+       "  index [<project-dir>...]     index projects and wait; without dirs, run the indexer\n"
+       "  lsp                          the language server, for editors and agents (stdio)\n"
+       "  mcp                          the query commands as an MCP server, for agents (stdio)\n"
        "  setup --agent <agent> [dir]  make a project ready for a coding agent: "
-       (str/join ", " (sort (keys setup/agents))) " (default dir: the current one)\n"
-       "  gc                        collect garbage in the index now\n"
-       "  status                    the indexer, the index and its projects\n"
+       (str/join ", " (sort (keys setup/agents))) "\n"
+       "  gc                           collect garbage in the index now\n"
+       "  status                       the indexer, the index and its projects\n"
        "  version"))
 
 (defn- index-projects [dirs]

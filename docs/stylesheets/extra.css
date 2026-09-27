@@ -1,0 +1,181 @@
+/* ── Brand palette: Clojure green and blue on slate ── */
+:root,
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        #91dc47;
+  --md-primary-fg-color--light: #b5ea80;
+  --md-primary-fg-color--dark:  #63b132;
+  --md-accent-fg-color:         #8fb5fe;
+  --md-default-bg-color:        #0d1117;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        #4a8a1f;
+  --md-primary-fg-color--light: #63b132;
+  --md-primary-fg-color--dark:  #36661a;
+  --md-accent-fg-color:         #5881d8;
+}
+
+/* Header + tabs: dark slate, like an editor's chrome */
+.md-header,
+.md-tabs {
+  background-color: #0d1117;
+  border-bottom: 1px solid rgba(145, 220, 71, 0.18);
+}
+
+.md-header,
+.md-tabs__link {
+  color: #e6edf3;
+}
+
+.md-source__facts { display: none; }
+
+.md-typeset h2 {
+  border-bottom: 1px solid rgba(145, 220, 71, 0.35);
+  padding-bottom: 0.25em;
+  font-weight: 700;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: -0.01em;
+}
+
+/* ── Hero (home page) ──────────────────────────────── */
+.cl-hero {
+  background:
+    radial-gradient(circle at 85% 0%, rgba(88, 129, 216, 0.14), transparent 50%),
+    radial-gradient(circle at 10% 100%, rgba(145, 220, 71, 0.08), transparent 45%),
+    #0a0e13;
+  border-bottom: 1px solid rgba(145, 220, 71, 0.18);
+  padding: 5rem 1.5rem 4.5rem;
+  color: #e6edf3;
+}
+
+.cl-hero__inner {
+  max-width: 72rem;
+  margin: 0 auto;
+}
+
+.cl-hero__brand {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: #91dc47;
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.cl-hero__brand img { width: 2.25rem; height: 2.25rem; }
+
+.cl-hero__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: clamp(2rem, 4.5vw, 3.1rem);
+  line-height: 1.15;
+  font-weight: 800;
+  margin: 0 0 1.25rem;
+  color: #f0f6fc;
+  max-width: 48rem;
+}
+
+.cl-hero__title em {
+  font-style: normal;
+  color: #91dc47;
+}
+
+.cl-hero__sub {
+  font-size: 1.1rem;
+  line-height: 1.6;
+  color: #9da7b3;
+  max-width: 44rem;
+  margin: 0 0 2rem;
+}
+
+.cl-hero__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.cl-hero__cta a {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.85rem;
+  padding: 0.65rem 1.2rem;
+  border-radius: 6px;
+  text-decoration: none;
+  border: 1px solid rgba(145, 220, 71, 0.45);
+  color: #91dc47;
+}
+
+.cl-hero__cta a.primary {
+  background: #91dc47;
+  color: #0a0e13;
+  font-weight: 700;
+  border-color: #91dc47;
+}
+
+.cl-hero__cta a:hover { filter: brightness(1.12); }
+
+.cl-hero__code {
+  margin-top: 2.5rem;
+  max-width: 44rem;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  background: #0d1117;
+  border: 1px solid rgba(88, 129, 216, 0.3);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  color: #c9d1d9;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.cl-hero__code .prompt { color: #91dc47; }
+.cl-hero__code .dim { color: #6e7681; }
+
+/* ── Feature cards ─────────────────────────────────── */
+.cl-section {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 3.5rem 1.5rem 1rem;
+}
+
+.cl-section h2 {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 1rem;
+  color: #91dc47;
+  letter-spacing: 0.04em;
+  margin: 0 0 1.5rem;
+  border: none;
+}
+
+.cl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+
+.cl-card {
+  border: 1px solid rgba(145, 220, 71, 0.16);
+  border-radius: 8px;
+  padding: 1.25rem 1.25rem 1rem;
+  background: rgba(88, 129, 216, 0.04);
+}
+
+.cl-card h3 {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
+  color: var(--md-default-fg-color);
+}
+
+.cl-card p {
+  font-size: 0.85rem;
+  line-height: 1.55;
+  margin: 0;
+  color: var(--md-default-fg-color--light);
+}
