@@ -52,11 +52,11 @@
   (client/ensure-daemon! opts)
   (with-open [c (db/open-client (:db (daemon/paths (:home opts))))]
     (let [request (str (random-uuid))]
-      (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES ('gc_request', ?)" request)
+      (db/execute! c "INSERT INTO meta (key, value) VALUES (?, '')" (str "gc_request:" request))
       (loop []
-        (let [result (some-> (db/query-value c "SELECT value FROM meta WHERE key = 'gc_result'") edn/read-string)]
-          (if (= request (:request result))
-            (dissoc result :request)
-            (do (Thread/sleep (long poll-ms))
-                (keep-daemon! opts)
-                (recur))))))))
+        (if-let [result (db/query-value c "SELECT value FROM meta WHERE key = ?" (str "gc_result:" request))]
+          (do (db/execute! c "DELETE FROM meta WHERE key = ?" (str "gc_result:" request))
+              (edn/read-string result))
+          (do (Thread/sleep (long poll-ms))
+              (keep-daemon! opts)
+              (recur)))))))

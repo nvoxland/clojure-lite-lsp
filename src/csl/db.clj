@@ -136,7 +136,9 @@
   ;; no journal_mode here: WAL is persistent (the daemon sets it), and
   ;; changing it can fail at once while the daemon creates the database
   (let [c (connect (str "jdbc:sqlite:" path) :writes? true)]
-    (pragma! c "busy_timeout = 5000")
+    ;; the daemon's transactions can take seconds (garbage collection):
+    ;; waiting beats losing an edit's enqueue
+    (pragma! c "busy_timeout = 30000")
     c))
 
 (defn open-reader

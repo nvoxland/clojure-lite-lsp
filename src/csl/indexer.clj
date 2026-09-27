@@ -385,6 +385,13 @@
       :else
       (do (reset! in-flight nil) finished))))
 
+(defn drain!
+  "Write the batch in flight, if any, without starting another."
+  [{:keys [in-flight] :as ix}]
+  (when-let [current @in-flight]
+    (reset! in-flight nil)
+    (finish! ix current)))
+
 (defn run-until-idle!
   "Process batches until the queue is empty and nothing is in flight (nil),
   or the machine fails (:retry)."

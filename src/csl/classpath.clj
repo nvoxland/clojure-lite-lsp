@@ -122,16 +122,27 @@
 (defn memoized!
   "The classpath of project `p` at `root`, recomputed only when a build file
   changed (computing it is the slowest start-up step). Uses the daemon's
-  writer connection `c`."
+  writer connection `c`.
+
+  When computing fails (a build file mid-edit, the build tool offline),
+  the last classpath that worked is used: its memo stays, under the old
+  build files' hash, so the next change tries again."
   [c p root & [{:keys [run] :or {run run-command}}]]
-  (let [cfg (project-config root)
-        cmd (command root cfg)
-        h (spec-hash root cmd)
-        raw (or (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ? AND spec_hash = ?" p h)
-                (let [raw (if cmd (run cmd root) "")]
-                  (db/with-tx c
-                    (db/execute! c "DELETE FROM classpath_memo WHERE project_id = ?" p)
-                    (db/execute! c "INSERT INTO classpath_memo (project_id, spec_hash, classpath) VALUES (?, ?, ?)"
-                                 p h raw))
-                  raw))]
-    (classify root (parse raw) cfg)))
+  (let [cfg (project-config root)]
+    (try
+      (let [cmd (command root cfg)
+            h (spec-hash root cmd)
+            raw (or (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ? AND spec_hash = ?" p h)
+                    (let [raw (if cmd (run cmd root) "")]
+                      (db/with-tx c
+                        (db/execute! c "DELETE FROM classpath_memo WHERE project_id = ?" p)
+                        (db/execute! c "INSERT INTO classpath_memo (project_id, spec_hash, classpath) VALUES (?, ?, ?)"
+                                     p h raw))
+                      raw))]
+        (classify root (parse raw) cfg))
+      (catch Exception e
+        (if-let [last-good (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
+          (do (binding [*out* *err*]
+                (println "csl: classpath of" root "failed, using the last one:" (ex-message e)))
+              (classify root (parse last-good) cfg))
+          (throw e))))))

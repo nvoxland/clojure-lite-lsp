@@ -1,8 +1,9 @@
 (ns csl.gc
   "Garbage collection of the index (DESIGN.md §6.7). The index only grows
-  as files change and worktrees come and go; the daemon collects when its
-  queue is empty, on its own loop thread, so collection never races
-  indexing.
+  as files change and worktrees come and go; the daemon collects on its
+  own loop thread with no batch in flight, so collection never races
+  indexing. The work is split into short transactions: clients enqueue
+  while it runs.
 
   - projects not seen for a while are dropped with their snapshots (this
     is what reclaims deleted worktrees)
@@ -63,13 +64,13 @@
     (count ids)))
 
 (defn- drop-orphan-dep-files!
-  "Opened library files whose jar is gone: their rows and extracted files."
+  "Opened library files whose jar is gone: their rows. Returns their paths,
+  for deleting the extracted files once this commits."
   [c]
-  (let [rows (db/query c "SELECT path FROM dep_file WHERE jar_hash NOT IN (SELECT jar_hash FROM jar)")]
-    (doseq [[path] rows]
-      (db/execute! c "DELETE FROM dep_file WHERE path = ?" path)
-      (.delete (java.io.File. ^String path)))
-    (count rows)))
+  (let [paths (map first (db/query c "SELECT path FROM dep_file WHERE jar_hash NOT IN (SELECT jar_hash FROM jar)"))]
+    (doseq [path paths]
+      (db/execute! c "DELETE FROM dep_file WHERE path = ?" path))
+    paths))
 
 (defn- sweep-symbols!
   "Symbols nothing refers to any more. An anti-join over every analysis
@@ -95,17 +96,23 @@
   "Collect garbage through writer `w`. Returns what was dropped:
   {:projects :jars :units}."
   [{:keys [c] :as w} {:keys [project-max-age-ms] :or {project-max-age-ms default-project-max-age-ms}}]
-  (let [result (writer/with-write-tx w
-                 (let [projects (drop-stale-projects! c project-max-age-ms)
-                       jars (drop-dead-jars! c)
-                       _ (drop-orphan-dep-files! c)
-                       dead (map first (db/query c "SELECT id FROM unit WHERE id NOT IN (SELECT unit_id FROM project_unit)
-                                                    AND id NOT IN (SELECT unit_id FROM dep_file)"))]
-                   (doseq [us (partition-all batch dead)] (delete-units! c us))
-                   (when (pos? (+ projects jars (count dead))) (sweep-symbols! c))
-                   (prune-fingerprints! c)
-                   {:projects projects :jars jars :units (count dead)}))]
-    ;; the writer caches symbols and searchable names: forget deleted ones
-    (writer/reload-state! w)
-    (db/pragma! c "incremental_vacuum")
-    result))
+  (try
+    (let [[projects jars dep-files] (writer/with-write-tx w
+                                      [(drop-stale-projects! c project-max-age-ms)
+                                       (drop-dead-jars! c)
+                                       (drop-orphan-dep-files! c)])
+          _ (doseq [path dep-files] (.delete (java.io.File. ^String path)))
+          dead (map first (db/query c "SELECT id FROM unit WHERE id NOT IN (SELECT unit_id FROM project_unit)
+                                       AND id NOT IN (SELECT unit_id FROM dep_file)"))]
+      ;; dead units are unreachable, so deleting them a batch at a time is
+      ;; as good as at once
+      (doseq [us (partition-all batch dead)]
+        (writer/with-write-tx w (delete-units! c us)))
+      (when (pos? (+ projects jars (count dead)))
+        (writer/with-write-tx w (sweep-symbols! c)))
+      (writer/with-write-tx w (prune-fingerprints! c))
+      (db/pragma! c "incremental_vacuum")
+      {:projects projects :jars jars :units (count dead)})
+    (finally
+      ;; the writer caches symbols and searchable names: forget deleted ones
+      (writer/reload-state! w))))

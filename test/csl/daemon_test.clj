@@ -208,3 +208,68 @@
       (spit log "small")
       (client/rotate-log! (str log))
       (is (= "small" (slurp log))))))
+
+(deftest work-arriving-as-the-daemon-goes-idle-is-done
+  ;; a client enqueues while the idle daemon is on its way out (still
+  ;; holding its lock, so the client sees it running)
+  (let [h (home)
+        root (project! {"src/a.clj" "(ns a) (defn f [] 1)"})
+        real @#'daemon/unregister!
+        once (atom true)]
+    (with-redefs [daemon/unregister! (fn [c]
+                                       (when (compare-and-set! once true false)
+                                         (with-open [cc (client-db h)]
+                                           (queue/enqueue! cc (snapshot/ensure-project! cc root) :sync "" 1)))
+                                       (real c))]
+      (let [d (start! h {:idle-exit-ms 300})]
+        (is (= :idle (deref d 30000 :timeout)))
+        (with-open [c (client-db h)]
+          (is (= 1 (db/query-value c "SELECT count(*) FROM project_file WHERE unit_id IS NOT NULL"))))))))
+
+(deftest a-daemon-gone-without-registering-is-not-waited-for
+  ;; the lock held with no daemon row: a daemon exiting, or one that died
+  ;; starting. Waiting for its row would stall an editor for 30 s
+  (let [h (home)
+        _ (.mkdirs (io/file (:dir (daemon/paths h))))
+        held (lock/try-lock (:daemon-lock (daemon/paths h)))
+        spawned (atom nil)
+        started (System/currentTimeMillis)]
+    (future (Thread/sleep 300) (lock/release! held))
+    (is (= :spawned (client/ensure-daemon! {:home h :version "test"
+                                            :spawn! #(reset! spawned (future (daemon/run! (merge fast {:home h}))))})))
+    (is (< (- (System/currentTimeMillis) started) 10000))
+    (with-open [c (client-db h)] (client/request-stop! c))
+    (deref @spawned 30000 :timeout)))
+
+(deftest the-daemon-survives-an-error-in-its-loop
+  (let [h (home)
+        root (project! {"src/a.clj" "(ns a) (defn f [] 1)"})
+        real csl.indexer/step!
+        once (atom true)]
+    (with-redefs [csl.indexer/step! (fn [ix]
+                                      (if (compare-and-set! once true false)
+                                        (throw (java.sql.SQLException. "database is locked"))
+                                        (real ix)))]
+      (let [d (start! h {:retry-ms 50})]
+        (with-open [c (client-db h)]
+          (queue/enqueue! c (snapshot/ensure-project! c root) :sync "" 1)
+          (is (eventually #(= 1 (db/query-value c "SELECT count(*) FROM project_file WHERE unit_id IS NOT NULL"))))
+          (client/request-stop! c))
+        (deref d 30000 :timeout)))))
+
+(deftest an-index-an-open-editor-uses-is-kept
+  ;; an editor of an older version still reading its index, its daemon
+  ;; long gone idle
+  (let [h (home)
+        {:keys [db clients-lock]} (daemon/paths h 3)
+        _ (io/make-parents (io/file db))
+        _ (spit db "x")
+        _ (.setLastModified (io/file db) (- (System/currentTimeMillis) (* 48 60 60 1000)))
+        editor (lock/try-lock clients-lock)
+        d (start! h {})]
+    (try
+      (is (.exists (io/file db)))
+      (finally
+        (lock/release! editor)
+        (with-open [c (client-db h)] (client/request-stop! c))
+        (deref d 30000 :timeout)))))

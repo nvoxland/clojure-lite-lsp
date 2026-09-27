@@ -36,6 +36,8 @@
       :db (str (io/file dir "index.db"))
       :daemon-lock (str (io/file dir "daemon.lock"))
       :spawn-lock (str (io/file dir "spawn.lock"))
+      ;; every csl lsp holds a shared lock on it while it runs
+      :clients-lock (str (io/file dir "clients.lock"))
       :log (str (io/file dir "daemon.log"))})))
 
 (def ^:private unused-for-ms
@@ -47,8 +49,8 @@
 
 (defn- remove-unused-older-indexes!
   "Remove the indexes of older schema versions (and of the layout before
-  them, the index directly in the home dir) that no daemon runs on and
-  that nothing has written for a day."
+  them, the index directly in the home dir) that no daemon or editor uses
+  and that nothing has written for a day."
   [home]
   (let [stale? (fn [lock-path files]
                  (and (not (lock/held? lock-path))
@@ -57,7 +59,8 @@
     (doseq [^File d (.listFiles (io/file home))
             :let [[_ n] (re-matches #"v(\d+)" (.getName d))]
             :when (and n (.isDirectory d) (< (parse-long n) schema/version))
-            :let [{:keys [daemon-lock]} (paths home (parse-long n))]
+            :let [{:keys [daemon-lock clients-lock]} (paths home (parse-long n))]
+            :when (not (lock/in-use? clients-lock))
             ;; the index's files: probing the lock creates it anew
             :when (stale? daemon-lock (filter #(.startsWith (.getName ^File %) "index.db") (file-seq d)))]
       (delete-tree! d))
@@ -94,60 +97,85 @@
 
 (defn- data-version [c] (db/query-value c "PRAGMA data_version"))
 
-(defn- gc-request [c] (db/query-value c "SELECT value FROM meta WHERE key = 'gc_request'"))
+(defn- gc-requests
+  "The ids of the garbage collections clients (csl gc) are waiting for."
+  [c]
+  (map first (db/query c "SELECT substr(key, 12) FROM meta WHERE key LIKE 'gc_request:%'")))
 
 (defn- collect-requested!
-  "Collect garbage for a client (csl gc), answering in meta."
-  [{:keys [c w]} request]
+  "Collect garbage for the clients waiting (csl gc), once, answering each
+  in meta. The batch in flight is written first: it may be about to link
+  units nothing uses yet."
+  [{:keys [c w] :as ix} requests]
+  (indexer/drain! ix)
   (let [result (try (gc/collect! w {})
                     (catch Exception e {:error (ex-message e)}))]
     (db/with-tx c
-      (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES ('gc_result', ?)"
-                   (pr-str (assoc result :request request)))
-      (db/execute! c "DELETE FROM meta WHERE key = 'gc_request'"))))
+      (doseq [r requests]
+        (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)" (str "gc_result:" r) (pr-str result))
+        (db/execute! c "DELETE FROM meta WHERE key = ?" (str "gc_request:" r))))))
+
+(defn- pending? [c] (some? (db/query-value c "SELECT 1 FROM pending LIMIT 1")))
+
+(defn- tick
+  "One turn of the work loop: [:done result] or [:next state]."
+  [{:keys [c w] :as ix} {:keys [poll-ms gc-after-idle-ms idle-exit-ms heartbeat-ms retry-ms version]}
+   {:keys [last-work collected? seen-version last-beat] :as state}]
+  (let [now (System/currentTimeMillis)
+        dv (data-version c)
+        beat? (> (- now last-beat) heartbeat-ms)]
+    (when beat?
+      (db/execute! c "UPDATE daemon SET heartbeat_at = ? WHERE id = 1" now))
+    (if (stop-requested? c)
+      [:done :stopped]
+      (let [state (cond-> state beat? (assoc :last-beat now))
+            requests (seq (gc-requests c))
+            _ (when requests (collect-requested! ix requests))
+            ;; something changed (or we just started): work the queue
+            worked (when (not= dv seen-version) (indexer/step! ix))]
+        (cond
+          requests
+          [:next (assoc state :last-work (System/currentTimeMillis) :collected? true :seen-version nil)]
+
+          (= :retry worked)
+          (do (Thread/sleep (long retry-ms))
+              [:next (assoc state :last-work (System/currentTimeMillis) :seen-version nil)])
+
+          worked
+          [:next (assoc state :last-work (System/currentTimeMillis) :collected? false :seen-version nil)]
+
+          (and (not collected?) (> (- now last-work) gc-after-idle-ms))
+          (do (try (gc/collect! w {})
+                   (catch Exception e
+                     (binding [*out* *err*] (println "csl: garbage collection failed:" (ex-message e)))))
+              [:next (assoc state :collected? true :seen-version (data-version c))])
+
+          (> (- now last-work) idle-exit-ms)
+          ;; a client that enqueued since sees this daemon as running (it
+          ;; holds its lock until it's gone): leave its row first, then look
+          ;; once more
+          (do (unregister! c)
+              (if (pending? c)
+                (do (register! c version)
+                    [:next (assoc state :last-work now :seen-version nil)])
+                [:done :idle]))
+
+          :else
+          (do (Thread/sleep (long poll-ms))
+              [:next (assoc state :seen-version dv)]))))))
 
 (defn- work-loop
-  "Run until asked to stop or idle long enough. Returns :stopped or :idle."
-  [{:keys [c w] :as ix} {:keys [poll-ms gc-after-idle-ms idle-exit-ms heartbeat-ms retry-ms]}]
-  (loop [last-work (System/currentTimeMillis)
-         collected? true
-         seen-version nil
-         last-beat 0]
-    (let [now (System/currentTimeMillis)
-          dv (data-version c)]
-      (when (> (- now last-beat) heartbeat-ms)
-        (db/execute! c "UPDATE daemon SET heartbeat_at = ? WHERE id = 1" now))
-      (if (stop-requested? c)
-        :stopped
-        (let [beat (if (> (- now last-beat) heartbeat-ms) now last-beat)
-              ;; collected between batches: a batch in flight may be about
-              ;; to link units nothing uses yet
-              request (when (nil? @(:in-flight ix)) (gc-request c))
-              _ (when request (collect-requested! ix request))
-              ;; something changed (or we just started): work the queue
-              worked (when (not= dv seen-version) (indexer/step! ix))]
-          (cond
-            request
-            (recur (System/currentTimeMillis) true nil beat)
-
-            (= :retry worked)
-            (do (Thread/sleep (long retry-ms))
-                (recur (System/currentTimeMillis) collected? nil beat))
-
-            worked
-            (recur (System/currentTimeMillis) false nil beat)
-
-            (and (not collected?) (> (- now last-work) gc-after-idle-ms))
-            (do (try (gc/collect! w {})
+  "Run until asked to stop or idle long enough. Returns :stopped or :idle.
+  An error (the database busy for too long, a full disk) is logged and
+  the loop goes on after a pause: the daemon's work is only ever queued."
+  [ix opts]
+  (loop [state {:last-work (System/currentTimeMillis) :collected? true :seen-version nil :last-beat 0}]
+    (let [[k v] (try (tick ix opts state)
                      (catch Exception e
-                       (binding [*out* *err*] (println "csl: garbage collection failed:" (ex-message e)))))
-                (recur last-work true (data-version c) now))
-
-            (> (- now last-work) idle-exit-ms) :idle
-
-            :else
-            (do (Thread/sleep (long poll-ms))
-                (recur last-work collected? dv beat))))))))
+                       (binding [*out* *err*] (println "csl: daemon loop failed:" (ex-message e)))
+                       (Thread/sleep (long (:retry-ms opts)))
+                       [:next (assoc state :seen-version nil)]))]
+      (if (= :done k) v (recur v)))))
 
 (def ^:private lock-patience-ms
   "How long a starting daemon keeps trying daemon.lock. Clients probe
@@ -176,7 +204,7 @@
         (with-open [^java.io.Closeable ix (indexer/indexer {:db-path db :cache-dir (io/file home)})]
           (register! (:c ix) version)
           (try
-            (work-loop ix opts)
+            (work-loop ix (assoc opts :version version))
             (finally
               (unregister! (:c ix)))))
         (finally

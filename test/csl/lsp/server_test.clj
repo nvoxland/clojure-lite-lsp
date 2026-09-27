@@ -266,3 +266,25 @@
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))
+
+(deftest one-failed-change-doesnt-drop-the-others
+  ;; a git checkout reports many files at once
+  (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)"})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
+        real csl.queue/enqueue!]
+    (request! "initialize" {:rootUri (convert/path->uri root)})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (spit (io/file root "src/app/x.clj") "(ns app.x)\n(defn lost [] 1)\n")
+    (spit (io/file root "src/app/y.clj") "(ns app.y)\n(defn kept [] 1)\n")
+    (with-redefs [csl.queue/enqueue! (fn [c p kind path priority]
+                                       (if (str/ends-with? path "x.clj")
+                                         (throw (ex-info "database is busy" {}))
+                                         (real c p kind path priority)))]
+      (notify! "workspace/didChangeWatchedFiles" {:changes [{:uri (uri root "src/app/x.clj") :type 1}
+                                                            {:uri (uri root "src/app/y.clj") :type 1}]})
+      (wait-indexed! client))
+    (is (seq (filter #(= "kept" (:name %)) (request! "workspace/symbol" {:query "kept"}))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))

@@ -76,3 +76,11 @@
       (let [first-batch (queue/next-batch c {:file 1})]
         (is (= ["/p1/a.clj"] (map :path first-batch)))
         (is (= ["/p1/b.clj"] (map :path (queue/next-batch c {:file 1} (map queue/request-key first-batch)))))))))
+
+(deftest enqueueing-keeps-a-project-alive
+  ;; GC drops projects not seen for a while: an editor that keeps working
+  ;; on one must count as seeing it
+  (with-db (fn [c p1 _]
+             (db/execute! c "UPDATE project SET last_seen = 0 WHERE id = ?" p1)
+             (queue/enqueue! c p1 :file "/p1/a.clj" 1)
+             (is (pos? (db/query-value c "SELECT last_seen FROM project WHERE id = ?" p1))))))

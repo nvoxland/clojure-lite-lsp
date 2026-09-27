@@ -49,3 +49,13 @@
         (is (= 1 (:units (cli/gc! o)))))
       (is (= 1 (count @daemons)) "by the one daemon")
       (finally (stop! h daemons)))))
+
+(deftest concurrent-gc-requests-all-finish
+  (let [h (home)
+        daemons (atom [])
+        o (opts h daemons)]
+    (try
+      (cli/index! o [(project! {"src/a.clj" "(ns a)"})] (fn [_]))
+      (let [runs (doall (for [_ (range 3)] (future (cli/gc! o))))]
+        (is (every? map? (map #(deref % 60000 :hung) runs))))
+      (finally (stop! h daemons)))))

@@ -13,24 +13,44 @@
 
 (set! *warn-on-reflection* true)
 
+(defn- take-lock [path shared?]
+  (let [f (io/file path)
+        _ (io/make-parents f)
+        raf (RandomAccessFile. ^File f "rw")]
+    (try
+      (if-let [l (try (.tryLock (.getChannel raf) 0 Long/MAX_VALUE (boolean shared?))
+                      (catch OverlappingFileLockException _ nil))]
+        {:raf raf :lock l}
+        (do (.close raf) nil))
+      (catch Throwable t (.close raf) (throw t)))))
+
 (defn try-lock
   "Take the lock on file `path` if it's free: a handle for `release!`, or
   nil when it is held."
   [path]
-  (let [f (io/file path)
-        _ (io/make-parents f)
-        raf (RandomAccessFile. ^File f "rw")
-        ch (.getChannel raf)]
-    (if-let [l (try (.tryLock ch) (catch OverlappingFileLockException _ nil))]
-      {:raf raf :lock l}
-      (do (.close raf) nil))))
+  (take-lock path false))
+
+(defn try-share
+  "Take a shared lock on file `path`: any number can be held, but not
+  alongside an exclusive one. A handle for `release!`, or nil."
+  [path]
+  (take-lock path true))
 
 (defn release! [{:keys [^RandomAccessFile raf ^FileLock lock]}]
   (.release lock)
   (.close raf))
 
 (defn held?
-  "Is the lock on `path` held by someone (another process or thread)?"
+  "Is the lock on `path` held exclusively by someone (another process or
+  thread)? Probes with a shared lock, so that two probes at once don't
+  each see the other as a holder."
+  [path]
+  (if-let [l (try-share path)]
+    (do (release! l) false)
+    true))
+
+(defn in-use?
+  "Is any lock, shared or not, held on `path`?"
   [path]
   (if-let [l (try-lock path)]
     (do (release! l) false)

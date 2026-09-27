@@ -13,6 +13,7 @@
    [csl.daemon :as daemon]
    [csl.db :as db]
    [csl.java :as java]
+   [csl.lock :as lock]
    [csl.lsp.buffers :as buffers]
    [csl.lsp.convert :as convert]
    [csl.lsp.jsonrpc :as rpc]
@@ -332,7 +333,10 @@
       "textDocument/didClose" (buffers/close! buffers (doc-path))
       "workspace/didChangeWatchedFiles" (doseq [{:keys [uri type]} (:changes params)
                                                 :when (str/starts-with? uri "file:")]
-                                          (file-changed! state (client-path uri) (= 3 type)))
+                                          ;; one failure mustn't lose the rest (a checkout
+                                          ;; reports many files at once)
+                                          (try (file-changed! state (client-path uri) (= 3 type))
+                                               (catch Exception e (log "watched file" uri "failed:" (ex-message e)))))
       nil)))
 
 (defn run!
@@ -347,7 +351,9 @@
                :running? (atom true)
                :send! #(rpc/write-message! out %)}
         state-now #(assoc state :opts @opts-atom)
-        reply! (fn [id m] ((:send! state) (merge {:jsonrpc "2.0" :id id} m)))]
+        reply! (fn [id m] ((:send! state) (merge {:jsonrpc "2.0" :id id} m)))
+        ;; held while this editor runs: its index is in use (daemon/paths)
+        in-use (try (lock/try-share (:clients-lock (daemon/paths home))) (catch Exception _ nil))]
     (try
       (loop [shutdown? false]
         (let [{:keys [id method] :as msg} (rpc/read-message in)]
@@ -372,6 +378,7 @@
                     (reply! id {:error {:code -32603 :message (str (ex-message e))}})))
                 (recur (or shutdown? (= "shutdown" method)))))))
       (finally
+        (some-> in-use lock/release!)
         (reset! (:running? state) false)
         (doseq [a [(:client-c state) (:reader state)]]
           (some-> ^java.sql.Connection @a .close))))))

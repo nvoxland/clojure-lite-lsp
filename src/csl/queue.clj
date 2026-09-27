@@ -21,11 +21,14 @@
   clients and the daemon are different processes. Writes are serialized,
   so it strictly increases among queued requests."
   [c p kind path priority]
-  (db/execute! c "INSERT INTO pending (project_id, kind, path, priority, enqueued_at)
-                  VALUES (?, ?, ?, ?, (SELECT coalesce(max(enqueued_at), 0) + 1 FROM pending))
-                  ON CONFLICT (project_id, kind, path) DO UPDATE
-                  SET priority = min(priority, excluded.priority), enqueued_at = excluded.enqueued_at"
-               p (name kind) path priority))
+  (db/with-tx c
+    (db/execute! c "INSERT INTO pending (project_id, kind, path, priority, enqueued_at)
+                    VALUES (?, ?, ?, ?, (SELECT coalesce(max(enqueued_at), 0) + 1 FROM pending))
+                    ON CONFLICT (project_id, kind, path) DO UPDATE
+                    SET priority = min(priority, excluded.priority), enqueued_at = excluded.enqueued_at"
+                 p (name kind) path priority)
+    ;; work on a project is seeing it: GC drops projects unseen for long
+    (db/execute! c "UPDATE project SET last_seen = ? WHERE id = ?" (System/currentTimeMillis) p)))
 
 (defn- row->request [[p kind path priority enqueued-at]]
   {:project-id p :kind (keyword kind) :path path :priority priority :enqueued-at enqueued-at})

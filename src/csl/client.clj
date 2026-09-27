@@ -17,9 +17,10 @@
 (def ^:private timeout-ms 30000)
 
 (defn request-stop!
-  "Ask the running daemon to finish its batch and exit."
-  [c]
-  (db/execute! c "UPDATE daemon SET stop_requested = 1 WHERE id = 1"))
+  "Ask the running daemon (only the one with `pid`, when given) to finish
+  its batch and exit."
+  ([c] (db/execute! c "UPDATE daemon SET stop_requested = 1 WHERE id = 1"))
+  ([c pid] (db/execute! c "UPDATE daemon SET stop_requested = 1 WHERE id = 1 AND pid = ?" pid)))
 
 (defn- wait-until [pred]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
@@ -28,15 +29,19 @@
             (< (System/currentTimeMillis) deadline) (do (Thread/sleep 20) (recur))
             :else false))))
 
-(defn- running-version
-  "The version of the daemon holding the lock. It takes the lock before it
-  writes its row, so wait briefly for the row."
-  [db-path]
+(defn- running
+  "{:pid :version} of the daemon holding the lock `daemon-lock`, or nil
+  when there is none. A daemon takes the lock before it registers, and
+  leaves its row before it lets go of the lock, so wait for one or the
+  other."
+  [db-path daemon-lock]
   (with-open [c (db/open-client db-path)]
-    (let [v (atom nil)]
-      (wait-until #(reset! v (try (db/query-value c "SELECT version FROM daemon WHERE id = 1")
-                                  (catch java.sql.SQLException _ nil))))
-      @v)))
+    (let [r (atom nil)]
+      (wait-until #(or (reset! r (try (first (db/query c "SELECT pid, version FROM daemon WHERE id = 1"))
+                                      (catch java.sql.SQLException _ nil)))
+                       (not (lock/held? daemon-lock))))
+      (when-let [[pid version] @r]
+        (when (lock/held? daemon-lock) {:pid pid :version version})))))
 
 (defn- version-key [v]
   (let [[number qualifier] (str/split (str v) #"-" 2)]
@@ -100,20 +105,22 @@
         _ (.mkdirs (io/file dir))
         spawn! (or spawn! #(spawn-daemon! home))
         live? #(lock/held? daemon-lock)
-        current? #(and (live?) (not (older? (running-version db) version)))]
-    (when (and (live?) (older? (running-version db) version))
-      (with-open [c (db/open-client db)] (request-stop! c))
-      (wait-until #(not (live?))))
-    (if (current?)
+        current #(when-let [{v :version :as d} (running db daemon-lock)]
+                   (when-not (older? v version) d))]
+    (when-let [{:keys [pid] v :version} (running db daemon-lock)]
+      (when (older? v version)
+        (with-open [c (db/open-client db)] (request-stop! c pid))
+        (wait-until #(not (live?)))))
+    (if (current)
       :running
       (let [held (lock/lock! spawn-lock timeout-ms)]
         (try
-          (if (live?)
+          (if (current)
             :running
             (do (spawn!)
                 ;; the daemon takes its lock, then creates the schema, then
                 ;; registers: its row means the index is ready to use
-                (when-not (and (wait-until live?) (running-version db))
+                (when-not (and (wait-until live?) (running db daemon-lock))
                   (throw (ex-info "The csl daemon did not start; see daemon.log" {:home home})))
                 :spawned))
           (finally (lock/release! held)))))))

@@ -248,7 +248,9 @@
                     :jar-key (jar-key (jar-hashes j) config)
                     :entries (vec (for [[filename {:keys [elements lookups]}] (sort-by key results)
                                         :let [entry (entry-of filename)
-                                              refs (dep-refs lookups)]]
+                                              refs (dep-refs lookups)]
+                                        ;; an entry that can't be read back isn't stored
+                                        :when (hashes entry)]
                                     {:entry-path entry
                                      :unit-key (cond-> (unit-key :dependency config (hashes entry) entry)
                                                  (seq refs) (assoc :ns-deps (vec refs)))

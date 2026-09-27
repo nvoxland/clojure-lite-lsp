@@ -74,3 +74,17 @@
         (spit (io/file root "deps.edn") "{:paths [\"src\" \"more\"]}")
         (classpath/memoized! c p root {:run run})
         (is (= 2 @runs))))))
+
+(deftest a-failing-build-keeps-the-last-classpath
+  ;; deps.edn mid-edit, or the build tool offline: indexing goes on with
+  ;; what worked last instead of stopping for the whole project
+  (with-open [c (db/open-writer (tu/temp-db-path))]
+    (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src" :dir})
+          p (snapshot/ensure-project! c root)
+          first-cp (classpath/memoized! c p root {:run (fn [_ _] "src")})]
+      (spit (io/file root "deps.edn") "{:paths [\"src\"")
+      (is (= first-cp (classpath/memoized! c p root {:run (fn [_ _] (throw (ex-info "Error building classpath" {})))})))
+      (testing "with nothing that worked before, it fails"
+        (let [other (project! {"deps.edn" "{" "src" :dir})]
+          (is (thrown? Exception (classpath/memoized! c (snapshot/ensure-project! c other) other
+                                                      {:run (fn [_ _] (throw (ex-info "Error" {})))}))))))))
