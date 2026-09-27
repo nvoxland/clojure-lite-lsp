@@ -77,11 +77,13 @@
               (Files/move (.toPath tmp) (.toPath f) (into-array [StandardCopyOption/ATOMIC_MOVE])))
             (str f)))))))
 
-(defonce ^:private ^ExecutorService extractor
-  ;; one at a time, off the editor's request thread
-  (Executors/newSingleThreadExecutor
-   (reify ThreadFactory
-     (newThread [_ r] (doto (Thread. r "csl-extract") (.setDaemon true))))))
+(defonce ^:private extractor
+  ;; one at a time, off the editor's request thread; made on first use
+  ;; (namespaces are initialized when the native image is built, and a
+  ;; thread pool can't be part of it)
+  (delay (Executors/newSingleThreadExecutor
+          (reify ThreadFactory
+            (newThread [_ r] (doto (Thread. r "csl-extract") (.setDaemon true)))))))
 
 (defn extract-soon!
   "The path jar location `loc` will be extracted to, extracting it in the
@@ -90,7 +92,7 @@
   [home loc]
   (when-let [f (extracted-file home loc)]
     (when-not (.isFile f)
-      (.submit extractor ^Runnable (fn [] (try (extract! home loc) (catch Exception _ nil)))))
+      (.submit ^ExecutorService @extractor ^Runnable (fn [] (try (extract! home loc) (catch Exception _ nil)))))
     (str f)))
 
 (defn source-of
