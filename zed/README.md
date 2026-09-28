@@ -7,15 +7,8 @@ this server instead of clojure-lsp.
 
 ## Install
 
-1. Build the server and put `clojure-lite-lsp` on your PATH:
-
-   ```sh
-   bin/install-server            # builds target/clojure-lite-lsp if needed, links ~/.local/bin/clojure-lite-lsp
-   bin/install-server --rebuild  # after pulling changes
-   ```
-
-   Building needs GraalVM (`JAVA_HOME` pointing at it, or `native-image` on
-   PATH).
+1. [Install the binary](https://nvoxland.github.io/clojure-lite-lsp/getting-started/install/),
+   so `clojure-lite-lsp` is on your PATH (or [build it](../DEV.md)).
 
 2. In Zed, uninstall the **Clojure** extension (and any other extension that
    defines the `Clojure` language, like **Clojure (nREPL LSP)**): they would
@@ -56,14 +49,15 @@ passed through. For example, to keep a separate index while trying it out:
 
 - The first time a project opens, clojure-lite-lsp starts a background indexer (`clojure-lite-lsp
   index`, the same binary) and Zed shows indexing progress. The first index
-  of a big project takes a while (Metabase: about 35 s); a second worktree
-  of it takes a few seconds, and reopening is instant.
+  of a big project takes a while (about 35 s for 5,000 source files); a
+  second worktree of it takes a few seconds, and reopening needs no indexing.
 - Go to definition into a library opens its source as a read-only file under
-  `~/.cache/clojure-lite-lsp/sources/`, fully navigable once open.
+  `sources/` in clojure-lite-lsp's cache directory, fully navigable once open.
 - `clojure-lite-lsp status` in a terminal shows the indexer, the index, and each project's
   files and jars, including how many jars are shared with other projects.
 - **dev: open language server logs** shows the server's stderr. The indexer
-  logs to `~/.cache/clojure-lite-lsp/v<n>/daemon.log`.
+  logs to `v<n>/daemon.log` in its cache directory
+  ([where that is](https://nvoxland.github.io/clojure-lite-lsp/guide/configuration/#where-things-live)).
 - A project's classpath comes from `deps.edn` (aliases `:dev` and `:test` by
   default), `project.clj` or `bb.edn`. A `.clojure-lite-lsp.edn` at the project root can
   change that:

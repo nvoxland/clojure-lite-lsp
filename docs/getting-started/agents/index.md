@@ -36,4 +36,4 @@ directory argument sets up another project.
 
 - [Claude Code](claude-code.md): what it sets up and how Claude uses it.
 - [Codex](codex.md): the same for Codex.
-- [Query commands](../guide/query.md): what agents (and you) can ask.
+- [Query commands](../../guide/query.md): what agents (and you) can ask.

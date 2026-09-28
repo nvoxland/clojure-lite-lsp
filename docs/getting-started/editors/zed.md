@@ -7,7 +7,7 @@ the Clojure extension.
 
 ## Install
 
-1. [Install the binary](../getting-started/install.md), so `clojure-lite-lsp` is on your `PATH`.
+1. [Install the binary](../install.md), so `clojure-lite-lsp` is on your `PATH`.
 2. In Zed, uninstall the **Clojure** extension, and any other extension that
    defines the `Clojure` language: two would define the same language.
 3. Run **zed: install dev extension** and select the repository's `zed/`
@@ -39,5 +39,6 @@ started from the Dock.
 
 - Indexing progress shows in the status bar.
 - Go to definition into a library opens its source as a read-only file under
-  `~/.cache/clojure-lite-lsp/sources/`, fully navigable once open.
+  `sources/` in the [cache directory](../../guide/configuration.md#where-things-live),
+  fully navigable once open.
 - **dev: open language server logs** shows the server's log.

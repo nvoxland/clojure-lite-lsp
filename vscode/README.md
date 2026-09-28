@@ -6,15 +6,8 @@ adds navigation, references, hover, symbols and call hierarchy.
 
 ## Install
 
-1. Build the server and put `clojure-lite-lsp` on your PATH:
-
-   ```sh
-   bin/install-server            # builds target/clojure-lite-lsp if needed, links ~/.local/bin/clojure-lite-lsp
-   bin/install-server --rebuild  # after pulling changes
-   ```
-
-   Building needs GraalVM (`JAVA_HOME` pointing at it, or `native-image` on
-   PATH).
+1. [Install the binary](https://nvoxland.github.io/clojure-lite-lsp/getting-started/install/),
+   so `clojure-lite-lsp` is on your PATH (or [build it](../DEV.md)).
 
 2. Build and install the extension (needs Node.js):
 
@@ -28,7 +21,7 @@ adds navigation, references, hover, symbols and call hierarchy.
 
 3. Reload the window and open a `.clj` file. Indexing progress shows in the
    status bar; the first index of a big project takes a while (about 35 s for
-   Metabase), another worktree of it a few seconds.
+   5,000 source files), another worktree of it a few seconds.
 
 ### With Calva
 
@@ -56,11 +49,12 @@ the language server**.
 ## Using it
 
 - Go to definition into a library opens its source as a read-only file under
-  `~/.cache/clojure-lite-lsp/sources/`, fully navigable once open.
+  `sources/` in clojure-lite-lsp's cache directory, fully navigable once open.
 - `clojure-lite-lsp status` in a terminal shows the indexer, the index, and
   each project's files and jars.
 - The server's own log is in **Output → clojure-lite-lsp**; the indexer logs
-  to `~/.cache/clojure-lite-lsp/v<n>/daemon.log`.
+  to `v<n>/daemon.log` in its cache directory
+  ([where that is](https://nvoxland.github.io/clojure-lite-lsp/guide/configuration/#where-things-live)).
 - A project's classpath comes from `deps.edn` (aliases `:dev` and `:test` by
   default), `project.clj` or `bb.edn`. A `.clojure-lite-lsp.edn` at the
   project root can change that; see

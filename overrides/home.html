@@ -7,60 +7,23 @@
     <div class="cl-hero__inner">
       <div class="cl-hero__brand">
         <img src="assets/logo.svg" alt="clojure-lite-lsp logo">
-        <span>// clojure-lite-lsp</span>
+        <span>;; clojure-lite-lsp</span>
       </div>
       <h1 class="cl-hero__title">
-        A Clojure language server small enough to run in every worktree.
+        A Clojure LSP light enough to run in every worktree.
       </h1>
       <p class="cl-hero__sub">
         Working with coding agents means many codebases open at once: several
-        projects, several worktrees of each, an editor or an agent in every one.
+        projects, several worktrees of each, an agent or an editor in every one.
         clojure-lite-lsp uses about 20 MB per editor, and a new worktree indexes
         only the files that differ from ones already indexed. It stays that
         small by implementing only the parts of the language server protocol for
-        reading and reviewing code. With an agent making the edits, the features
-        for writing code by hand are left out.
+        reading and reviewing code--because who is writing code by hand anymore??
       </p>
       <div class="cl-hero__cta">
         <a href="getting-started/install/" class="primary">Install &nbsp;→</a>
         <a href="why/">Why</a>
-        <a href="agents/">For agents</a>
-        <a href="https://github.com/nvoxland/clojure-lite-lsp">GitHub</a>
-      </div>
-      <div class="cl-hero__code"><span class="prompt">$</span> clojure-lite-lsp query callers metabase.util/select-keys-when
-src/metabase/collections/update.clj:120:20: metabase.collections.update/update-collection! calls it
-src/metabase/measures/api.clj:120:29: metabase.measures.api/write-check-and-update-measure! calls it
-src/metabase/segments/api.clj:98:21: metabase.segments.api/write-check-and-update-segment! calls it
-<span class="dim">...</span></div>
-    </div>
-  </section>
-
-  <section class="cl-section">
-    <h2>// what it does</h2>
-    <div class="cl-grid">
-      <div class="cl-card">
-        <h3>Small per project</h3>
-        <p>Each editor's server uses about 20 MB. Libraries are indexed once for the machine, and a new worktree only indexes the files that differ from ones already indexed.</p>
-      </div>
-      <div class="cl-card">
-        <h3>Reading and review</h3>
-        <p>Go to definition and declaration, find references, implementations of protocols and multimethods, hover docs, file outlines, symbol search, call hierarchy, occurrence highlighting and argument hints.</p>
-      </div>
-      <div class="cl-card">
-        <h3>No editing features</h3>
-        <p>No completion, diagnostics, formatting, rename, refactorings or code actions. Editors see the server doesn't offer them and don't show them.</p>
-      </div>
-      <div class="cl-card">
-        <h3>Agents</h3>
-        <p>Claude Code uses it through its LSP tool, Codex through MCP, and any agent through <code>clojure-lite-lsp query</code>. <code>clojure-lite-lsp setup</code> configures a project for them.</p>
-      </div>
-      <div class="cl-card">
-        <h3>Editors</h3>
-        <p>Extensions for VS Code and Zed. Any other editor with an LSP client can run <code>clojure-lite-lsp lsp</code>.</p>
-      </div>
-      <div class="cl-card">
-        <h3>Command line</h3>
-        <p><code>clojure-lite-lsp query</code> answers the same questions in a terminal or a script: definitions, references, callers, callees, docs.</p>
+        <a href="architecture/">Architecture</a>
       </div>
     </div>
   </section>

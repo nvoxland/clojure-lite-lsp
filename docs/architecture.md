@@ -15,7 +15,7 @@ flowchart LR
 ## The index is on disk
 
 Analysis isn't kept in memory. It lives in one SQLite database for the whole
-machine (`~/.cache/clojure-lite-lsp/v<n>/index.db`), with tables laid out for
+machine (`v<n>/index.db` in the [cache directory](guide/configuration.md#where-things-live)), with tables laid out for
 the questions the server answers: definitions by name, usages by what they
 point to, the elements of each file by position.
 

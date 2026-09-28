@@ -8,6 +8,9 @@ edit_uri: edit/main/docs/
 docs_dir: docs
 site_dir: site
 dev_addr: '127.0.0.1:8000'
+# the theme overrides (the home page) reload the preview too
+watch:
+  - overrides
 
 theme:
   name: material
@@ -50,26 +53,25 @@ theme:
 
 nav:
   - Home: index.md
-  - Why clojure-lite-lsp: why.md
   - Getting Started:
       - Install: getting-started/install.md
-      - First steps: getting-started/first-steps.md
-  - Editors:
-      - VS Code: editors/vscode.md
-      - Zed: editors/zed.md
-      - Other editors: editors/other.md
-  - Agents:
-      - Overview: agents/index.md
-      - Claude Code: agents/claude-code.md
-      - Codex: agents/codex.md
+      - Agents:
+          - Overview: getting-started/agents/index.md
+          - Claude Code: getting-started/agents/claude-code.md
+          - Codex: getting-started/agents/codex.md
+      - Editors:
+          - VS Code: getting-started/editors/vscode.md
+          - Zed: getting-started/editors/zed.md
+          - Other editors: getting-started/editors/other.md
+  - Why: why.md
   - Guide:
+      - CLI: guide/cli.md
       - Query commands: guide/query.md
       - Configuration: guide/configuration.md
-  - Reference:
-      - Command line: reference/cli.md
-      - Language server: reference/lsp.md
-      - Troubleshooting: reference/troubleshooting.md
-      - Architecture: reference/architecture.md
+      - Language server: guide/lsp.md
+      - MCP: guide/mcp.md
+      - Troubleshooting: guide/troubleshooting.md
+  - Architecture: architecture.md
 
 plugins:
   - search:

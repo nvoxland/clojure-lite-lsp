@@ -39,7 +39,7 @@ Most commands take a **target**:
 
 One line per result, `path:line:col:` then what's there. Paths are relative to
 the project root; library sources are extracted, read-only files under
-`~/.cache/clojure-lite-lsp/sources/`.
+`sources/` in the [cache directory](configuration.md#where-things-live).
 
 ```text
 $ clojure-lite-lsp query references app.a/greet

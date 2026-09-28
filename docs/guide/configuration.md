@@ -12,6 +12,10 @@ build file, and the clj-kondo configuration from its `.clj-kondo` directory.
 | `bb.edn` | `bb`'s classpath; beside `deps.edn` or `project.clj`, added to theirs |
 | none | `src` and `test`, where they exist |
 
+The classpath is how libraries are found, so the project's build tool needs to
+be installed: the Clojure CLI, `lein` or `bb`. Without it, only the project's
+`src` and `test` are indexed, and library code can't be navigated to.
+
 The classpath is recomputed only when a build file changes: the project's,
 those of its `:local/root` dependencies, or your `~/.clojure/deps.edn` (or
 `$CLJ_CONFIG/deps.edn`) and `~/.lein/profiles.clj`. If computing it fails (a build file mid-edit, the
@@ -49,13 +53,31 @@ project's files are re-analyzed as needed.
 
 ## Where things live
 
+clojure-lite-lsp keeps its files in your OS's usual places: a cache directory
+for everything it can rebuild, and a data directory for the one thing it
+can't.
+
+| | Cache directory | Data directory |
+|---|---|---|
+| macOS | `~/Library/Caches/clojure-lite-lsp` | `~/Library/Application Support/clojure-lite-lsp` |
+| Linux | `$XDG_CACHE_HOME/clojure-lite-lsp` (default `~/.cache/clojure-lite-lsp`) | `$XDG_DATA_HOME/clojure-lite-lsp` (default `~/.local/share/clojure-lite-lsp`) |
+
+In the cache directory:
+
 | | |
 |---|---|
-| `~/.cache/clojure-lite-lsp/v<n>/index.db` | The index, one per format version |
-| `~/.cache/clojure-lite-lsp/v<n>/daemon.log` | The indexer's log |
-| `~/.cache/clojure-lite-lsp/sources/` | Library sources, extracted when you navigate to them |
-| `~/.cache/clojure-lite-lsp/configs/` | Copies of the clj-kondo configs in use |
-| `~/.cache/clojure-lite-lsp/claude-marketplace/` | The Claude Code plugin ([setup](../agents/claude-code.md)) |
+| `v<n>/index.db` | The index, one per format version |
+| `v<n>/daemon.log` | The indexer's log |
+| `sources/` | Library sources, extracted when you navigate to them |
+| `configs/` | Copies of the clj-kondo configs in use |
 
-`CLOJURE_LITE_LSP_HOME` moves all of it, e.g. to try things out without
-touching your real index.
+In the data directory:
+
+| | |
+|---|---|
+| `claude-marketplace/` | The Claude Code plugin ([setup](../getting-started/agents/claude-code.md)) |
+
+`clojure-lite-lsp status` shows where the index is.
+
+`CLOJURE_LITE_LSP_HOME` puts all of it in one directory instead, e.g. to try
+things out without touching your real index.

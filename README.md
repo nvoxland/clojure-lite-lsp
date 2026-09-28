@@ -4,7 +4,7 @@ A Clojure language server small enough to run in every project and worktree
 you have open.
 
 Working with coding agents means many codebases open at once: several
-projects, several worktrees of each, with an editor or an agent in every one.
+projects, several worktrees of each, with an agent or an editor in every one.
 clojure-lite-lsp keeps the cost of each one low:
 
 - **About 20 MB per editor**, whatever the project's size. Indexing happens
@@ -27,32 +27,15 @@ and leaves out the features for writing code by hand: completion,
 diagnostics, formatting, rename and refactorings.
 
 **Documentation: <https://nvoxland.github.io/clojure-lite-lsp/>**. How it
-works: [Architecture](https://nvoxland.github.io/clojure-lite-lsp/reference/architecture/).
-The docs' sources are in [`docs/`](docs/); preview them with
-`poetry install --with docs && poetry run mkdocs serve`.
+works: [Architecture](https://nvoxland.github.io/clojure-lite-lsp/architecture/).
+Building and developing it: [DEV.md](DEV.md).
 
 ## Install
 
 Download a binary for macOS or Linux from
 [Releases](https://github.com/nvoxland/clojure-lite-lsp/releases) and put it
-on your PATH ([details](https://nvoxland.github.io/clojure-lite-lsp/getting-started/install/)),
-or build it (needs
-[GraalVM](https://www.graalvm.org/), as `JAVA_HOME` or with `native-image` on
-PATH, and the [Clojure CLI](https://clojure.org/guides/install_clojure)):
-
-```sh
-bin/install-server            # builds target/clojure-lite-lsp, links ~/.local/bin/clojure-lite-lsp
-bin/install-server --rebuild  # after pulling changes
-```
-
-## Editors
-
-- **VS Code**: [`vscode/`](vscode/README.md), an extension that adds this
-  server to VS Code's Clojure support (`vscode/install`).
-- **Zed**: [`zed/`](zed/README.md), an extension that provides the Clojure
-  language and this server (it replaces the Clojure extension).
-- **Others**: run `clojure-lite-lsp lsp` as the language server for Clojure
-  files, over stdio.
+on your PATH ([details](https://nvoxland.github.io/clojure-lite-lsp/getting-started/install/)).
+To build it from source, see [DEV.md](DEV.md).
 
 ## Coding agents
 
@@ -64,7 +47,7 @@ clojure-lite-lsp setup --agent claude   # or codex, or claude,codex; in the proj
   - Installs a plugin that gives Claude's LSP tool this server, recorded in
     the project's `.claude/settings.json`.
   - Adds a skill for the `query` commands, and a pointer to them in
-    `CLAUDE.md`.
+    `AGENTS.md`.
 - **Codex**: Codex has no language server support, so it gets the `query`
   commands as an MCP server (`clojure-lite-lsp mcp`):
   - For you, with `codex mcp add`.
@@ -75,6 +58,15 @@ clojure-lite-lsp setup --agent claude   # or codex, or claude,codex; in the proj
 Either way the project is indexed, so the first question doesn't wait for indexing.
 Run it again after upgrading; it replaces its own parts and keeps everything
 else.
+
+## Editors
+
+- **VS Code**: [`vscode/`](vscode/README.md), an extension that adds this
+  server to VS Code's Clojure support (`vscode/install`).
+- **Zed**: [`zed/`](zed/README.md), an extension that provides the Clojure
+  language and this server (it replaces the Clojure extension).
+- **Others**: run `clojure-lite-lsp lsp` as the language server for Clojure
+  files, over stdio.
 
 ## Command line
 
@@ -108,10 +100,11 @@ change that:
  :extra-source-paths ["dev"]}   ; more source dirs
 ```
 
-The index lives in `~/.cache/clojure-lite-lsp` (`CLOJURE_LITE_LSP_HOME` moves
-it), and the indexer's log is in its `v<n>/daemon.log`.
+The index lives in your OS's cache directory (`~/Library/Caches/clojure-lite-lsp`
+on macOS, `$XDG_CACHE_HOME/clojure-lite-lsp` or `~/.cache/clojure-lite-lsp` on
+Linux; `CLOJURE_LITE_LSP_HOME` moves it), and the indexer's log is in its
+`v<n>/daemon.log`. `clojure-lite-lsp status` shows where it is.
 
 ## License
 
-[Apache License 2.0](LICENSE). The Zed extension includes files from Zed's
-Clojure extension, also Apache 2.0: see [NOTICE](NOTICE).
+[Apache License 2.0](LICENSE).

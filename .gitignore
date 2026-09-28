@@ -10,6 +10,7 @@ site/
 .venv/
 .DS_Store
 
-# Claude Code (clojure-lite-lsp setup --agent claude)
+# coding agents (clojure-lite-lsp setup --agent claude)
 .claude/
 CLAUDE.md
+AGENTS.md

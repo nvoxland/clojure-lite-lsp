@@ -6,7 +6,7 @@ language.
 
 ## Install
 
-1. [Install the binary](../getting-started/install.md), so `clojure-lite-lsp` is on your `PATH`.
+1. [Install the binary](../install.md), so `clojure-lite-lsp` is on your `PATH`.
 2. Build and install the extension (needs Node.js):
 
     ```sh

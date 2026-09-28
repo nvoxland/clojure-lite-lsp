@@ -1,49 +1,39 @@
 # Install
 
-clojure-lite-lsp is a single native binary, `clojure-lite-lsp`. Download a
-release, or build it from source.
+clojure-lite-lsp is a single native binary, `clojure-lite-lsp`.
 
-Either way, projects need their build tool: the
-[Clojure CLI](https://clojure.org/guides/install_clojure) for `deps.edn`,
-`lein` for `project.clj`, `bb` for `bb.edn`.
+## Get the binary
 
-## Download a release
+Download the archive for your platform from the
+[latest release](https://github.com/nvoxland/clojure-lite-lsp/releases/latest):
 
-[Releases](https://github.com/nvoxland/clojure-lite-lsp/releases) have
-binaries for macOS (Apple silicon) and Linux (x86-64 and ARM64). Pick yours
-and put it on your `PATH`:
+| Platform | Archive |
+|---|---|
+| macOS (Apple silicon) | `clojure-lite-lsp-<version>-macos-aarch64.tar.gz` |
+| Linux (x86-64) | `clojure-lite-lsp-<version>-linux-x86_64.tar.gz` |
+| Linux (ARM64) | `clojure-lite-lsp-<version>-linux-aarch64.tar.gz` |
 
-```sh
-version=0.1.0
-target=macos-aarch64   # or linux-x86_64, linux-aarch64
-curl -fsSLO "https://github.com/nvoxland/clojure-lite-lsp/releases/download/v$version/clojure-lite-lsp-$version-$target.tar.gz"
-tar -xzf "clojure-lite-lsp-$version-$target.tar.gz"
-mkdir -p ~/.local/bin
-mv "clojure-lite-lsp-$version-$target/clojure-lite-lsp" ~/.local/bin/
-```
-
-Downloaded with a browser instead, macOS quarantines the binary, which
-isn't signed: `xattr -d com.apple.quarantine ~/.local/bin/clojure-lite-lsp`
-lets it run.
-
-## Build from source
-
-This needs [GraalVM](https://www.graalvm.org/) 25 or later (`native-image`),
-as `JAVA_HOME` or its `native-image` on `PATH`, and the Clojure CLI.
+Each archive has a `.sha256` checksum beside it. Unpack it:
 
 ```sh
-git clone https://github.com/nvoxland/clojure-lite-lsp
-cd clojure-lite-lsp
-JAVA_HOME=/path/to/graalvm bin/install-server
+tar -xzf clojure-lite-lsp-<version>-<platform>.tar.gz
 ```
 
-`bin/install-server` builds `target/clojure-lite-lsp` and links it as
-`~/.local/bin/clojure-lite-lsp`. After pulling changes, rebuild with
-`bin/install-server --rebuild`.
+To build it from source instead, see [DEV.md](https://github.com/nvoxland/clojure-lite-lsp/blob/main/DEV.md).
+
+## Put it on your PATH
+
+Move or link `clojure-lite-lsp` into a directory on your `PATH`. Agents and
+editors find it there. An editor started from a desktop launcher may not see
+the same `PATH` as your shell; if it can't find the binary, its settings take
+the full path instead ([VS Code](editors/vscode.md#settings),
+[Zed](editors/zed.md#settings)).
+
+The binary isn't signed. On macOS, a copy downloaded with a browser is
+quarantined; `xattr -d com.apple.quarantine <path>/clojure-lite-lsp` lets it
+run.
 
 ## Check it
-
-Make sure `~/.local/bin` is on your `PATH`, then:
 
 ```sh
 clojure-lite-lsp version
@@ -51,7 +41,8 @@ clojure-lite-lsp version
 
 ## Next
 
-- [First steps](first-steps.md): index a project and ask it something.
-- Set up your editor: [VS Code](../editors/vscode.md), [Zed](../editors/zed.md)
-  or [another editor](../editors/other.md).
-- Set up an agent: [Claude Code or Codex](../agents/index.md).
+- Try it: `clojure-lite-lsp query` in a project lists what it can
+  [look up](../guide/query.md).
+- Set up an agent: [Claude Code or Codex](agents/index.md).
+- Set up your editor: [VS Code](editors/vscode.md), [Zed](editors/zed.md)
+  or [another editor](editors/other.md).
