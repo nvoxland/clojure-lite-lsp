@@ -5,10 +5,10 @@
   A location is {:path :pos [row col end-row end-col]}, plus :entry for a
   file inside the jar at :path."
   (:require
-   [clojure.edn :as edn]
-   [clojure.string :as str]
    [clojure-lite-lsp.db :as db]
-   [clojure-lite-lsp.kinds :as kinds]))
+   [clojure-lite-lsp.kinds :as kinds]
+   [clojure.edn :as edn]
+   [clojure.string :as str]))
 
 ;;;; elements
 

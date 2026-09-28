@@ -4,11 +4,11 @@
   harm."
   (:require
    [cheshire.core :as json]
+   [clojure-lite-lsp.setup :as setup]
+   [clojure-lite-lsp.test-util :as tu]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [clojure.test :refer [deftest is testing]]
-   [clojure-lite-lsp.setup :as setup]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure.test :refer [deftest is testing]]))
 
 (defn slurp-in [dir path] (slurp (io/file dir path)))
 (defn json-in [dir path] (json/parse-string (slurp-in dir path)))

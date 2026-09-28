@@ -2,8 +2,6 @@
   "Analysis shared across different projects: a jar is analyzed once, ever,
   unless the projects give it genuinely different configs."
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.db :as db]
@@ -11,7 +9,9 @@
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project! count-of]]
    [clojure-lite-lsp.kondo-config-test :refer [jar! maven-jar!]]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn project-using
   "A project whose deps.edn uses the given jars, with one source file. A

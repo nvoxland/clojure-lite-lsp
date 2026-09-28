@@ -2,11 +2,11 @@
   "The query commands agents (and people) use: by symbol or by position,
   answered as data and as grep-like text."
   (:require
-   [clojure.string :as str]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.commands :as commands]
    [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.string :as str]
+   [clojure.test :refer [deftest is testing]]))
 
 (def files
   {"src/app/a.clj" "(ns app.a)\n(defn greet\n  \"Says hello.\"\n  [who]\n  (str \"hello \" who))\n(defn twice [x] (greet x) (greet x))\n"

@@ -19,8 +19,6 @@
   writing one) still happens on the loop thread, one after the other:
   only analysis, which touches no database, runs alongside."
   (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.db :as db]
@@ -31,7 +29,9 @@
    [clojure-lite-lsp.reuse :as reuse]
    [clojure-lite-lsp.snapshot :as snapshot]
    [clojure-lite-lsp.sources :as sources]
-   [clojure-lite-lsp.writer :as writer])
+   [clojure-lite-lsp.writer :as writer]
+   [clojure.java.io :as io]
+   [clojure.string :as str])
   (:import
    [java.io Closeable File]))
 

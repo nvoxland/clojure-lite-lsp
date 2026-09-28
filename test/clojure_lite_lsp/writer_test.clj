@@ -1,12 +1,12 @@
 (ns clojure-lite-lsp.writer-test
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.kinds :as kinds]
-   [clojure-lite-lsp.normalize-test :as nt]
    [clojure-lite-lsp.normalize :as normalize]
+   [clojure-lite-lsp.normalize-test :as nt]
    [clojure-lite-lsp.test-util :as tu]
-   [clojure-lite-lsp.writer :as writer]))
+   [clojure-lite-lsp.writer :as writer]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn unit-key [content & {:as more}]
   (merge {:content-hash (.getBytes (str content)) :lang-key "clj" :kondo-version "test"

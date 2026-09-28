@@ -1,0 +1,4 @@
+{:lint-as {clojure-lite-lsp.query-fixture/with-project clojure.core/let}
+ :linters {:unsorted-required-namespaces {:level :warning}
+           :redundant-str-call {:level :warning}
+           :unused-private-var {:level :warning}}}

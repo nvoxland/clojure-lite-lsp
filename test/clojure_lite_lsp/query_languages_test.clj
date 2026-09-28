@@ -2,10 +2,10 @@
   "A namespace with a .clj and a .cljs file: answers keep to the language
   asked about."
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.query :as q]
    [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
-   [clojure-lite-lsp.query-references-test :refer [references locs]]))
+   [clojure-lite-lsp.query-references-test :refer [references locs]]
+   [clojure.test :refer [deftest is testing]]))
 
 (def files
   {"src/app/util.clj" "(ns app.util)\n(defn fmt [x] x)"

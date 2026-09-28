@@ -8,9 +8,9 @@
   the jar's content means a new version of a library never reuses an old
   extraction."
   (:require
+   [clojure-lite-lsp.fingerprint :as fingerprint]
    [clojure.java.io :as io]
-   [clojure.string :as str]
-   [clojure-lite-lsp.fingerprint :as fingerprint])
+   [clojure.string :as str])
   (:import
    [java.io File]
    [java.nio.file Files StandardCopyOption]

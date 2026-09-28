@@ -19,10 +19,10 @@
   at once."
   (:require
    [cheshire.core :as json]
-   [clojure.java.io :as io]
-   [clojure.string :as str]
    [clojure-lite-lsp.commands :as commands]
-   [clojure-lite-lsp.version :as version]))
+   [clojure-lite-lsp.version :as version]
+   [clojure.java.io :as io]
+   [clojure.string :as str]))
 
 (set! *warn-on-reflection* true)
 

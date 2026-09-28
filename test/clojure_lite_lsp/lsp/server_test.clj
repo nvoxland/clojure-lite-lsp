@@ -2,15 +2,18 @@
   "End to end: LSP over streams to the real server, with an in-process
   daemon, on a real indexed project."
   (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.daemon :as daemon]
+   [clojure-lite-lsp.java :as java]
    [clojure-lite-lsp.lsp.convert :as convert]
    [clojure-lite-lsp.lsp.jsonrpc :as rpc]
    [clojure-lite-lsp.lsp.server :as server]
-   [clojure-lite-lsp.test-util :as tu])
+   [clojure-lite-lsp.queue :as queue]
+   [clojure-lite-lsp.sources :as sources]
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.java.io :as io]
+   [clojure.string :as str]
+   [clojure.test :refer [deftest is testing]])
   (:import
    [java.io PipedInputStream PipedOutputStream]))
 
@@ -211,7 +214,7 @@
     (deref (:server client) 10000 :timeout)))
 
 (deftest navigating-to-java-sources
-  (when (clojure-lite-lsp.java/jdk-src)
+  (when (java/jdk-src)
     (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a (:import [java.io File]))\n(defn f [] (File. \"x\"))\n"})
           {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))]
       (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {}})
@@ -276,13 +279,13 @@
   ;; a git checkout reports many files at once
   (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)"})
         {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
-        real clojure-lite-lsp.queue/enqueue!]
+        real queue/enqueue!]
     (request! "initialize" {:rootUri (convert/path->uri root)})
     (notify! "initialized" {})
     (wait-indexed! client)
     (spit (io/file root "src/app/x.clj") "(ns app.x)\n(defn lost [] 1)\n")
     (spit (io/file root "src/app/y.clj") "(ns app.y)\n(defn kept [] 1)\n")
-    (with-redefs [clojure-lite-lsp.queue/enqueue! (fn [c p kind path priority]
+    (with-redefs [queue/enqueue! (fn [c p kind path priority]
                                        (if (str/ends-with? path "x.clj")
                                          (throw (ex-info "database is busy" {}))
                                          (real c p kind path priority)))]
@@ -327,11 +330,11 @@
   ;; keystroke: the files are extracted in the background instead
   (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)"})
         {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
-        real clojure-lite-lsp.sources/extract!]
+        real sources/extract!]
     (request! "initialize" {:rootUri (convert/path->uri root)})
     (notify! "initialized" {})
     (wait-indexed! client)
-    (with-redefs [clojure-lite-lsp.sources/extract! (fn [home loc] (Thread/sleep 1000) (real home loc))]
+    (with-redefs [sources/extract! (fn [home loc] (Thread/sleep 1000) (real home loc))]
       (let [started (System/currentTimeMillis)
             hits (request! "workspace/symbol" {:query "mapcat"})]
         (is (< (- (System/currentTimeMillis) started) 900))

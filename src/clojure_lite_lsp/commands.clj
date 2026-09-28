@@ -9,11 +9,11 @@
   compilers print them). Results are data ({:results [...]}) or grep-like
   text: `path:line:col: what's there`, paths relative to the project root."
   (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
    [clojure-lite-lsp.java :as java]
    [clojure-lite-lsp.query :as q]
-   [clojure-lite-lsp.sources :as sources])
+   [clojure-lite-lsp.sources :as sources]
+   [clojure.java.io :as io]
+   [clojure.string :as str])
   (:import
    [java.io File]))
 

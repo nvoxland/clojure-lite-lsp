@@ -9,11 +9,11 @@
   (:require
    [clj-kondo.core :as kondo]
    [clj-kondo.impl.version :as kondo-version]
-   [clojure.java.io :as io]
-   [clojure.string :as str]
    [clojure-lite-lsp.fingerprint :as fingerprint]
    [clojure-lite-lsp.normalize :as normalize]
-   [clojure-lite-lsp.ns-analysis :as nsa])
+   [clojure-lite-lsp.ns-analysis :as nsa]
+   [clojure.java.io :as io]
+   [clojure.string :as str])
   (:import
    [java.io File]
    [java.security MessageDigest]

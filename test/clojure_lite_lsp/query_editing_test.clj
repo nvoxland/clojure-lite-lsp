@@ -2,9 +2,9 @@
   "What the editor asks while you work in a file: the occurrences of what's
   under the cursor."
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.query :as q]
-   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]))
+   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
+   [clojure.test :refer [deftest is testing]]))
 
 (def files
   {"src/app/a.clj" (str "(ns app.a)\n"

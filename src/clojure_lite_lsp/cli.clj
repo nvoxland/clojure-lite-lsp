@@ -5,16 +5,16 @@
   garbage now. Both go through the daemon, the index's only writer."
   (:require
    [cheshire.core :as json]
-   [clojure.edn :as edn]
-   [clojure.java.io :as io]
-   [clojure.string :as str]
-   [clojure-lite-lsp.commands :as commands]
    [clojure-lite-lsp.client :as client]
+   [clojure-lite-lsp.commands :as commands]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.queue :as queue]
-   [clojure-lite-lsp.snapshot :as snapshot]))
+   [clojure-lite-lsp.snapshot :as snapshot]
+   [clojure.edn :as edn]
+   [clojure.java.io :as io]
+   [clojure.string :as str]))
 
 (set! *warn-on-reflection* true)
 

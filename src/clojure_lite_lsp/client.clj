@@ -3,12 +3,12 @@
   version or a newer one is running, starting one if needed (DESIGN.md
   §6.3)."
   (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.lock :as lock]
-   [clojure-lite-lsp.version :as version])
+   [clojure-lite-lsp.version :as version]
+   [clojure.java.io :as io]
+   [clojure.string :as str])
   (:import
    [java.lang ProcessBuilder$Redirect]))
 

@@ -1,17 +1,17 @@
 (ns clojure-lite-lsp.sources-test
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.fingerprint :as fingerprint]
    [clojure-lite-lsp.kondo-config :as kc]
    [clojure-lite-lsp.kondo-config-test :refer [jar!]]
    [clojure-lite-lsp.sources :as sources]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is testing]]))
 
 (deftest extracts-jar-entries-as-read-only-files
   (let [home (str (tu/temp-dir))
         j (jar! {"acme/core.clj" "(ns acme.core)\n(defn f [] 1)\n"})
-        h (fingerprint/sha256 (io/file (str j)))
+        h (fingerprint/sha256 (io/file j))
         hex (apply str (map #(format "%02x" %) h))
         loc {:path j :entry "acme/core.clj" :jar-hash h}
         path (sources/extract! home loc)]
@@ -32,7 +32,7 @@
 (deftest extraction-refuses-what-it-cant-vouch-for
   (let [home (str (tu/temp-dir))
         j (jar! {"acme/core.clj" "(ns acme.core)" "../../../evil.clj" "(ns evil)"})
-        h (fingerprint/sha256 (io/file (str j)))]
+        h (fingerprint/sha256 (io/file j))]
     (testing "an entry naming a path outside the sources dir (zip-slip)"
       (is (nil? (sources/extract! home {:path j :entry "../../../evil.clj" :jar-hash h})))
       (is (not (.exists (io/file home "evil.clj")))))

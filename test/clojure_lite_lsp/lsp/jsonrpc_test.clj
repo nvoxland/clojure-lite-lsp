@@ -1,7 +1,7 @@
 (ns clojure-lite-lsp.lsp.jsonrpc-test
   (:require
-   [clojure.test :refer [deftest is testing]]
-   [clojure-lite-lsp.lsp.jsonrpc :as rpc])
+   [clojure-lite-lsp.lsp.jsonrpc :as rpc]
+   [clojure.test :refer [deftest is testing]])
   (:import
    [java.io ByteArrayInputStream ByteArrayOutputStream]))
 

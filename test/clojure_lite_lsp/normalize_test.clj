@@ -1,8 +1,8 @@
 (ns clojure-lite-lsp.normalize-test
   (:require
    [clj-kondo.core :as kondo]
-   [clojure.test :refer [deftest is testing]]
-   [clojure-lite-lsp.normalize :as normalize]))
+   [clojure-lite-lsp.normalize :as normalize]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn kondo
   "Run clj-kondo on `code` as file `filename` with the options clojure-lite-lsp uses."

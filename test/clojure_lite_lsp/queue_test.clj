@@ -1,10 +1,10 @@
 (ns clojure-lite-lsp.queue-test
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.test :refer [deftest is]]))
 
 (defn with-db [f]
   (with-open [c (db/open-writer (tu/temp-db-path))]

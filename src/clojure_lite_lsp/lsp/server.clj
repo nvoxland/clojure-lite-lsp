@@ -7,8 +7,6 @@
   (clojure-lite-lsp.lsp.buffers)."
   (:refer-clojure :exclude [run!])
   (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
    [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.daemon :as daemon]
@@ -23,7 +21,9 @@
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
    [clojure-lite-lsp.sources :as sources]
-   [clojure-lite-lsp.version :as version])
+   [clojure-lite-lsp.version :as version]
+   [clojure.java.io :as io]
+   [clojure.string :as str])
   (:import
    [java.io File]))
 

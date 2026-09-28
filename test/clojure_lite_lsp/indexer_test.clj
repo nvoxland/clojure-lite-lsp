@@ -1,14 +1,16 @@
 (ns clojure-lite-lsp.indexer-test
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
+   [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.kondo-config-test :refer [jar!]]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.writer :as writer]
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn fixture
   "A project using a local jar and an external source dir, as deps.edn
@@ -92,8 +94,8 @@
       (let [c (:c ix)
             p (sync-project! ix root)
             analyzed (atom 0)]
-        (with-redefs [clojure-lite-lsp.analyze/analyze-files (fn [& _] (swap! analyzed inc) [])
-                      clojure-lite-lsp.analyze/analyze-jars (fn [& _] (swap! analyzed inc) [])]
+        (with-redefs [analyze/analyze-files (fn [& _] (swap! analyzed inc) [])
+                      analyze/analyze-jars (fn [& _] (swap! analyzed inc) [])]
           (queue/enqueue! c p :sync "" 1)
           (indexer/run-until-idle! ix))
         (is (zero? @analyzed))))))
@@ -107,16 +109,16 @@
             p (sync-project! ix root)
             events (atom [])
             now #(System/nanoTime)
-            real-analyze clojure-lite-lsp.analyze/analyze-files
-            real-write clojure-lite-lsp.writer/write-units!]
+            real-analyze analyze/analyze-files
+            real-write writer/write-units!]
         (doseq [f ["a" "b" "c"]]
           (spit (io/file root (str "src/app/" f ".clj")) (str "(ns app." f ") (defn changed [] 1)"))
           (queue/enqueue! c p :file (str root "/src/app/" f ".clj") 1))
-        (with-redefs [clojure-lite-lsp.analyze/analyze-files (fn [paths opts]
+        (with-redefs [analyze/analyze-files (fn [paths opts]
                                                   (swap! events conj [:analyze (.getName (io/file (first paths))) (now)])
                                                   (Thread/sleep 300)
                                                   (real-analyze paths opts))
-                      clojure-lite-lsp.writer/write-units! (fn [w units]
+                      writer/write-units! (fn [w units]
                                                 (let [r (real-write w units)]
                                                   (swap! events conj [:written (count units) (now)])
                                                   r))]

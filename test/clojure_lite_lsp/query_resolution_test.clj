@@ -2,10 +2,10 @@
   "Names clj-kondo leaves unresolved or resolves by guessing, which the
   index can still answer."
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
    [clojure-lite-lsp.query-languages-test :refer [definition]]
-   [clojure-lite-lsp.query-references-test :refer [references locs]]))
+   [clojure-lite-lsp.query-references-test :refer [references locs]]
+   [clojure.test :refer [deftest is testing]]))
 
 (deftest fully-qualified-calls-without-a-require
   ;; clj-kondo reports each unresolved namespace once per file, unless

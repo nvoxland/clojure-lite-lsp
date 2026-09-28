@@ -1,7 +1,7 @@
 (ns clojure-lite-lsp.lsp.convert-test
   (:require
-   [clojure.test :refer [deftest is testing]]
-   [clojure-lite-lsp.lsp.convert :as convert]))
+   [clojure-lite-lsp.lsp.convert :as convert]
+   [clojure.test :refer [deftest is testing]]))
 
 (deftest file-uris
   (is (= "file:///a/b%20c/d.clj" (convert/path->uri "/a/b c/d.clj")))

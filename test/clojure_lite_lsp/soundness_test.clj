@@ -3,14 +3,14 @@
   and then be shared by every project with that key."
   (:require
    [clj-kondo.core :as kondo]
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project!]]
    [clojure-lite-lsp.reuse-test :refer [analyzed-files]]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is]]))
 
 (defn hook [suffix]
   (str "(ns hooks.named (:require [clj-kondo.hooks-api :as api]))

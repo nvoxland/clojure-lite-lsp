@@ -6,9 +6,9 @@
   symbol), and inserts in multi-row statements (per-statement overhead, not
   disk, limited the writer in Phase 0.2)."
   (:require
-   [clojure.string :as str]
    [clojure-lite-lsp.db :as db]
-   [clojure-lite-lsp.kinds :as kinds])
+   [clojure-lite-lsp.kinds :as kinds]
+   [clojure.string :as str])
   (:import
    [java.nio.charset StandardCharsets]
    [java.security MessageDigest]

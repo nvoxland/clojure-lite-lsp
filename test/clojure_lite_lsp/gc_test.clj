@@ -1,12 +1,12 @@
 (ns clojure-lite-lsp.gc-test
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
    [clojure-lite-lsp.snapshot :as snapshot]
    [clojure-lite-lsp.test-util :as tu]
    [clojure-lite-lsp.writer :as writer]
-   [clojure-lite-lsp.writer-test :refer [unit-key analyzed]]))
+   [clojure-lite-lsp.writer-test :refer [unit-key analyzed]]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn with-writer [f]
   (with-open [c (db/open-writer (tu/temp-db-path))]

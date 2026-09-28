@@ -1,14 +1,15 @@
 (ns clojure-lite-lsp.daemon-test
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn home [] (str (tu/temp-dir)))
 
@@ -244,9 +245,9 @@
 (deftest the-daemon-survives-an-error-in-its-loop
   (let [h (home)
         root (project! {"src/a.clj" "(ns a) (defn f [] 1)"})
-        real clojure-lite-lsp.indexer/step!
+        real indexer/step!
         once (atom true)]
-    (with-redefs [clojure-lite-lsp.indexer/step! (fn [ix]
+    (with-redefs [indexer/step! (fn [ix]
                                       (if (compare-and-set! once true false)
                                         (throw (java.sql.SQLException. "database is locked"))
                                         (real ix)))]

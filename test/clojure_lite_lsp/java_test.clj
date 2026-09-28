@@ -1,11 +1,11 @@
 (ns clojure-lite-lsp.java-test
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.java :as java]
    [clojure-lite-lsp.kondo-config-test :refer [jar!]]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is testing]]))
 
 (def widget "package acme;\n\n/** A widget. */\npublic class Widget {\n  public static class Part {}\n}\n")
 

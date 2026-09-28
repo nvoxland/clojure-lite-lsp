@@ -1,14 +1,18 @@
 (ns clojure-lite-lsp.cli-test
   "The commands for humans: index projects and wait, collect garbage."
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
+   [cheshire.core :as json]
    [clojure-lite-lsp.cli :as cli]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.daemon-test :refer [home project! fast client-db]]
    [clojure-lite-lsp.db :as db]
-   [clojure-lite-lsp.version :as version]))
+   [clojure-lite-lsp.lock :as lock]
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.version :as version]
+   [clojure.java.io :as io]
+   [clojure.string :as str]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn opts
   "Client options whose daemon runs in this process."
@@ -82,37 +86,37 @@
                (:out (cli/query! o ["definition" "b.clj:2:4"] {:cwd (str root "/src/app")})))))
       (testing "--json"
         (is (= [{:path (str root "/src/app/b.clj") :line 2 :column 2 :end-line 2 :end-column 9}]
-               (:results (cheshire.core/parse-string (:out (q "references" "app.a/greet" "--json")) true)))))
+               (:results (json/parse-string (:out (q "references" "app.a/greet" "--json")) true)))))
       (testing "--no-sync answers from the index as it is"
         (is (= 0 (:exit (q "definition" "app.a/greet" "--no-sync")))))
       (testing "no command: what there is"
         (let [{:keys [exit out]} (q)]
           (is (= 0 exit))
-          (is (clojure.string/includes? out "references"))))
+          (is (str/includes? out "references"))))
       (testing "an unknown command: an error and the commands"
         (let [{:keys [exit out]} (q "frobnicate" "x")]
           (is (= 2 exit))
-          (is (clojure.string/includes? out "definition"))))
+          (is (str/includes? out "definition"))))
       (finally (stop! h daemons)))))
 
 (deftest query-outside-a-project-and-failures
   (let [h (home)
         daemons (atom [])
         o (opts h daemons)
-        bare (str (clojure-lite-lsp.test-util/temp-dir))]
+        bare (str (tu/temp-dir))]
     (try
       (testing "not in a Clojure project: said so, exit 1"
         (let [{:keys [exit out]} (cli/query! o ["definition" "a/b"] {:cwd bare})]
           (is (= 1 exit))
-          (is (clojure.string/includes? out "Clojure project"))))
+          (is (str/includes? out "Clojure project"))))
       (testing "a failure that isn't a usage error: exit 1, without the usage text"
         (let [{:keys [exit out]} (cli/query! o ["definition" "a/b" "--project" "/no/such/dir"] {:cwd bare})]
           (is (= 1 exit))
-          (is (not (clojure.string/includes? out "Commands:")))))
+          (is (not (str/includes? out "Commands:")))))
       (testing "--limit"
         (let [root (project! {"src/app/a.clj" "(ns app.a)\n(defn g [] 1)\n(g) (g) (g)\n"})
               {:keys [out]} (cli/query! o ["references" "app.a/g" "--limit" "1"] {:cwd root})]
-          (is (= 2 (count (clojure.string/split-lines out))))))
+          (is (= 2 (count (str/split-lines out))))))
       (finally (stop! h daemons)))))
 
 (deftest stop-ends-the-indexer
@@ -122,5 +126,5 @@
     (is (= :not-running (cli/stop! o)))
     (cli/index! o [(project! {"src/a.clj" "(ns a)"})] (fn [_]))
     (is (= :stopped (cli/stop! o)))
-    (is (not (clojure-lite-lsp.lock/held? (:daemon-lock (daemon/paths h)))))
+    (is (not (lock/held? (:daemon-lock (daemon/paths h)))))
     (doseq [d @daemons] (deref d 30000 :timeout))))

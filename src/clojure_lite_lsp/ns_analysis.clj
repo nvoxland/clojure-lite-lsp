@@ -14,11 +14,11 @@
   reused only where the answers are still the same (clojure-lite-lsp.reuse), and is
   redone when they change (clojure-lite-lsp.indexer)."
   (:require
-   [clojure.edn :as edn]
-   [clojure.string :as str]
    [clojure-lite-lsp.config-sig :as config-sig]
    [clojure-lite-lsp.db :as db]
-   [clojure-lite-lsp.kinds :as kinds]))
+   [clojure-lite-lsp.kinds :as kinds]
+   [clojure.edn :as edn]
+   [clojure.string :as str]))
 
 (set! *warn-on-reflection* true)
 

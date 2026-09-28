@@ -1,20 +1,19 @@
 (ns clojure-lite-lsp.analyze-test
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
-   [clojure.walk]
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.kondo-config :as kc]
    [clojure-lite-lsp.kondo-config-test :refer [jar! files-in]]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.test :refer [deftest is testing]]
+   [clojure.walk :as walk]))
 
 (defn config [root] (kc/project-config! (tu/temp-dir) root []))
 
 (defn comparable
   "Byte arrays compare by identity; turn them into vectors."
   [x]
-  (clojure.walk/postwalk #(if (bytes? %) (vec %) %) x))
+  (walk/postwalk #(if (bytes? %) (vec %) %) x))
 
 (defn names-of [kind elements] (set (keep #(when (= kind (:kind %)) (:name %)) elements)))
 

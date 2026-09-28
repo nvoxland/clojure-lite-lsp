@@ -1,8 +1,8 @@
 (ns clojure-lite-lsp.query-symbols-test
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.query :as q]
-   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]))
+   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn hover [proj file needle]
   (let [[row col] (f/at proj file needle)]

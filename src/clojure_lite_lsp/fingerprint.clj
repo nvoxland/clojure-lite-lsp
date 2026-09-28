@@ -2,8 +2,8 @@
   "Content hashes of files, memoized by (path, mtime, size) so unchanged
   files are never re-read."
   (:require
-   [clojure.java.io :as io]
-   [clojure-lite-lsp.db :as db])
+   [clojure-lite-lsp.db :as db]
+   [clojure.java.io :as io])
   (:import
    [java.io File InputStream]
    [java.security MessageDigest]))

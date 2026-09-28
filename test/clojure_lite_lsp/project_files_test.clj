@@ -2,8 +2,6 @@
   "Files the classpath doesn't name, and projects whose classpath can't be
   computed, still get answers."
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.db :as db]
@@ -12,7 +10,9 @@
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
    [clojure-lite-lsp.status :as status]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is testing]]))
 
 (deftest a-file-outside-the-source-paths
   ;; build.clj in a tools.build project, scripts/: opened in an editor

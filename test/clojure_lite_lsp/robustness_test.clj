@@ -2,21 +2,25 @@
   "The indexer keeps going, and keeps its results right, when things go
   wrong around it."
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
+   [clj-kondo.impl.hooks :as hooks]
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.daemon :as daemon]
-   [clojure-lite-lsp.daemon-test :refer [home fast client-db]]
+   [clojure-lite-lsp.daemon-test :refer [home]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
+   [clojure-lite-lsp.gc-test :as gc-test]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project!]]
    [clojure-lite-lsp.kondo-config :as kc]
    [clojure-lite-lsp.lock :as lock]
+   [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.writer :as writer]
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is]]))
 
 (deftest hooks-load-one-at-a-time
   ;; the concurrent clj-kondo runs share one hook interpreter: loading a
@@ -29,8 +33,8 @@
         cfg (kc/project-config! (tu/temp-dir) root [])
         active (atom 0)
         most (atom 0)
-        real @#'clj-kondo.impl.hooks/hook-fn*]
-    (with-redefs [clj-kondo.impl.hooks/hook-fn* (fn [& args]
+        real @#'hooks/hook-fn*]
+    (with-redefs [hooks/hook-fn* (fn [& args]
                                                   (swap! most max (swap! active inc))
                                                   (try (Thread/sleep 20) (apply real args)
                                                        (finally (swap! active dec))))]
@@ -50,8 +54,8 @@
                              (for [i (range 16)] [(str "src/app/f" i ".clj") (str "(ns app.f" i " (:require [acme])) (acme/named) (acme/named) (acme/named)")])))
         cfg (kc/project-config! (tu/temp-dir) root [])
         lookups (atom 0)
-        real @#'clj-kondo.impl.hooks/hook-fn*]
-    (with-redefs [clj-kondo.impl.hooks/hook-fn* (fn [ctx config ns-sym var-sym & more]
+        real @#'hooks/hook-fn*]
+    (with-redefs [hooks/hook-fn* (fn [ctx config ns-sym var-sym & more]
                                                   (when (= 'named (symbol (name var-sym))) (swap! lookups inc))
                                                   (apply real ctx config ns-sym var-sym more))]
       (reset! @#'analyze/hooks-config nil)
@@ -66,7 +70,7 @@
   (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
     (let [started {:batch [{:kind :file :path "/x"}] :job {:analysis (future :analyzed)}}]
       (reset! (:in-flight ix) {:batch [{:kind :file :path "/w"}] :job {:analysis (future :other)}})
-      (with-redefs [clojure-lite-lsp.queue/next-batch (fn [& _] [{:kind :file :project-id 1 :path "/x"}])
+      (with-redefs [queue/next-batch (fn [& _] [{:kind :file :project-id 1 :path "/x"}])
                     indexer/start! (fn [& _] started)
                     indexer/finish! (fn [& _] :retry)]
         (is (= :retry (indexer/step! ix)))
@@ -99,9 +103,9 @@
   ;; it scans every symbol reference in the index: after a few edits, not
   ;; worth holding the write lock for
   (with-open [c (db/open-writer (tu/temp-db-path))]
-    (let [w (clojure-lite-lsp.writer/writer c)
+    (let [w (writer/writer c)
           p (snapshot/ensure-project! c "/a")
-          file! (fn [path code] (clojure-lite-lsp.gc-test/file! w p path code))
+          file! (fn [path code] (gc-test/file! w p path code))
           sym? #(some? (db/query-value c "SELECT id FROM sym WHERE text = ?" %))]
       (file! "/a/one.clj" "(ns one) (defn only-one [] 1)")
       (snapshot/remove-file! w p "/a/one.clj")

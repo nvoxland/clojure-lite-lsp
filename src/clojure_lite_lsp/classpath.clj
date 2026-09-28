@@ -3,10 +3,10 @@
   a source dir of the project (precedence 0), an external dir or a jar
   (precedence = position on the classpath)."
   (:require
+   [clojure-lite-lsp.db :as db]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
-   [clojure.string :as str]
-   [clojure-lite-lsp.db :as db])
+   [clojure.string :as str])
   (:import
    [java.io File]
    [java.lang ProcessBuilder$Redirect]

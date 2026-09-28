@@ -4,8 +4,6 @@
   humans: `clojure-lite-lsp index <dir>...` indexes projects and waits, `clojure-lite-lsp gc`
   collects garbage now."
   (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
    [clojure-lite-lsp.cli :as cli]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
@@ -14,7 +12,9 @@
    [clojure-lite-lsp.mcp :as mcp]
    [clojure-lite-lsp.setup :as setup]
    [clojure-lite-lsp.status :as status]
-   [clojure-lite-lsp.version :as version])
+   [clojure-lite-lsp.version :as version]
+   [clojure.java.io :as io]
+   [clojure.string :as str])
   (:gen-class))
 
 (defn home

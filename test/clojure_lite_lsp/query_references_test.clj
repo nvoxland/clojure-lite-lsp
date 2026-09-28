@@ -1,8 +1,8 @@
 (ns clojure-lite-lsp.query-references-test
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.query :as q]
-   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]))
+   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn references
   "Find references from the `n`th occurrence of `needle` in `file`, as a

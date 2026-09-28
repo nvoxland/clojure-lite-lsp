@@ -2,10 +2,10 @@
   "Go to declaration: where the file brings a name in (its require), where
   go to definition goes to where it's defined."
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.query :as q]
    [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
-   [clojure-lite-lsp.query-references-test :refer [locs]]))
+   [clojure-lite-lsp.query-references-test :refer [locs]]
+   [clojure.test :refer [deftest is testing]]))
 
 (defn declaration [proj file needle & [n]]
   (let [[row col] (f/at proj file needle (or n 0))]

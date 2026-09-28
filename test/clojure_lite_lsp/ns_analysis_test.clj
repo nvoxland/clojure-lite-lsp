@@ -3,16 +3,19 @@
   get their answer from the index, and the files they ran in are analyzed
   again when that answer changes."
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project!]]
+   [clojure-lite-lsp.kondo-config :as kc]
    [clojure-lite-lsp.kondo-config-test :refer [jar!]]
    [clojure-lite-lsp.ns-analysis :as nsa]
    [clojure-lite-lsp.reuse-test :refer [analyzed-files]]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.writer :as writer]
+   [clojure.java.io :as io]
+   [clojure.string :as str]
+   [clojure.test :refer [deftest is testing]]))
 
 (def reexport-hook
   "Like dtype-next's export-symbols: defines the listed vars that the
@@ -97,12 +100,12 @@
 
 (deftest a-jar-asking-about-its-own-namespaces
   (let [jar (jar! {"clj-kondo.exports/acme/lib/config.edn" "{:hooks {:macroexpand {acme.re/reexport acme.hooks/reexport}}}"
-                   "clj-kondo.exports/acme/lib/acme/hooks.clj" (clojure.string/replace reexport-hook "hooks.re" "acme.hooks")
+                   "clj-kondo.exports/acme/lib/acme/hooks.clj" (str/replace reexport-hook "hooks.re" "acme.hooks")
                    "acme/re.clj" "(ns acme.re) (defmacro reexport [src & syms])"
                    "acme/impl.clj" "(ns acme.impl) (defn f [a] a) (defn g [] 1)"
                    "acme/api.clj" "(ns acme.api (:require [acme.re :refer [reexport]])) (reexport acme.impl f g h)"})
-        cfg (clojure-lite-lsp.kondo-config/jar-config! (tu/temp-dir) (clojure-lite-lsp.kondo-config/jar-context [(str jar)]) (str jar))
-        [{:keys [entries]}] (analyze/analyze-jars [(str jar)] {:configs {(str jar) cfg} :jar-hashes {(str jar) (byte-array 1)}})
+        cfg (kc/jar-config! (tu/temp-dir) (kc/jar-context [jar]) jar)
+        [{:keys [entries]}] (analyze/analyze-jars [jar] {:configs {jar cfg} :jar-hashes {jar (byte-array 1)}})
         defs (set (for [{:keys [elements]} entries e elements :when (= :var-def (:kind e))] (str (:ns e) "/" (:name e))))]
     (is (= #{"acme.api/f" "acme.api/g"} (set (filter #(re-find #"^acme\.api/" %) defs))))))
 
@@ -111,8 +114,8 @@
   ;; that ignore them, so re-analysis finds the same stale unit), the
   ;; daemon must still go idle
   (let [root (reexport-project src-fg)
-        key-hash clojure-lite-lsp.writer/unit-key-hash]
-    (with-redefs [clojure-lite-lsp.writer/unit-key-hash (fn [k] (key-hash (dissoc k :ns-deps)))]
+        key-hash writer/unit-key-hash]
+    (with-redefs [writer/unit-key-hash (fn [k] (key-hash (dissoc k :ns-deps)))]
       (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
         (sync-project! ix root)
         (spit (io/file root "src/app/src.clj") src-fgh)

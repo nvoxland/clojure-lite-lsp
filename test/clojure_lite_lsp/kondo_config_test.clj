@@ -1,10 +1,10 @@
 (ns clojure-lite-lsp.kondo-config-test
   (:require
-   [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.kondo-config :as kc]
-   [clojure-lite-lsp.test-util :as tu])
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is testing]])
   (:import
    [java.util.jar JarEntry JarOutputStream]))
 

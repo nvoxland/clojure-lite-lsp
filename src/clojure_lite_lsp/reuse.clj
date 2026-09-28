@@ -15,11 +15,11 @@
   (the answers are part of it), is found only this way, and never gets
   an alias: whether it holds depends on the project."
   (:require
-   [clojure.java.io :as io]
    [clojure-lite-lsp.config-sig :as config-sig]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.ns-analysis :as nsa]
-   [clojure-lite-lsp.writer :as writer]))
+   [clojure-lite-lsp.writer :as writer]
+   [clojure.java.io :as io]))
 
 (set! *warn-on-reflection* true)
 

@@ -10,13 +10,13 @@
   commits."
   (:refer-clojure :exclude [run!])
   (:require
-   [clojure.java.io :as io]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.schema :as schema]
-   [clojure-lite-lsp.version :as version])
+   [clojure-lite-lsp.version :as version]
+   [clojure.java.io :as io])
   (:import
    [java.io File]))
 

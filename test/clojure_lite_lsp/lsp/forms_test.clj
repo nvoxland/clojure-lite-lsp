@@ -2,9 +2,9 @@
   "Reading just enough of the text before the cursor to know which call
   it's in, and which argument."
   (:require
+   [clojure-lite-lsp.lsp.forms :as forms]
    [clojure.string :as str]
-   [clojure.test :refer [deftest is testing]]
-   [clojure-lite-lsp.lsp.forms :as forms]))
+   [clojure.test :refer [deftest is testing]]))
 
 (defn ctx
   "The call context at | in `s`: [head-symbol arg-index], or nil."

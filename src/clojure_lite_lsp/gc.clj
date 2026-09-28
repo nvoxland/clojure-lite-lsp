@@ -12,10 +12,10 @@
   - a jar is live while some project's classpath has it
   - workspace-symbol entries go when nothing defines the name any more"
   (:require
-   [clojure.string :as str]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.kinds :as kinds]
-   [clojure-lite-lsp.writer :as writer]))
+   [clojure-lite-lsp.writer :as writer]
+   [clojure.string :as str]))
 
 (def default-project-max-age-ms (* 1000 60 60 24 30))
 

@@ -1,8 +1,8 @@
 (ns clojure-lite-lsp.config-sig-test
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.classpath-test :refer [project!]]
-   [clojure-lite-lsp.config-sig :as sig]))
+   [clojure-lite-lsp.config-sig :as sig]
+   [clojure.test :refer [deftest is testing]]))
 
 (def hooks-a "(ns hooks.a (:require [clj-kondo.hooks-api :as api])) (defn m [{:keys [node]}] {:node node})")
 (def hooks-b "(ns hooks.b (:require [clj-kondo.hooks-api :as api])) (defn m [{:keys [node]}] {:node node})")
@@ -71,7 +71,7 @@
     (is (= #{} (:changed d)))))
 
 (deftest hooks-say-which-custom-keys-they-read
-  (let [reads (str "(ns hooks.a) (defn m [{:keys [node config]}] (get config :acme/modules) {:node node})")
+  (let [reads "(ns hooks.a) (defn m [{:keys [node config]}] (get config :acme/modules) {:node node})"
         s (sig/signature (config-dir (-> (assoc base-config "hooks/a.clj" reads)
                                          (update "config.edn" #(pr-str (assoc (read-string %) :acme/modules {:a 1}))))))]
     (is (= #{:acme/modules} (get-in s [:mentions "acme/one"])))

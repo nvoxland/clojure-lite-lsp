@@ -1,9 +1,9 @@
 (ns clojure-lite-lsp.db-test
   (:require
-   [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.schema :as schema]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure-lite-lsp.test-util :as tu]
+   [clojure.test :refer [deftest is testing]]))
 
 (deftest open-writer-creates-schema
   (let [path (tu/temp-db-path)]

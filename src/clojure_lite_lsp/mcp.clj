@@ -8,11 +8,11 @@
   date first, so what the agent just edited is answered."
   (:require
    [cheshire.core :as json]
-   [clojure.java.io :as io]
-   [clojure.string :as str]
    [clojure-lite-lsp.cli :as cli]
    [clojure-lite-lsp.commands :as commands]
-   [clojure-lite-lsp.version :as version])
+   [clojure-lite-lsp.version :as version]
+   [clojure.java.io :as io]
+   [clojure.string :as str])
   (:import
    [java.io BufferedReader InputStream OutputStream]
    [java.nio.charset StandardCharsets]))

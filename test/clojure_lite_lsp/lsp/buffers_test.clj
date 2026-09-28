@@ -1,10 +1,10 @@
 (ns clojure-lite-lsp.lsp.buffers-test
   (:require
+   [clojure-lite-lsp.lsp.buffers :as buffers]
+   [clojure-lite-lsp.test-util :as tu]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [clojure.test :refer [deftest is testing]]
-   [clojure-lite-lsp.lsp.buffers :as buffers]
-   [clojure-lite-lsp.test-util :as tu]))
+   [clojure.test :refer [deftest is testing]]))
 
 (defn lines [& ls] (str (str/join "\n" ls) "\n"))
 

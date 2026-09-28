@@ -12,11 +12,11 @@
   (clojure-lite-lsp.sources). A class with no source anywhere has no location:
   decompiling is out of scope."
   (:require
-   [clojure.java.io :as io]
-   [clojure.string :as str]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.query :as q]
-   [clojure-lite-lsp.sources :as sources])
+   [clojure-lite-lsp.sources :as sources]
+   [clojure.java.io :as io]
+   [clojure.string :as str])
   (:import
    [java.io File]
    [java.util.jar JarEntry JarFile]))

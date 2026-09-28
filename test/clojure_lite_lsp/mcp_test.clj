@@ -3,11 +3,13 @@
   (Codex) rather than LSP."
   (:require
    [cheshire.core :as json]
-   [clojure.string :as str]
-   [clojure.test :refer [deftest is testing]]
+   [clojure-lite-lsp.cli :as cli]
    [clojure-lite-lsp.cli-test :refer [opts stop!]]
+   [clojure-lite-lsp.commands :as commands]
    [clojure-lite-lsp.daemon-test :refer [home project!]]
-   [clojure-lite-lsp.mcp :as mcp])
+   [clojure-lite-lsp.mcp :as mcp]
+   [clojure.string :as str]
+   [clojure.test :refer [deftest is testing]])
   (:import
    [java.io ByteArrayInputStream ByteArrayOutputStream]))
 
@@ -66,12 +68,12 @@
         (is (= [3 4] (map :id batch)) "a batch is answered as a batch")
         (is (clojure.string/includes? (get-in limited [:result :content 0 :text]) "1 more")))
       (testing "any failure is a tool error, not a protocol one"
-        (with-redefs [clojure-lite-lsp.commands/run (fn [& _] (throw (RuntimeException. "boom")))]
+        (with-redefs [commands/run (fn [& _] (throw (RuntimeException. "boom")))]
           (let [[r] (session o root [{:jsonrpc "2.0" :id 1 :method "tools/call" :params {:name "definition" :arguments {:target "a/b"}}}])]
             (is (true? (get-in r [:result :isError])))
             (is (clojure.string/includes? (get-in r [:result :content 0 :text]) "boom")))))
       (testing "a call doesn't wait past its deadline for indexing: it answers, and says so"
-        (with-redefs [clojure-lite-lsp.cli/index! (fn [_ dirs _ & [{:keys [deadline-ms]}]]
+        (with-redefs [cli/index! (fn [_ dirs _ & [{:keys [deadline-ms]}]]
                                                     (is deadline-ms)
                                                     {:files {} :pending {(first dirs) 7}})]
           (let [[r] (session o root [{:jsonrpc "2.0" :id 1 :method "tools/call" :params {:name "definition" :arguments {:target "app.a/greet"}}}])]
