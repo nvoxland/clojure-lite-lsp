@@ -26,8 +26,10 @@ and reviewing code, so it provides:
 and leaves out the features for writing code by hand: completion,
 diagnostics, formatting, rename and refactorings.
 
-**Documentation: <https://nvoxland.github.io/clojure-lite-lsp/>** (sources in
-[`docs/`](docs/); preview with `poetry install --with docs && poetry run mkdocs serve`).
+**Documentation: <https://nvoxland.github.io/clojure-lite-lsp/>**. How it
+works: [Architecture](https://nvoxland.github.io/clojure-lite-lsp/reference/architecture/).
+The docs' sources are in [`docs/`](docs/); preview them with
+`poetry install --with docs && poetry run mkdocs serve`.
 
 ## Install
 

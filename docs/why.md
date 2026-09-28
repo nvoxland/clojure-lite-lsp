@@ -17,6 +17,10 @@ clojure-lite-lsp keeps the cost of each one low:
   indexed. For a large project like Metabase, a worktree of a branch you
   already have takes a few seconds.
 
+The analysis lives in an index on disk, which every server reads, rather than
+in each server's memory. [Architecture](reference/architecture.md) explains how
+it fits together.
+
 ## Reading, not writing
 
 It stays that small by doing less. With an agent making the edits, less of

@@ -69,6 +69,7 @@ nav:
       - Command line: reference/cli.md
       - Language server: reference/lsp.md
       - Troubleshooting: reference/troubleshooting.md
+      - Architecture: reference/architecture.md
 
 plugins:
   - search:
