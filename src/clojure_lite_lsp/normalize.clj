@@ -17,7 +17,7 @@
 (def version
   "Bump when normalization changes what it produces: it is part of every
   unit key, so all analysis is redone."
-  6)
+  7)
 
 (def project-analysis-options
   {:arglists true
@@ -39,11 +39,15 @@
    :var-definitions {:shallow true :meta [:deprecated]}})
 
 (defn only-unresolved-namespace-linter
-  "Every clj-kondo linter off except :unresolved-namespace, whose findings
-  are the only record of calls through an unknown namespace (Phase 0.5)."
+  "Every clj-kondo linter off except those whose findings csl keeps:
+  :unresolved-namespace, the only record of calls through an unknown
+  namespace (every one: duplicates too), and :refer-all and :use, which
+  mark the namespaces a file refers all of."
   []
   (-> (update-vals (:linters kondo-config/default-config) (constantly {:level :off}))
-      (assoc :unresolved-namespace {:level :warning})))
+      (assoc :unresolved-namespace {:level :warning :report-duplicates true}
+             :refer-all {:level :warning}
+             :use {:level :warning})))
 
 (defn- sname [x] (some-> x str))
 
@@ -51,10 +55,12 @@
   (condp re-find filename
     #"\.cljs$" #{:cljs}
     #"\.cljc$" #{:clj :cljs}
+    ;; data: its symbols can mean either language's vars
+    #"\.edn$" #{:clj :cljs}
     #{:clj}))
 
 (defn- lang [{:keys [lang filename]}]
-  (if lang #{lang} (file-lang filename)))
+  (if (and lang (not= :edn lang)) #{lang} (file-lang filename)))
 
 (defn- name-pos
   "The element's name position, falling back to the element's own."
@@ -147,8 +153,11 @@
     (map #(assoc (base :local-usage %) :name (sname (:name %)) :local-id (:id %)) elements)
 
     :symbols
+    ;; a quoted symbol of a namespace that isn't required (or in .edn) has
+    ;; no :to: the namespace written in it
     (map #(assoc (base :symbol-usage %)
-                 :ns (sname (:to %)) :name (sname (:name %)) :from-ns (sname (:from %)))
+                 :ns (sname (or (:to %) (some-> (:symbol %) namespace)))
+                 :name (sname (:name %)) :from-ns (sname (:from %)))
          elements)
 
     :protocol-impls
@@ -218,6 +227,22 @@
        distinct
        (map (fn [[filename ref]] {:kind :ref :name ref :lang (file-lang filename) :filename filename}))))
 
+(defn- before? [[r1 c1] [r2 c2]] (or (< r1 r2) (and (= r1 r2) (< c1 c2))))
+
+(defn- mark-refer-alls
+  "Flag the ns-usages of `els` (one file's) whose names are all referred:
+  a :refer-all finding follows its namespace in the require; a :use
+  finding precedes the namespaces of its clause."
+  [els findings]
+  (let [usages (sort-by :pos (filter #(= :ns-usage (:kind %)) els))
+        at #(vector (:row %) (:col %))
+        refer-all (set (keep (fn [f] (last (filter #(before? (take 2 (:pos %)) (at f)) usages)))
+                             (filter #(= :refer-all (:type %)) findings)))
+        use-from (some->> (filter #(= :use (:type %)) findings) (map at) sort first)
+        refer-all? #(or (refer-all %)
+                        (and use-from (before? use-from (take 2 (:pos %)))))]
+    (mapv #(if (and (= :ns-usage (:kind %)) (refer-all? %)) (update % :flags (fnil conj #{}) :refer-all) %) els)))
+
 (defn normalize
   "clj-kondo's result -> {filename [element ...]}."
   [{:keys [analysis findings]} {:keys [external?]}]
@@ -229,12 +254,14 @@
                         (assoc el :filename (:filename raw)))
         from-findings (when-not external? (mapcat finding->elements findings))
         from-refs (refs analysis)]
-    (into {}
-          (map (fn [[filename els]]
-                 (let [els (mapv #(dissoc % :filename) els)]
-                   ;; only a .cljc file is analyzed once per language
-                   [filename (if (str/ends-with? filename ".cljc") (merge-langs els) els)])))
-          (group-by :filename (concat from-analysis from-findings from-refs)))))
+    (let [findings-by-file (group-by :filename findings)]
+      (into {}
+            (map (fn [[filename els]]
+                   (let [els (-> (mapv #(dissoc % :filename) els)
+                                 (mark-refer-alls (findings-by-file filename)))]
+                     ;; only a .cljc file is analyzed once per language
+                     [filename (if (str/ends-with? filename ".cljc") (merge-langs els) els)])))
+            (group-by :filename (concat from-analysis from-findings from-refs))))))
 
 (defn file-extension [filename]
   (some-> (re-find #"\.([^./:]+)$" filename) second str/lower-case))

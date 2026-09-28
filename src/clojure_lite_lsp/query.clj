@@ -161,6 +161,26 @@
 
 (declare var-definitions)
 
+(def ^:private refer-all-bit (kinds/flags->bits #{:refer-all}))
+
+(defn- refer-all-namespaces
+  "The namespaces unit `u` refers all of (:refer :all, :use)."
+  [c u]
+  (map first (db/query c "SELECT ns.text FROM file_element fe
+                          JOIN usage us ON us.to_ns = fe.ns AND us.name = fe.ns AND us.unit_id = fe.unit_id
+                                        AND us.kind = fe.kind AND (us.flags & ?) != 0
+                          JOIN sym ns ON ns.id = fe.ns
+                          WHERE fe.unit_id = ? AND fe.kind = ?"
+                       refer-all-bit u (kinds/code :ns-usage))))
+
+(defn- referred-all-definitions
+  "For an unqualified name clj-kondo resolved to a file's first refer-all
+  namespace (it can't know which defines it): the definitions in any
+  namespace the file refers all of."
+  [c p {:keys [unit-id name alias]}]
+  (when (and unit-id (not alias))
+    (seq (mapcat #(without-declares (definitions c p :var-def % name)) (refer-all-namespaces c unit-id)))))
+
 (defn- follow-imports
   "Replace potemkin/import-vars definitions with the vars they import, when
   those are visible."
@@ -175,7 +195,8 @@
   "The definitions a var reference (usage or quoted symbol) resolves to."
   ([c p el] (var-definitions c p el 5))
   ([c p {:keys [ns name alias lang] :as el} depth]
-  (let [defs (without-declares (definitions c p :var-def ns name))
+  (let [defs (or (seq (without-declares (definitions c p :var-def ns name)))
+                 (referred-all-definitions c p el))
         matching (or (seq (filter #(same-lang? el %) defs))
                      ;; cljs only reaches clj definitions that are macros
                      ;; (:require-macros)
@@ -184,6 +205,33 @@
                      (when (:clj lang) (seq defs)))]
     (or (seq (follow-imports c p el (best matching) depth))
         (when alias (best (in-lang el (definitions c p :ns-def nil ns))))))))
+
+(def ^:private record-definers
+  #{"clojure.core/defrecord" "clojure.core/deftype" "cljs.core/defrecord" "cljs.core/deftype"})
+
+(defn- record-definitions
+  "The defrecord or deftype a class name (my_app.core.R) is."
+  [c p class-name]
+  (when-let [[_ pkg simple] (re-matches #"(.+)\.([^.]+)" class-name)]
+    (filter #(record-definers (:defined-by %))
+            (definitions c p :var-def (str/replace pkg "_" "-") simple))))
+
+(defn- record-class-name [{:keys [ns name defined-by]}]
+  (when (and ns (record-definers defined-by))
+    (str (munge ns) "." name)))
+
+(defn- importers
+  "[ns name] of the potemkin import-vars definitions that import var
+  `ns`/`name`: calls through them are its references too."
+  [c p ns name]
+  (->> (db/query c "SELECT ns.text, d.extra FROM definition d INDEXED BY definition_name
+                    JOIN project_unit pu ON pu.unit_id = d.unit_id AND pu.project_id = ?
+                    JOIN sym ns ON ns.id = d.ns
+                    WHERE d.name = ? AND d.kind = ? AND d.extra LIKE '%:imported-ns%'"
+                 p (sym-id c name) (kinds/code :var-def))
+       (keep (fn [[importer extra]]
+               (when (= ns (:imported-ns (edn/read-string extra))) [importer name])))
+       distinct))
 
 (defn- definition-of [c p {:keys [kind unit-id local-id ns name] :as el}]
   (case kind
@@ -201,8 +249,9 @@
     :protocol-impl (best (definitions c p :var-def ns name))
     (:ns-usage :ns-alias) (best (in-lang el (definitions c p :ns-def nil ns)))
     :ns-def [el]
-    ;; finding a class's source is file work, left to the server (clojure-lite-lsp.java)
-    :java-class-usage [{:java-class name}]
+    ;; a record or type used as a class: its definition; else finding the
+    ;; class's source is file work, left to the server (clojure-lite-lsp.java)
+    :java-class-usage (or (seq (record-definitions c p name)) [{:java-class name}])
     []))
 
 (defn symbol-elements
@@ -291,15 +340,37 @@
   (when (seq lang)
     (cond-> lang (and (:clj lang) (:macro flags)) (conj :cljs))))
 
+(defn- referred-all-usages
+  "Usages of `ns`/`name` clj-kondo attributed to another namespace: in the
+  files that refer all of `ns`, bare uses of `name` whose recorded
+  namespace doesn't define it."
+  [c p ns name]
+  (let [units (map first (db/query c "SELECT unit_id FROM usage WHERE to_ns = ? AND name = ? AND kind = ? AND (flags & ?) != 0"
+                                   (sym-id c ns) (sym-id c ns) (kinds/code :ns-usage) refer-all-bit))]
+    (for [u units
+          el (map row->element (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                                                " WHERE fe.unit_id = ? AND fe.kind = ? AND fe.name = ? AND fe.ns != ?")
+                                         u (kinds/code :var-usage) (sym-id c name) (sym-id c ns)))
+          :when (and (not (:alias el)) (empty? (definitions c p :var-def (:ns el) name)))]
+      el)))
+
 (defn- var-references [c p el include-declaration?]
   (mapcat (fn [{:keys [ns name] :as target}]
             (let [ns-id (sym-id c ns)
                   name-id (sym-id c name)
-                  recursive? #(and (= ns-id (:from-ns-id %)) (= name-id (:from-var-id %)))]
+                  recursive? #(and (= ns-id (:from-ns-id %)) (= name-id (:from-var-id %)))
+                  ;; the var, and the names it's also reached by
+                  names (concat [[ns name]] (when ns (importers c p ns name)))]
               (concat
-               (->> (generated-names target)
-                    (mapcat #(usage-rows c p ns % [:var-usage :symbol-usage] :langs (usage-langs target)))
+               (->> (for [[n nm] names
+                          g (generated-names (assoc target :name nm))]
+                      [n g])
+                    (mapcat (fn [[n g]] (usage-rows c p n g [:var-usage :symbol-usage] :langs (usage-langs target))))
                     (remove #(and (not include-declaration?) (recursive? %))))
+               (when ns (referred-all-usages c p ns name))
+               ;; a record or type used as a class
+               (when-let [class-name (record-class-name target)]
+                 (usage-rows c p nil class-name [:java-class-usage]))
                (when (and include-declaration? (:unit-id target)) [target]))))
           (var-targets c p el)))
 

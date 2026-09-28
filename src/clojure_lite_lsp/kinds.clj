@@ -37,7 +37,9 @@
   #{:var-def :ns-def :keyword-def})
 
 (def ^:private flag-bits
-  {:private 1 :macro 2 :deprecated 4 :defmethod 8 :fully-qualified 16 :unresolved 32})
+  {:private 1 :macro 2 :deprecated 4 :defmethod 8 :fully-qualified 16 :unresolved 32
+   ;; an ns-usage whose names are all referred (:refer :all, :use)
+   :refer-all 64})
 
 (defn flags->bits [flags]
   (reduce (fn [acc f] (bit-or acc (or (flag-bits f)
