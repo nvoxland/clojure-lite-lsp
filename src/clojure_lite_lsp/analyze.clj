@@ -2,7 +2,7 @@
   "Run clj-kondo and turn its results into keyed units.
 
   clj-kondo's own :parallel only splits work across :lint entries, so a
-  list of files runs on one thread (Phase 0.2). Instead each call is split
+  list of files runs on one thread. Instead each call is split
   into shards analyzed by concurrent clj-kondo runs. They always share one
   config: hooks run in a single process-wide SCI context, so runs with
   different configs must never overlap."

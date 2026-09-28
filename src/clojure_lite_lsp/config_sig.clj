@@ -10,30 +10,13 @@
   differs has the same analysis under both (clojure-lite-lsp.reuse)."
   (:require
    [clj-kondo.impl.core :as kondo-core]
-   [clojure-lite-lsp.digest :as sha]
+   [clojure-lite-lsp.digest :as digest]
    [clojure.java.io :as io]
-   [clojure.string :as str]
-   [clojure.walk :as walk])
+   [clojure.string :as str])
   (:import
    [java.io File PushbackReader]))
 
 (set! *warn-on-reflection* true)
-
-(defn- canonical
-  "A form whose printed text is the same for equal configs: maps and sets
-  sorted."
-  [x]
-  (walk/postwalk (fn [v]
-                   (cond
-                     (map? v) (into (sorted-map-by #(compare (pr-str %1) (pr-str %2))) v)
-                     (set? v) (vec (sort-by pr-str v))
-                     :else v))
-                 x))
-
-(defn digest
-  "SHA-256 hex of `x`, the same for equal values."
-  [x]
-  (sha/hex (sha/sha256 (binding [*print-length* nil *print-level* nil] (pr-str (canonical x))))))
 
 (defn- without-linters
   "A config section's analysis settings: nil when only linters are left.
@@ -187,7 +170,7 @@
         ;; top-level keys of no clj-kondo meaning (:metabase/modules): only
         ;; hooks read them
         custom (into {} (filter (comp qualified-keyword? key)) cfg)]
-    {:custom (update-vals custom digest)
+    {:custom (update-vals custom digest/value-hex)
      ;; which custom keys each hooked macro's hook code mentions
      :mentions (into {}
                      (keep (fn [s]
@@ -196,18 +179,18 @@
                                (when (seq text)
                                  [(str s) (into #{} (filter #(str/includes? text (str (symbol %)))) (keys custom))]))))
                      (concat (keys analyze-call) (keys macroexpand)))
-     :global (digest (global-part cfg {:custom custom :hooks hooks :ns-groups ns-groups
+     :global (digest/value-hex (global-part cfg {:custom custom :hooks hooks :ns-groups ns-groups
                                        ;; a group only reaches analysis through config-in-ns for it
-                                       :analysis-groups (into #{} (keep (fn [[g c]] (when (and (groups g) (without-linters c)) g)))
-                                                              config-in-ns)
-                                       :group-syms group-syms :group-cfgs group-cfgs :sym-config sym-config}))
+                                                 :analysis-groups (into #{} (keep (fn [[g c]] (when (and (groups g) (without-linters c)) g)))
+                                                                        config-in-ns)
+                                                 :group-syms group-syms :group-cfgs group-cfgs :sym-config sym-config}))
      :entries (merge (into {}
                            (keep (fn [s]
                                    (let [entry (sym-config s)]
-                                     (when (some some? entry) [(str s) (digest entry)]))))
+                                     (when (some some? entry) [(str s) (digest/value-hex entry)]))))
                            syms)
                      (into {}
-                           (keep (fn [[n c]] (some->> (without-linters c) digest (vector (str "ns:" n)))))
+                           (keep (fn [[n c]] (some->> (without-linters c) digest/value-hex (vector (str "ns:" n)))))
                            ns-cfgs))}))
 
 (defn diff

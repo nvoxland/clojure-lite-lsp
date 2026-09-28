@@ -4,7 +4,7 @@
   It is the only process that writes analysis, so it assigns ids itself from
   in-memory counters, keeps every symbol in memory (no lookup per new
   symbol), and inserts in multi-row statements (per-statement overhead, not
-  disk, limited the writer in Phase 0.2)."
+  disk, is what limits writing)."
   (:require
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.digest :as digest]

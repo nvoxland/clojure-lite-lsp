@@ -1,7 +1,7 @@
 (ns clojure-lite-lsp.kondo-config
   "The clj-kondo config dirs clojure-lite-lsp analyzes with. clj-kondo never gets a
   project's own `.clj-kondo`: given a config dir, it writes and deletes
-  generated files there (DESIGN.md D17). Instead every config is
+  generated files there. Instead every config is
   materialized into a private directory named by the hash of its content,
   which is also the unit key's config hash.
 
@@ -10,7 +10,7 @@
     `imports/`.
   - A jar: only the exports of the jar and of its Maven dependencies
     (transitively, among the classpath's jars). Jars with none share the
-    empty neutral config (DESIGN.md §4.2).
+    empty neutral config.
 
   Runs must also pass `{:auto-load-configs false}` in clj-kondo's :config
   option: that stops it writing inline configs into these directories,
@@ -22,7 +22,7 @@
    [clojure.string :as str])
   (:import
    [java.io File]
-   [java.nio.file FileAlreadyExistsException Files StandardCopyOption]
+   [java.nio.file Files FileSystemException StandardCopyOption]
    [java.util Properties]
    [java.util.jar JarEntry JarFile]))
 
@@ -152,8 +152,10 @@
               (io/copy bs f)))
           ;; atomic, so a crash never leaves a half-written config under its hash
           (Files/move (.toPath tmp) (.toPath dir) (into-array [StandardCopyOption/ATOMIC_MOVE]))
-          ;; another process wrote the same config meanwhile: that one will do
-          (catch FileAlreadyExistsException _ nil)
+          ;; another process wrote the same config meanwhile: that one will
+          ;; do (moving onto a directory fails however the OS says it)
+          (catch FileSystemException e
+            (when-not (.isDirectory dir) (throw e)))
           (finally
             (when (.exists tmp)
               (run! #(.delete ^File %) (reverse (file-seq tmp))))))))

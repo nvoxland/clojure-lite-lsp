@@ -51,9 +51,8 @@
 
 (defn- call [{:keys [opts cwd]} {:keys [name arguments]}]
   (let [{:keys [target project limit]} arguments
-        ;; query! answers failures too, as text with a non-zero exit
-        {:keys [exit out]} (cli/query! opts (cond-> [name (str target) "--limit" (str (or limit 100))]
-                                              project (conj "--project" project))
+        ;; failures are answered too, as text with a non-zero exit
+        {:keys [exit out]} (cli/answer opts {:args [name (str target)] :limit (or limit 100) :project project}
                                        {:cwd cwd :deadline-ms sync-deadline-ms})]
     {:content [{:type "text" :text out}] :isError (not= 0 exit)}))
 

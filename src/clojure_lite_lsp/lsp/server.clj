@@ -1,5 +1,5 @@
 (ns clojure-lite-lsp.lsp.server
-  "The LSP server (`clojure-lite-lsp lsp`): reading features only (DESIGN.md §8).
+  "The LSP server (`clojure-lite-lsp lsp`): reading features only.
 
   Queries run on a read-only connection; editor events become work in the
   queue for the daemon, which this server makes sure is running. Positions
@@ -70,10 +70,10 @@
 
 (defn- enqueue!
   "Queue work, and make sure a daemon is there to do it (it exits when
-  idle; checking costs a lock probe)."
+  idle): a lock probe."
   [{:keys [client-c opts]} p kind path priority]
   (queue/enqueue! @client-c p kind path priority)
-  (client/ensure-daemon! opts))
+  (client/ensure-daemon-alive! opts))
 
 (def ^:private build-files (set classpath/build-files))
 

@@ -117,3 +117,11 @@
       (spit (io/file lib "deps.edn") "{:paths [\"src\"] :deps {other/dep {:mvn/version \"1.0\"}}}")
       (classpath/memoized! c p root {:run run})
       (is (= 2 @runs)))))
+
+(deftest a-broken-clojure-lite-lsp-edn-is-an-error-not-a-failure
+  (with-open [c (db/open-writer (tu/temp-db-path))]
+    (let [root (project! {".clojure-lite-lsp.edn" "{:aliases [" "src" :dir})
+          p (snapshot/ensure-project! c root)
+          entries (classpath/memoized! c p root {:run (fn [& _] "")})]
+      (is (= [(str root "/src")] (map :path entries)) "the usual source dirs")
+      (is (some? (classpath/error c p)) "and why"))))

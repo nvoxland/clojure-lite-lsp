@@ -20,6 +20,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str])
   (:import
+   [clojure.lang ExceptionInfo]
    [java.io File]))
 
 (set! *warn-on-reflection* true)
@@ -33,14 +34,6 @@
 (def ^:private stop-timeout-ms
   "How long `stop!` waits for the daemon to finish its batch."
   60000)
-
-(defn- revive-daemon!
-  "Start a daemon again should it have gone while waiting on it (it
-  crashed, or was replaced): a lock probe first, which is cheaper than
-  `client/ensure-daemon!`'s database check."
-  [opts]
-  (when-not (lock/held? (:daemon-lock (home/paths (:home opts))))
-    (client/ensure-daemon! opts)))
 
 (defn index!
   "Index the projects at `dirs` and wait until they are done, calling
@@ -67,7 +60,7 @@
                                                               WHERE project_id = ? AND unit_id IS NOT NULL" %))
              :pending (into {} (filter (comp pos? val)) pending)}
             (do (Thread/sleep (long poll-ms))
-                (revive-daemon! opts)
+                (client/ensure-daemon-alive! opts)
                 (recur deadline))))))))
 
 (defn gc!
@@ -82,7 +75,7 @@
       (db/execute! c "INSERT INTO meta (key, value) VALUES (?, '')" (schema/gc-request-key request))
       (if-let [result (lock/poll (fn []
                                    (or (answered)
-                                       (do (revive-daemon! opts) nil)))
+                                       (do (client/ensure-daemon-alive! opts) nil)))
                                  gc-timeout-ms poll-ms)]
         (do (db/execute! c "DELETE FROM meta WHERE key = ?" (schema/gc-result-key request))
             (edn/read-string result))
@@ -114,22 +107,22 @@
                  (.getPath d))))))
 
 (defn- parse-query-args
-  "{:args [command argument] :json? :sync? :project :limit}."
+  "`query`'s command line as a request for `answer`."
   [args]
-  (loop [[a & more] args acc {:args [] :sync? true :limit 200}]
+  (loop [[a & more] args request {:args []}]
     (cond
-      (nil? a) acc
-      (= "--json" a) (recur more (assoc acc :json? true))
-      (= "--no-sync" a) (recur more (assoc acc :sync? false))
-      (= "--project" a) (recur (rest more) (assoc acc :project (first more)))
+      (nil? a) request
+      (= "--json" a) (recur more (assoc request :json? true))
+      (= "--no-sync" a) (recur more (assoc request :sync? false))
+      (= "--project" a) (recur (rest more) (assoc request :project (first more)))
       (= "--limit" a) (recur (rest more)
-                             (assoc acc :limit (or (parse-long (str (first more)))
-                                                   (throw (ex-info "--limit takes a number" {:usage true})))))
+                             (assoc request :limit (or (parse-long (str (first more)))
+                                                       (throw (ex-info "--limit takes a number" {:usage true})))))
       (str/starts-with? a "--") (throw (ex-info (str "Unknown option: " a) {:usage true}))
-      :else (recur more (update acc :args conj a)))))
+      :else (recur more (update request :args conj a)))))
 
-(defn- fail!
-  "Stop `query!` with `message` (exit 1)."
+(defn- fail
+  "Stop answering with `message` (exit 1)."
   [message]
   (throw (ex-info message {})))
 
@@ -139,43 +132,60 @@
   (if project
     (if (.isDirectory (io/file project))
       (or (project-root project) (.getCanonicalPath (io/file project)))
-      (fail! (str "Not a directory: " project)))
+      (fail (str "Not a directory: " project)))
     (or (project-root cwd)
-        (fail! (str "Not in a Clojure project: no " (str/join ", " classpath/build-files)
-                    " in " cwd " or above (--project <dir> names one)")))))
+        (fail (str "Not in a Clojure project: no " (str/join ", " classpath/build-files)
+                   " in " cwd " or above (--project <dir> names one)")))))
 
-(defn query!
-  "Run `clojure-lite-lsp query` with `args`, in directory `cwd`: {:exit
-  :out}. The project is brought up to date first (unless --no-sync), so
-  what an agent just edited is answered; with `deadline-ms`, only for
-  that long, saying so when indexing goes on. `opts` are
-  clojure-lite-lsp.client/ensure-daemon!'s. Exit 2 is a usage error, 1 a
-  failure."
-  [opts args {:keys [cwd deadline-ms]}]
+(defn- result-of
+  "The {:exit :out} of (f), or of its failure: exit 2 for a usage error
+  (with the usage), 1 for anything else."
+  [f]
   (try
-    (let [{:keys [args json? sync? project limit]} (parse-query-args args)
-          [cmd] args]
-      (if (or (nil? cmd) (#{"help" "--help" "-h"} cmd))
-        {:exit 0 :out (commands/help)}
-        (let [root (query-root cwd project)
-              {:keys [pending]} (when sync? (index! opts [root] (constantly nil) {:deadline-ms deadline-ms}))
-              {:keys [db]} (home/paths (:home opts))
-              note (when (seq pending)
-                     (str "(clojure-lite-lsp is still indexing " root ": " (reduce + (vals pending))
-                          " to go; answers may be incomplete)"))]
-          (when-not (.isFile (io/file db))
-            (fail! (str "No index yet: run clojure-lite-lsp index " root)))
-          (with-open [c (db/open-reader db)]
-            (let [p (or (db/query-value c "SELECT id FROM project WHERE root = ?" root)
-                        (fail! (str root " isn't indexed yet: run clojure-lite-lsp index " root)))
-                  ctx {:c c :p p :root root :home (:home opts) :cwd (.getCanonicalPath (io/file cwd))}
-                  result (commands/run ctx args {:limit limit})]
-              {:exit 0 :out (if json?
-                              (json/generate-string (cond-> result note (assoc :note note)))
-                              (str (some-> note (str "\n")) (commands/format-text ctx cmd result)))})))))
-    (catch clojure.lang.ExceptionInfo e
+    (f)
+    (catch ExceptionInfo e
       (if (:usage (ex-data e))
         {:exit 2 :out (str (ex-message e) "\n\n" (commands/help))}
         {:exit 1 :out (ex-message e)}))
     (catch Exception e
       {:exit 1 :out (str "Failed: " (or (ex-message e) (.getName (class e))))})))
+
+(defn- run-query
+  "Run command `cmd` with `arg` in project `root`, as a result."
+  [opts {:keys [args json? limit]} root cwd note]
+  (let [{:keys [db]} (home/paths (:home opts))
+        [cmd] args]
+    (when-not (.isFile (io/file db))
+      (fail (str "No index yet: run clojure-lite-lsp index " root)))
+    (with-open [c (db/open-reader db)]
+      (let [p (or (db/query-value c "SELECT id FROM project WHERE root = ?" root)
+                  (fail (str root " isn't indexed yet: run clojure-lite-lsp index " root)))
+            ctx {:c c :p p :root root :home (:home opts) :cwd (.getCanonicalPath (io/file cwd))}
+            result (commands/run ctx args {:limit limit})]
+        {:exit 0 :out (if json?
+                        (json/generate-string (cond-> result note (assoc :note note)))
+                        (str (some-> note (str "\n")) (commands/format-text ctx cmd result)))}))))
+
+(defn answer
+  "Answer a query `request`, {:args [command argument] :json? :sync?
+  :project :limit}, asked in directory `cwd`: {:exit :out}. The project is
+  brought up to date first (unless :sync? is false), so what an agent just
+  edited is answered; with `deadline-ms`, only for that long, saying so
+  when indexing goes on. `opts` are clojure-lite-lsp.client/ensure-daemon!'s.
+  Exit 2 is a usage error, 1 a failure."
+  [opts {:keys [args sync? project] :or {sync? true} :as request} {:keys [cwd deadline-ms]}]
+  (result-of
+   (fn []
+     (if (or (empty? args) (#{"help" "--help" "-h"} (first args)))
+       {:exit 0 :out (commands/help)}
+       (let [root (query-root cwd project)
+             {:keys [pending]} (when sync? (index! opts [root] (constantly nil) {:deadline-ms deadline-ms}))
+             note (when (seq pending)
+                    (str "(clojure-lite-lsp is still indexing " root ": " (reduce + (vals pending))
+                         " to go; answers may be incomplete)"))]
+         (run-query opts (merge {:limit 200} request) root cwd note))))))
+
+(defn query!
+  "Run `clojure-lite-lsp query` with command-line `args` (`answer`)."
+  [opts args context]
+  (result-of #(answer opts (parse-query-args args) context)))

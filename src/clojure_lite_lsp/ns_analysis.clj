@@ -14,8 +14,8 @@
   reused only where the answers are still the same (clojure-lite-lsp.reuse), and is
   redone when they change (clojure-lite-lsp.indexer)."
   (:require
-   [clojure-lite-lsp.config-sig :as config-sig]
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.digest :as digest]
    [clojure-lite-lsp.kinds :as kinds]
    [clojure.edn :as edn]
    [clojure.string :as str]))
@@ -52,7 +52,7 @@
 (defn digest
   "A short digest of an answer."
   [x]
-  (subs (config-sig/digest x) 0 16))
+  (subs (digest/value-hex x) 0 16))
 
 (def marker
   "The ref every unit whose hooks asked carries, to find them."

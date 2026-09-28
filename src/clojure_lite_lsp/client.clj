@@ -1,7 +1,6 @@
 (ns clojure-lite-lsp.client
   "The clojure-lite-lsp lsp side of the daemon lifecycle: make sure a daemon of this
-  version or a newer one is running, starting one if needed (DESIGN.md
-  §6.3)."
+  version or a newer one is running, starting one if needed."
   (:require
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.home :as home]
@@ -131,3 +130,11 @@
                   (throw (ex-info "The clojure-lite-lsp daemon did not start; see daemon.log" {:home home})))
                 :spawned))
           (finally (lock/release! held)))))))
+
+(defn ensure-daemon-alive!
+  "Once `ensure-daemon!` has run: start a daemon again only when none
+  holds its lock (it crashed, or went idle). A lock probe, where
+  `ensure-daemon!` also reads the database."
+  [opts]
+  (when-not (lock/held? (:daemon-lock (home/paths (:home opts))))
+    (ensure-daemon! opts)))

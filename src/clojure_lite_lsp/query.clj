@@ -1,5 +1,5 @@
 (ns clojure-lite-lsp.query
-  "Read-only queries over the index, scoped to a project (DESIGN.md §7).
+  "Read-only queries over the index, scoped to a project.
   Positions are clj-kondo's: 1-based rows and columns, end exclusive.
 
   A location is {:path :pos [row col end-row end-col]}, plus :entry for a

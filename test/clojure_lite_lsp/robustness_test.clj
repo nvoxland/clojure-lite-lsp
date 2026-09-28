@@ -102,6 +102,15 @@
       (with-redefs [snapshot/set-file-unit! (fn [& _] (throw (StackOverflowError.)))]
         (is (some? (sync-project! ix root)))))))
 
+(deftest an-error-preparing-a-batch-drops-it-too
+  (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)"})]
+    (with-open [ix (temp-indexer)]
+      (let [p (sync-project! ix root)]
+        (queue/enqueue! (:c ix) p :file (str root "/src/app/a.clj") 1)
+        (with-redefs [indexer/files-job (fn [& _] (throw (StackOverflowError.)))]
+          (is (nil? (indexer/run-until-idle! ix)) "the queue drains"))
+        (is (zero? (queue/pending-count (:c ix) p)))))))
+
 (deftest the-symbol-sweep-runs-now-and-then
   ;; it scans every symbol reference in the index: after a few edits, not
   ;; worth holding the write lock for

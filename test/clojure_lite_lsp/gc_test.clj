@@ -3,6 +3,7 @@
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
    [clojure-lite-lsp.index-fixture :refer [count-of unit-key analyzed with-writer file!]]
+   [clojure-lite-lsp.schema :as schema]
    [clojure-lite-lsp.snapshot :as snapshot]
    [clojure-lite-lsp.test-util :as tu]
    [clojure-lite-lsp.writer :as writer]
@@ -64,10 +65,13 @@
       (file! w old "/old/a.clj" "(ns old-a)")
       (file! w fresh "/fresh/a.clj" "(ns fresh-a)")
       (db/execute! c "UPDATE project SET last_seen = 0 WHERE id = ?" old)
+      (db/execute! c "INSERT INTO meta (key, value) VALUES (?, 'broken')" (schema/classpath-error-key old))
       (is (= {:projects 1 :units 1} (select-keys (gc/collect! w {:project-max-age-ms gc/default-project-max-age-ms})
                                                  [:projects :units])))
       (is (= ["/fresh"] (map first (db/query c "SELECT root FROM project"))))
-      (is (zero? (count-of c "project_file WHERE project_id = ?" old))))))
+      (is (zero? (count-of c "project_file WHERE project_id = ?" old)))
+      (is (zero? (count-of c "meta WHERE key = ?" (schema/classpath-error-key old)))
+          "what's said about it: a new project could get its id"))))
 
 (deftest the-writer-keeps-working-after-collection
   (with-writer [w c]

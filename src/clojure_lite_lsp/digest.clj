@@ -1,7 +1,8 @@
 (ns clojure-lite-lsp.digest
   "SHA-256 content hashes, and their hex form where they name files."
   (:require
-   [clojure.java.io :as io])
+   [clojure.java.io :as io]
+   [clojure.walk :as walk])
   (:import
    [java.io File InputStream]
    [java.nio.charset StandardCharsets]
@@ -51,3 +52,19 @@
   "The bytes a `hex` string stands for."
   ^bytes [^String s]
   (.parseHex (HexFormat/of) s))
+
+(defn- canonical
+  "A form whose printed text is the same for equal values: maps and sets
+  sorted."
+  [x]
+  (walk/postwalk (fn [v]
+                   (cond
+                     (map? v) (into (sorted-map-by #(compare (pr-str %1) (pr-str %2))) v)
+                     (set? v) (vec (sort-by pr-str v))
+                     :else v))
+                 x))
+
+(defn value-hex
+  "The SHA-256 of value `x`, as hex: the same for equal values."
+  [x]
+  (hex (sha256 (binding [*print-length* nil *print-level* nil] (pr-str (canonical x))))))

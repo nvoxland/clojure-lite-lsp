@@ -7,6 +7,7 @@
    [clojure-lite-lsp.digest :as digest]
    [clojure-lite-lsp.log :as log]
    [clojure-lite-lsp.process :as process]
+   [clojure-lite-lsp.schema :as schema]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str])
@@ -167,12 +168,10 @@
                  part [(str f "\u0000") (if (.isFile f) (Files/readAllBytes (.toPath f)) (byte-array 0))]]
              part))))
 
-(defn- error-key [p] (str "classpath_error:" p))
-
 (defn error
   "Why project `p`'s classpath couldn't be computed, when it couldn't."
   [c p]
-  (db/query-value c "SELECT value FROM meta WHERE key = ?" (error-key p)))
+  (db/query-value c "SELECT value FROM meta WHERE key = ?" (schema/classpath-error-key p)))
 
 (defn memoized!
   "The classpath of project `p` at `root`, recomputed only when a build file
@@ -181,26 +180,29 @@
 
   When computing fails (a build file mid-edit, the build tool offline),
   the last classpath that worked is used: its memo stays, under the old
-  build files' hash, so the next change tries again."
+  build files' hash, so the next change tries again. Why it failed is
+  kept (`error`)."
   ([c p root] (memoized! c p root {}))
   ([c p root {:keys [run] :or {run run-command}}]
-   (let [cfg (project-config root)]
-     (try
-       (let [cmds (commands root cfg)
-             h (spec-hash root cmds)
-             raw (or (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ? AND spec_hash = ?" p h)
-                     (let [raw (run-all root cmds run)]
-                       (db/with-tx c
-                         (db/execute! c "DELETE FROM classpath_memo WHERE project_id = ?" p)
-                         (db/execute! c "INSERT INTO classpath_memo (project_id, spec_hash, classpath) VALUES (?, ?, ?)"
-                                      p h raw))
-                       raw))]
-         (db/execute! c "DELETE FROM meta WHERE key = ?" (error-key p))
-         (classify root (parse raw) cfg))
-       (catch Exception e
-         (log/warn "classpath of" root "failed:" (ex-message e))
-         (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)" (error-key p) (str (ex-message e)))
-        ;; the last one that worked, else the usual source dirs
+   (try
+     (let [cfg (project-config root)
+           cmds (commands root cfg)
+           h (spec-hash root cmds)
+           raw (or (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ? AND spec_hash = ?" p h)
+                   (let [raw (run-all root cmds run)]
+                     (db/with-tx c
+                       (db/execute! c "DELETE FROM classpath_memo WHERE project_id = ?" p)
+                       (db/execute! c "INSERT INTO classpath_memo (project_id, spec_hash, classpath) VALUES (?, ?, ?)"
+                                    p h raw))
+                     raw))]
+       (db/execute! c "DELETE FROM meta WHERE key = ?" (schema/classpath-error-key p))
+       (classify root (parse raw) cfg))
+     (catch Exception e
+       (log/warn "classpath of" root "failed:" (ex-message e))
+       (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)"
+                    (schema/classpath-error-key p) (str (ex-message e)))
+       (let [cfg (try (project-config root) (catch Exception _ default-config))]
+         ;; the last one that worked, else the usual source dirs
          (if-let [last-good (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
            (classify root (parse last-good) cfg)
            (classify root (map #(str (io/file root %)) (fallback-paths root)) cfg)))))))

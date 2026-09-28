@@ -1,5 +1,5 @@
 (ns clojure-lite-lsp.daemon
-  "The daemon (`clojure-lite-lsp index`): a disposable queue worker (DESIGN.md §6).
+  "The daemon (`clojure-lite-lsp index`): a disposable queue worker.
 
   At most one runs per machine: it holds daemon.lock for its whole life.
   It works the queue, collects garbage once it has been idle a while, and

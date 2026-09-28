@@ -121,7 +121,7 @@
       PRIMARY KEY (unit_id, name_row, name_col, kind, lang, ns, name)) WITHOUT ROWID"
 
    ;; Java classes are recorded per jar, not as units: one unit per .class
-   ;; file cost a unit, jar_entry and project_unit row each (Phase 1)
+   ;; file cost a unit, jar_entry and project_unit row each
    "CREATE TABLE java_class (
       name INTEGER NOT NULL,
       jar_id INTEGER NOT NULL,
@@ -148,15 +148,23 @@
       started_at INTEGER, heartbeat_at INTEGER,
       stop_requested INTEGER NOT NULL DEFAULT 0)"])
 
-;;;; meta keys clients and the daemon talk through
+;;;; meta keys clients and the daemon share
 
 (def gc-request-prefix
   "meta key prefix of a client's request for garbage collection, by id."
   "gc_request:")
 
-(defn gc-request-key [id] (str gc-request-prefix id))
+(defn gc-request-key
+  "meta key of a client's request for garbage collection `id`."
+  [id]
+  (str gc-request-prefix id))
 
 (defn gc-result-key
   "meta key of the daemon's answer to garbage collection request `id`."
   [id]
   (str "gc_result:" id))
+
+(defn classpath-error-key
+  "meta key of why project `p`'s classpath couldn't be computed."
+  [p]
+  (str "classpath_error:" p))

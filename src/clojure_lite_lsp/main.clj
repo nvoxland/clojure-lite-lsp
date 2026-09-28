@@ -115,6 +115,10 @@
       (if (:usage (ex-data e)) 2 1))))
 
 (defn -main [& [cmd & args]]
-  (let [code (run-command cmd args)]
+  (let [code (try
+               (run-command cmd args)
+               (catch Throwable t
+                 (print-err "Failed:" (or (ex-message t) (str t)))
+                 1))]
     (shutdown-agents)
     (System/exit code)))

@@ -386,7 +386,8 @@
   of the batch before (`previous`, in flight) is done."
   [ix {:keys [project-id kind]} batch previous]
   (let [job (try ((case kind :file files-job :jar jars-job) ix project-id batch)
-                 (catch Exception e {:error e}))
+                 ;; Throwable: an Error too must drop its batch (`finish!`)
+                 (catch Throwable e {:error e}))
         before (get-in previous [:job :analysis])]
     {:batch batch
      :job (cond-> job

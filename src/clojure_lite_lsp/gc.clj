@@ -1,5 +1,5 @@
 (ns clojure-lite-lsp.gc
-  "Garbage collection of the index (DESIGN.md §6.7). The index only grows
+  "Garbage collection of the index. The index only grows
   as files change and worktrees come and go; the daemon collects on its
   own loop thread with no batch in flight, so collection never races
   indexing. The work is split into short transactions: clients enqueue
@@ -14,6 +14,7 @@
   (:require
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.kinds :as kinds]
+   [clojure-lite-lsp.schema :as schema]
    [clojure-lite-lsp.writer :as writer]
    [clojure.java.io :as io]
    [clojure.string :as str]))
@@ -29,6 +30,9 @@
             [table col] [["project_file" "project_id"] ["project_jar" "project_id"] ["project_unit" "project_id"]
                          ["pending" "project_id"] ["classpath_memo" "project_id"] ["project" "id"]]]
       (db/execute! c (str "DELETE FROM " table " WHERE " col " = ?") p))
+    ;; what's said about it: a new project can get its id
+    (doseq [p ids]
+      (db/execute! c "DELETE FROM meta WHERE key = ?" (schema/classpath-error-key p)))
     (count ids)))
 
 (defn- delete-units! [c us]
@@ -109,31 +113,41 @@
                (let [last-sweep (some-> (db/query-value c "SELECT value FROM meta WHERE key = 'last_sweep'") parse-long)]
                  (or (nil? last-sweep) (> (- (System/currentTimeMillis) last-sweep) sweep-every-ms)))))))
 
+(defn- drop-garbage!
+  "What `collect!` does, before the writer forgets what was dropped."
+  [{:keys [c] :as w} {:keys [project-max-age-ms sweep]}]
+  (let [[projects jars dep-files] (writer/with-write-tx w
+                                    (writer/save-high-water! w)
+                                    [(drop-stale-projects! c project-max-age-ms)
+                                     (drop-dead-jars! c)
+                                     (drop-orphan-dep-files! c)])
+        _ (run! #(io/delete-file % true) dep-files)
+        dead (map first (db/query c "SELECT id FROM unit WHERE id NOT IN (SELECT unit_id FROM project_unit)
+                                     AND id NOT IN (SELECT unit_id FROM dep_file)"))]
+    ;; dead units are unreachable, so deleting them a batch at a time is
+    ;; as good as at once
+    (doseq [us (partition-all units-per-tx dead)]
+      (writer/with-write-tx w (delete-units! c us)))
+    (when (sweep? c sweep projects jars (count dead))
+      (writer/with-write-tx w
+        (sweep-symbols! c)
+        (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sweep', ?)"
+                     (str (System/currentTimeMillis)))))
+    (writer/with-write-tx w (prune-fingerprints! c))
+    (db/pragma! c "incremental_vacuum")
+    {:projects projects :jars jars :units (count dead)}))
+
 (defn collect!
   "Collect garbage through writer `w`. Returns what was dropped:
-  {:projects :jars :units}."
-  [{:keys [c] :as w} {:keys [project-max-age-ms sweep] :or {project-max-age-ms default-project-max-age-ms}}]
-  (try
-    (let [[projects jars dep-files] (writer/with-write-tx w
-                                      (writer/save-high-water! w)
-                                      [(drop-stale-projects! c project-max-age-ms)
-                                       (drop-dead-jars! c)
-                                       (drop-orphan-dep-files! c)])
-          _ (run! #(io/delete-file % true) dep-files)
-          dead (map first (db/query c "SELECT id FROM unit WHERE id NOT IN (SELECT unit_id FROM project_unit)
-                                       AND id NOT IN (SELECT unit_id FROM dep_file)"))]
-      ;; dead units are unreachable, so deleting them a batch at a time is
-      ;; as good as at once
-      (doseq [us (partition-all units-per-tx dead)]
-        (writer/with-write-tx w (delete-units! c us)))
-      (when (sweep? c sweep projects jars (count dead))
-        (writer/with-write-tx w
-          (sweep-symbols! c)
-          (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sweep', ?)"
-                       (str (System/currentTimeMillis)))))
-      (writer/with-write-tx w (prune-fingerprints! c))
-      (db/pragma! c "incremental_vacuum")
-      {:projects projects :jars jars :units (count dead)})
-    (finally
-      ;; the writer caches symbols and searchable names: forget deleted ones
-      (writer/reload-state! w))))
+  {:projects :jars :units}. `sweep` :always sweeps symbols whatever was
+  dropped (`sweep?`)."
+  [w {:keys [project-max-age-ms sweep] :or {project-max-age-ms default-project-max-age-ms}}]
+  (let [result (try
+                 (drop-garbage! w {:project-max-age-ms project-max-age-ms :sweep sweep})
+                 (catch Throwable t
+                   ;; failing to reload too mustn't hide why
+                   (try (writer/reload-state! w) (catch Throwable x (.addSuppressed t x)))
+                   (throw t)))]
+    ;; the writer caches symbols and searchable names: forget deleted ones
+    (writer/reload-state! w)
+    result))

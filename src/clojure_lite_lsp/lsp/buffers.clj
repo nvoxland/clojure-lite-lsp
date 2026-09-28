@@ -1,6 +1,6 @@
 (ns clojure-lite-lsp.lsp.buffers
   "Open documents, and mapping positions between an edited buffer and the
-  version the index has (DESIGN.md §6.8).
+  version the index has.
 
   The index only knows saved files. While a buffer has unsaved edits, a
   line diff between the saved text (the base) and the buffer maps
