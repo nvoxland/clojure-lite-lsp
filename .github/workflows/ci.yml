@@ -118,19 +118,7 @@ jobs:
           fi
 
       - name: Smoke test
-        env:
-          CLOJURE_LITE_LSP_HOME: ${{ runner.temp }}/clojure-lite-lsp-home
-        run: |
-          bin=target/clojure-lite-lsp
-          $bin version
-          # indexes this repository with the native daemon, then answers
-          $bin query definition clojure-lite-lsp.query/definition --project . | tee query.out
-          grep -q "src/clojure_lite_lsp/query.clj" query.out
-          $bin stop
-          # the language server answers initialize
-          body='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
-          printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body" | $bin lsp | tee lsp.out || true
-          grep -q '"capabilities"' lsp.out
+        run: bin/smoke-test target/clojure-lite-lsp
 
   vscode:
     name: VS Code extension

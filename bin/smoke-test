@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Smoke-test a built clojure-lite-lsp binary: it runs, indexes this
+# repository with its own daemon and answers a query, and its language
+# server answers initialize.
+#
+#   bin/smoke-test [binary] [expected-version]
+#
+# Uses a throwaway home dir, so it neither reads nor disturbs your index.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+bin="$(cd "$(dirname "${1:-target/clojure-lite-lsp}")" && pwd)/$(basename "${1:-target/clojure-lite-lsp}")"
+expected_version="${2:-}"
+
+home="$(mktemp -d)"
+export CLOJURE_LITE_LSP_HOME="$home"
+trap '"$bin" stop >/dev/null 2>&1 || true; rm -rf "$home"' EXIT
+
+echo "== version"
+version="$("$bin" version)"
+echo "$version"
+if [[ -n "$expected_version" && "$version" != "$expected_version" ]]; then
+  echo "expected version $expected_version, got $version" >&2
+  exit 1
+fi
+
+echo "== query (indexes this repository first)"
+"$bin" query definition clojure-lite-lsp.query/definition --project . | tee "$home/query.out"
+grep -q "src/clojure_lite_lsp/query.clj" "$home/query.out"
+
+echo "== lsp initialize"
+body='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body" | "$bin" lsp > "$home/lsp.out" || true
+grep -q '"capabilities"' "$home/lsp.out"
+echo "answered"
