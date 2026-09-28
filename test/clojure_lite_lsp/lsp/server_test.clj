@@ -476,3 +476,61 @@
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))
+
+(deftest the-editor-hears-of-a-classpath-that-failed
+  (let [root (project! {"deps.edn" "{:paths [\"src\"" "src/app/a.clj" "(ns app.a) (defn f [] 1)"})
+        {:keys [request! notify! notifications] :as client} (start! (str (tu/temp-dir)))]
+    (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {:window {:workDoneProgress true}}})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (is (loop [n 0]
+          (or (some #(and (= "window/showMessage" (:method %))
+                          (str/includes? (get-in % [:params :message]) "classpath"))
+                    @notifications)
+              (when (< n 100) (Thread/sleep 50) (recur (inc n))))))
+    (is (seq (request! "workspace/symbol" {:query "f"})) "src/ is indexed meanwhile")
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))
+
+(deftest an-edit-in-a-local-root-dependency
+  ;; the file is outside the project's root: the projects that have it
+  ;; re-index it
+  (let [lib (project! {"deps.edn" "{:paths [\"src\"]}" "src/lib/core.clj" "(ns lib.core) (defn old-fn [] 1)"})
+        root (project! {"deps.edn" (pr-str {:paths ["src"] :deps {'my/lib {:local/root lib}}})
+                        "src/app/a.clj" "(ns app.a (:require [lib.core]))"})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
+        lib-file (io/file lib "src/lib/core.clj")]
+    (request! "initialize" {:rootUri (convert/path->uri root)})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (spit lib-file "(ns lib.core) (defn old-fn [] 1) (defn new-fn [] 2)")
+    (notify! "textDocument/didSave" {:textDocument {:uri (convert/path->uri (.getCanonicalPath lib-file))}})
+    (wait-indexed! client)
+    (is (seq (filter #(= "new-fn" (:name %)) (request! "workspace/symbol" {:query "new-fn"}))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))
+
+(deftest an-edited-hook-takes-effect
+  (let [hook (fn [suffix] (str "(ns hooks.named (:require [clj-kondo.hooks-api :as api]))
+                               (defn named [{:keys [node]}]
+                                 (let [[_ n] (:children node)]
+                                   {:node (api/list-node [(api/token-node 'def) (api/token-node (symbol (str (:value n) \"" suffix "\"))) (api/token-node 1)])}))"))
+        root (project! {"deps.edn" "{:paths [\"src\"]}"
+                        ".clj-kondo/config.edn" "{:hooks {:analyze-call {acme/named hooks.named/named}}}"
+                        ".clj-kondo/hooks/named.clj" (hook "-one")
+                        "src/acme.clj" "(ns acme) (defmacro named [n])"
+                        "src/app/uses.clj" "(ns app.uses (:require [acme])) (acme/named x)"})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
+        hook-file (io/file root ".clj-kondo/hooks/named.clj")]
+    (request! "initialize" {:rootUri (convert/path->uri root)})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (spit hook-file (hook "-two"))
+    (notify! "workspace/didChangeWatchedFiles" {:changes [{:uri (convert/path->uri (.getCanonicalPath hook-file)) :type 2}]})
+    (wait-indexed! client)
+    (is (seq (filter #(= "x-two" (:name %)) (request! "workspace/symbol" {:query "x-two"}))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))

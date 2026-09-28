@@ -3,6 +3,7 @@
   its files and jars, including how many of its jars other projects use
   too (analysis is shared: a jar is analyzed once, ever)."
   (:require
+   [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.db :as db]))
 
 (defn- project-data [c [p root last-seen]]
@@ -15,7 +16,8 @@
      :jars-shared (db/query-value c "SELECT count(DISTINCT pj.jar_id) FROM project_jar pj
                                      WHERE pj.project_id = ? AND pj.jar_id IN
                                        (SELECT jar_id FROM project_jar WHERE project_id <> ?)" p p)
-     :pending (db/query-value c "SELECT count(*) FROM pending WHERE project_id = ?" p)}))
+     :pending (db/query-value c "SELECT count(*) FROM pending WHERE project_id = ?" p)
+     :classpath-error (classpath/error c p)}))
 
 (defn data
   "The status of the index on connection `c`. `daemon-alive?`: whether a
@@ -42,9 +44,11 @@
                             (:units index) " analyzed files, " (:jars index) " jars"
                             (when (pos? (:opened-library-files index))
                               (str ", " (:opened-library-files index) " opened library files"))))
-   (doseq [{:keys [root files files-indexed jars jars-shared pending]} projects]
+   (doseq [{:keys [root files files-indexed jars jars-shared pending classpath-error]} projects]
      (println)
      (println root)
      (println (str "  files: " files-indexed "/" files " indexed"
                    (when (pos? pending) (str ", " pending " pending"))))
-     (println (str "  jars: " jars " (" jars-shared " shared with other projects)")))))
+     (println (str "  jars: " jars " (" jars-shared " shared with other projects)"))
+     (when classpath-error
+       (println (str "  classpath failed (using src/ and test/ meanwhile): " classpath-error))))))

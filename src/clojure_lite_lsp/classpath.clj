@@ -147,6 +147,21 @@
     (doseq [f (user-build-files)] (add! (str f) f))
     (.digest md)))
 
+(defn- error-key [p] (str "classpath_error:" p))
+
+(defn error
+  "Why project `p`'s classpath couldn't be computed, when it couldn't."
+  [c p]
+  (db/query-value c "SELECT value FROM meta WHERE key = ?" (error-key p)))
+
+(defn- fallback-paths
+  "Source dirs to go on with when there's no classpath: deps.edn's :paths
+  if it can be read, else src and test."
+  [root]
+  (let [paths (try (let [f (file root "deps.edn")] (when (.isFile f) (:paths (read-edn f))))
+                   (catch Exception _ nil))]
+    (filter #(.isDirectory (io/file root %)) (or (seq (filter string? paths)) ["src" "test"]))))
+
 (defn memoized!
   "The classpath of project `p` at `root`, recomputed only when a build file
   changed (computing it is the slowest start-up step). Uses the daemon's
@@ -167,10 +182,13 @@
                         (db/execute! c "INSERT INTO classpath_memo (project_id, spec_hash, classpath) VALUES (?, ?, ?)"
                                      p h raw))
                       raw))]
+        (db/execute! c "DELETE FROM meta WHERE key = ?" (error-key p))
         (classify root (parse raw) cfg))
       (catch Exception e
+        (binding [*out* *err*]
+          (println "clojure-lite-lsp: classpath of" root "failed:" (ex-message e)))
+        (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)" (error-key p) (str (ex-message e)))
+        ;; the last one that worked, else the usual source dirs
         (if-let [last-good (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
-          (do (binding [*out* *err*]
-                (println "clojure-lite-lsp: classpath of" root "failed, using the last one:" (ex-message e)))
-              (classify root (parse last-good) cfg))
-          (throw e))))))
+          (classify root (parse last-good) cfg)
+          (classify root (map #(str (io/file root %)) (fallback-paths root)) cfg))))))

@@ -38,3 +38,14 @@
 
 (deftest nothing-when-there-are-no-sources
   (is (nil? (java/source-location {:home (str (tu/temp-dir))} "acme.Nowhere"))))
+
+(deftest the-jdk-sources-are-looked-for-where-jdks-keep-them
+  (let [home (fn [layout] (let [h (str (clojure-lite-lsp.test-util/temp-dir))]
+                            (io/make-parents (io/file h layout)) (spit (io/file h layout) "") h))
+        modern (home "lib/src.zip")
+        jdk8 (home "src.zip")]
+    (is (= (str modern "/lib/src.zip") (java/jdk-src-in {:java-home-env modern})))
+    (is (= (str jdk8 "/src.zip") (java/jdk-src-in {:java-home-env jdk8})) "JDK 8's layout")
+    (is (= (str modern "/lib/src.zip") (java/jdk-src-in {:run (fn [cmd] (when (= ["/usr/libexec/java_home"] cmd) modern))}))
+        "macOS: /usr/libexec/java_home when JAVA_HOME isn't set")
+    (is (nil? (java/jdk-src-in {:run (constantly nil)})))))

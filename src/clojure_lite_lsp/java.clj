@@ -89,16 +89,36 @@
     (when path
       {:path path :pos (declaration-pos (slurp path) class-name)})))
 
-(defn jdk-src
-  "The JDK's src.zip: from $JAVA_HOME, else this JVM's own java.home (a
-  native image has none)."
-  []
-  (->> [(System/getenv "JAVA_HOME") (System/getProperty "java.home")]
+(defn jdk-src-in
+  "The JDK's src.zip, looked for where JDKs keep it: under $JAVA_HOME
+  (lib/src.zip, or src.zip in JDK 8's layout), this JVM's java.home, and on
+  macOS /usr/libexec/java_home's JDK. `run` runs a command, giving its
+  output (nil when it fails)."
+  [{:keys [java-home-env java-home-prop run]}]
+  (->> [java-home-env java-home-prop (when run (some-> (run ["/usr/libexec/java_home"]) str/trim not-empty))]
        (remove nil?)
-       (map #(io/file % "lib" "src.zip"))
+       (mapcat #(vector (io/file % "lib" "src.zip") (io/file % "src.zip")))
        (filter #(.isFile ^File %))
        first
        (#(some-> ^File % str))))
+
+(defn- run-quietly [cmd]
+  (try
+    (when (.exists (io/file (first cmd)))
+      (let [p (.start (doto (ProcessBuilder. ^java.util.List cmd) (.redirectErrorStream true)))
+            out (slurp (.getInputStream p))]
+        (when (zero? (.waitFor p)) out)))
+    (catch Exception _ nil)))
+
+(def ^:private jdk-src-memo (delay (jdk-src-in {:java-home-env (System/getenv "JAVA_HOME")
+                                                :java-home-prop (System/getProperty "java.home")
+                                                :run run-quietly})))
+
+(defn jdk-src
+  "The JDK's src.zip on this machine, or nil (a native image has no
+  java.home of its own)."
+  []
+  @jdk-src-memo)
 
 (defn- project-source-dirs
   "Where project `p`'s .java files may be: its classpath dirs, and the

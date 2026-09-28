@@ -84,10 +84,11 @@
           first-cp (classpath/memoized! c p root {:run (fn [_ _] "src")})]
       (spit (io/file root "deps.edn") "{:paths [\"src\"")
       (is (= first-cp (classpath/memoized! c p root {:run (fn [_ _] (throw (ex-info "Error building classpath" {})))})))
-      (testing "with nothing that worked before, it fails"
-        (let [other (project! {"deps.edn" "{" "src" :dir})]
-          (is (thrown? Exception (classpath/memoized! c (snapshot/ensure-project! c other) other
-                                                      {:run (fn [_ _] (throw (ex-info "Error" {})))}))))))))
+      (testing "with nothing that worked before, the usual source dirs"
+        (let [other (project! {"deps.edn" "{" "src" :dir})
+              entries (classpath/memoized! c (snapshot/ensure-project! c other) other
+                                           {:run (fn [_ _] (throw (ex-info "Error" {})))})]
+          (is (= [(str other "/src")] (map :path (filter #(= :source-dir (:kind %)) entries)))))))))
 
 (deftest a-local-dependencys-build-file-counts
   ;; a :local/root dep's own deps can change the classpath

@@ -102,14 +102,18 @@
 (defn- file-placement
   "Where `path` belongs in project `p`: {:ord :external? :mode :config},
   or nil when it's in none of the project's source or external dirs."
-  [{:keys [source-dirs external-dirs project-config]} path]
+  [{:keys [root source-dirs external-dirs project-config]} path]
   (cond
     (some #(under? % path) source-dirs)
     {:ord 0 :external? false :mode :project :config project-config}
 
     :else
-    (when-let [{:keys [ord config]} (first (filter #(under? (:path %) path) external-dirs))]
-      {:ord ord :external? true :mode :dependency :config config})))
+    (or (when-let [{:keys [ord config]} (first (filter #(under? (:path %) path) external-dirs))]
+          {:ord ord :external? true :mode :dependency :config config})
+        ;; anywhere else under the root (build.clj, scripts/): when asked
+        ;; for (an editor opened it), as the project's own
+        (when (under? root path)
+          {:ord 0 :external? false :mode :project :config project-config}))))
 
 (defn- file-unit-key [{:keys [c]} {:keys [mode config]} path]
   (when-let [h (fingerprint/content-hash! c path)]
@@ -195,9 +199,16 @@
         (queue/enqueue! c p :jar path 2)))
     ;; files: link unchanged ones, enqueue the rest, forget vanished ones
     (let [current (snapshot/file-paths c p)
-          wanted (into {} (for [dir (concat source-dirs (map :path external-dirs))
+          ;; a file outside the source dirs, indexed because an editor
+          ;; opened it: kept (and checked) while it exists
+          kept? (fn [path] (and (under? (:root ctx) path) (.isFile (io/file path))
+                                (re-find source-extensions path)))
+          listed (into {} (for [dir (concat source-dirs (map :path external-dirs))
                                 path (source-files dir)]
-                            [path (file-placement ctx path)]))]
+                            [path (file-placement ctx path)]))
+          wanted (into listed (for [path (keys current)
+                                    :when (and (not (listed path)) (kept? path))]
+                                [path (file-placement ctx path)]))]
       (let [missing (atom [])
             link! (fn [path {:keys [ord external?]} u]
                     (when-not (= (current path) {:unit-id u :external? external? :ord ord})
@@ -266,8 +277,14 @@
                       (binding [*out* *err*] (println "clojure-lite-lsp: can't read" path "- skipped"))))))
               (recheck-dependents! ix p))}))
 
-(defn- delete-files! [{:keys [w] :as ix} p paths]
-  (doseq [path paths] (snapshot/remove-file! w p (.getCanonicalPath (io/file path))))
+(defn- delete-files! [{:keys [c w] :as ix} p paths]
+  (let [current (keys (snapshot/file-paths c p))]
+    (doseq [path paths
+            :let [path (.getCanonicalPath (io/file path))
+                  ;; a directory: the files under it
+                  under (filter #(str/starts-with? % (str path File/separator)) current)]
+            gone (cons path under)]
+      (snapshot/remove-file! w p gone)))
   (recheck-dependents! ix p))
 
 (defn- jars-job

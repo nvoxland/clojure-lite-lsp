@@ -9,6 +9,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
@@ -63,17 +64,33 @@
   (queue/enqueue! @client-c p kind path priority)
   (client/ensure-daemon! opts))
 
-(def ^:private build-files #{"deps.edn" "project.clj" "bb.edn" ".clojure-lite-lsp.edn" "config.edn"})
+(def ^:private build-files #{"deps.edn" "project.clj" "bb.edn" ".clojure-lite-lsp.edn"})
+
+(defn- build-file?
+  "Does a change to `path` change project `root`'s classpath or clj-kondo
+  config (hooks included)?"
+  [root path]
+  (or (and (build-files (.getName (io/file path)))
+           (= (str (io/file root (.getName (io/file path)))) path))
+      (str/starts-with? path (str root File/separator ".clj-kondo" File/separator))))
+
+(defn- projects-with
+  "The projects `path` is part of: its own (by root), and any other that
+  has it (a :local/root dependency's file)."
+  [{:keys [reader] :as state} path]
+  (let [own (project-of state path)]
+    (distinct (concat (some-> own :p vector)
+                      (map first (db/query @reader "SELECT DISTINCT project_id FROM project_file WHERE path = ?" path))))))
 
 (defn- file-changed! [{:keys [buffers] :as state} path deleted?]
   ;; an open document's file rewritten outside the editor
   (when (and (not deleted?) (contains? @buffers path) (.isFile (io/file path)))
     (buffers/changed-on-disk! buffers path (slurp path)))
-  (when-let [{:keys [p]} (project-of state path)]
-    (cond
-      (build-files (.getName (io/file path))) (enqueue! state p :sync "" 1)
-      deleted? (enqueue! state p :delete path 1)
-      :else (enqueue! state p :file path 1))))
+  (when-let [{:keys [p root]} (project-of state path)]
+    (when (build-file? root path)
+      (enqueue! state p :sync "" 1)))
+  (doseq [p (projects-with state path)]
+    (enqueue! state p (if deleted? :delete :file) path 1)))
 
 ;;;; positions and results
 
@@ -435,6 +452,28 @@
 (defn- pending-total [c projects]
   (reduce + (map #(queue/pending-count c (:p %)) projects)))
 
+(defn- warn-of-classpath-errors!
+  "While the server runs: tell the user, once per error, when a project's
+  classpath couldn't be computed (a broken build file, the build tool not
+  on the editor's PATH): src/ and test/ are indexed meanwhile."
+  [{:keys [send! projects running? opts]}]
+  (future
+    (try
+      (with-open [c (db/open-reader (:db (daemon/paths (:home opts))))]
+        (loop [told {}]
+          (when @running?
+            (Thread/sleep 1000)
+            (recur (reduce (fn [told {:keys [p root]}]
+                             (let [e (classpath/error c p)]
+                               (when (and e (not= e (told p)))
+                                 (send! {:jsonrpc "2.0" :method "window/showMessage"
+                                         :params {:type 2
+                                                  :message (str "clojure-lite-lsp couldn't compute the classpath of " root
+                                                                " (indexing its src/ and test/ meanwhile): " e)}}))
+                               (assoc told p e)))
+                           told @projects)))))
+      (catch Exception e (log "classpath warnings stopped:" (ex-message e))))))
+
 (defn- report-progress!
   "While the server runs: report indexing as LSP work-done progress, from
   the queue's pending counts. Uses its own connection (JDBC connections are
@@ -480,17 +519,20 @@
         method (if (and (str/starts-with? method "textDocument/") (nil? (doc-path))) ::ignored method)]
     (case method
       "initialized" (do (watch-files! state)
+                        (warn-of-classpath-errors! state)
                         (when (:progress? (:opts state)) (report-progress! state)))
       "textDocument/didOpen" (let [path (doc-path)]
                                (buffers/open! buffers path (get-in params [:textDocument :text]))
                                (when-let [{:keys [p]} (project-of state path)]
                                  (enqueue! state p (if (dep-file? state path) :dep-file :file) path 0)))
       "textDocument/didChange" (buffers/change! buffers (doc-path) (:contentChanges params))
-      "textDocument/didSave" (let [path (doc-path)
-                                   proj (project-of state path)]
+      "textDocument/didSave" (let [path (doc-path)]
                                (buffers/saved! buffers path)
-                               (when-let [{:keys [p]} proj]
-                                 (enqueue! state p (if (dep-file? state path) :dep-file :file) path 0)))
+                               (if (dep-file? state path)
+                                 (when-let [{:keys [p]} (project-of state path)]
+                                   (enqueue! state p :dep-file path 0))
+                                 (doseq [p (projects-with state path)]
+                                   (enqueue! state p :file path 0))))
       "textDocument/didClose" (buffers/close! buffers (doc-path))
       "workspace/didChangeWatchedFiles" (doseq [{:keys [uri type]} (:changes params)
                                                 :when (str/starts-with? uri "file:")]
