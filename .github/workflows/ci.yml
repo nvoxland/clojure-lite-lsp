@@ -77,6 +77,61 @@ jobs:
       - name: Run tests
         run: clojure -M:test
 
+  native:
+    name: Native binary (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          cli: 1.12.5.1645
+
+      - name: Cache Maven and git deps
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.deps.clj
+          key: clojure-native-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: clojure-native-${{ runner.os }}-
+
+      # a reflective call compiles, then fails at runtime in the native binary
+      - name: Build
+        run: |
+          bin/build-native 2>&1 | tee build.log
+          if grep -q "Reflection warning" build.log; then
+            grep "Reflection warning" build.log
+            exit 1
+          fi
+
+      - name: Smoke test
+        env:
+          CLOJURE_LITE_LSP_HOME: ${{ runner.temp }}/clojure-lite-lsp-home
+        run: |
+          bin=target/clojure-lite-lsp
+          $bin version
+          # indexes this repository with the native daemon, then answers
+          $bin query definition clojure-lite-lsp.query/definition --project . | tee query.out
+          grep -q "src/clojure_lite_lsp/query.clj" query.out
+          $bin stop
+          # the language server answers initialize
+          body='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+          printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body" | $bin lsp | tee lsp.out || true
+          grep -q '"capabilities"' lsp.out
+
   vscode:
     name: VS Code extension
     runs-on: ubuntu-latest
