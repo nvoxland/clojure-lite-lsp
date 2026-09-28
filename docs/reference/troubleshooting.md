@@ -14,7 +14,8 @@
   is still queued.
 - The indexer's log is `~/.cache/clojure-lite-lsp/v<n>/daemon.log`. A classpath
   that can't be computed (a broken `deps.edn`, `clojure` not on the indexer's
-  `PATH`) is logged there, and the last working classpath is used meanwhile.
+  `PATH`) shows in `clojure-lite-lsp status`, in the editor once, and in the
+  log; the last working classpath is used meanwhile.
 - `clojure-lite-lsp index <project>` re-syncs a project and waits for it.
 
 ## Duplicate results
