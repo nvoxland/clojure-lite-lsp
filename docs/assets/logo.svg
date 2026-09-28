@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect x="2" y="2" width="60" height="60" rx="8" fill="#0d1117" stroke="#91dc47" stroke-width="2"/>
-  <text x="32" y="44" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="34" font-weight="800" fill="#91dc47">λ</text>
-  <circle cx="48" cy="16" r="4" fill="#5881d8"/>
-</svg>
