@@ -69,7 +69,9 @@
   margin-bottom: 1.5rem;
 }
 
-.cl-hero__brand img { width: 2.25rem; height: 2.25rem; }
+/* no logo: hide the icon Material shows in its place */
+.md-header__button.md-logo,
+.md-nav__button.md-logo { display: none; }
 
 .cl-hero__title {
   font-family: "JetBrains Mono", ui-monospace, monospace;
