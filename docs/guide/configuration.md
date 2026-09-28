@@ -7,7 +7,7 @@ build file, and the clj-kondo configuration from its `.clj-kondo` directory.
 
 | Build file | Classpath from |
 |---|---|
-| `deps.edn` | `clojure -Spath`, with the `:dev` and `:test` aliases the project defines |
+| `deps.edn` | `clojure -Sforce -Spath` (clojure-lite-lsp decides when by the files' content), with the `:dev` and `:test` aliases the project defines |
 | `project.clj` | `lein with-profile +dev,+test classpath` |
 | `bb.edn` | `bb`'s classpath; beside `deps.edn` or `project.clj`, added to theirs |
 | none | `src` and `test`, where they exist |

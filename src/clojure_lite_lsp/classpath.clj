@@ -49,7 +49,10 @@
                      (.isFile deps-edn)
                      (let [defined (set (keys (:aliases (read-edn deps-edn))))
                            enabled (filter defined aliases)]
-                       (cond-> ["clojure" "-Spath"]
+                       ;; -Sforce: its own cache goes by modification times,
+                       ;; which a quick edit or a checkout can leave looking
+                       ;; older; this is only run when the files' content changed
+                       (cond-> ["clojure" "-Sforce" "-Spath"]
                          (seq enabled) (conj (str "-A" (str/join enabled)))))
 
                      (.isFile (file root "project.clj"))

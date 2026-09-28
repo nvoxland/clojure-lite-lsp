@@ -19,11 +19,11 @@
 
 (deftest a-command-per-build-tool
   (testing "deps.edn, with only the configured aliases it defines"
-    (is (= [["clojure" "-Spath" "-A:dev"]]
+    (is (= [["clojure" "-Sforce" "-Spath" "-A:dev"]]
            (classpath/commands (project! {"deps.edn" "{:aliases {:dev {} :other {}}}"})
                                {:aliases [:dev :test]}))))
   (testing "no matching aliases"
-    (is (= [["clojure" "-Spath"]]
+    (is (= [["clojure" "-Sforce" "-Spath"]]
            (classpath/commands (project! {"deps.edn" "{}"}) {:aliases [:dev]}))))
   (testing "Leiningen"
     (is (= [["lein" "with-profile" "+dev,+test" "classpath"]]
@@ -31,7 +31,7 @@
   (testing "babashka"
     (is (= [bb-command] (classpath/commands (project! {"bb.edn" "{}"}) {:aliases []}))))
   (testing "babashka's tasks beside a build tool: both"
-    (is (= [["clojure" "-Spath"] bb-command]
+    (is (= [["clojure" "-Sforce" "-Spath"] bb-command]
            (classpath/commands (project! {"deps.edn" "{}" "bb.edn" "{}"}) {:aliases []}))))
   (testing "no build file"
     (is (= [] (classpath/commands (project! {}) {:aliases []})))))
@@ -125,3 +125,15 @@
           entries (classpath/memoized! c p root {:run (fn [& _] "")})]
       (is (= [(str root "/src")] (map :path entries)) "the usual source dirs")
       (is (some? (classpath/error c p)) "and why"))))
+
+(deftest a-changed-deps-edn-is-read-however-old-it-looks
+  ;; the Clojure CLI's own cache goes by modification times: an edit in the
+  ;; same second, or a checkout restoring an older time, looks unchanged
+  (with-open [c (db/open-writer (tu/temp-db-path))]
+    (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src" :dir "more" :dir})
+          p (snapshot/ensure-project! c root)
+          deps-edn (io/file root "deps.edn")]
+      (classpath/memoized! c p root)
+      (spit deps-edn "{:paths [\"src\" \"more\"]}")
+      (.setLastModified deps-edn 0)
+      (is (some #{(str root "/more")} (map :path (classpath/memoized! c p root)))))))
