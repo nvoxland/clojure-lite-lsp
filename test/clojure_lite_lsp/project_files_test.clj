@@ -4,7 +4,7 @@
   (:require
    [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.db :as db]
-   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project!]]
+   [clojure-lite-lsp.index-fixture :refer [sync-project! temp-indexer visible-defs]]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
@@ -19,7 +19,7 @@
                         "src/app/a.clj" "(ns app.a) (defn f [] 1)"
                         "build.clj" "(ns build) (defn jar [_] 1)"})
         build (.getCanonicalPath (io/file root "build.clj"))]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [p (sync-project! ix root)]
         (is (not (contains? (visible-defs (:c ix) p) "build/jar")) "not indexed on its own")
         (queue/enqueue! (:c ix) p :file build 0)
@@ -42,7 +42,7 @@
       (is (some? (classpath/error c p)))))
   (testing "indexed that way, with the error in the status"
     (let [root (project! {"deps.edn" "{:paths [\"src\"" "src/app/a.clj" "(ns app.a) (defn f [] 1)"})]
-      (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+      (with-open [ix (temp-indexer)]
         (let [p (sync-project! ix root)]
           (is (contains? (visible-defs (:c ix) p) "app.a/f"))
           (is (:classpath-error (first (:projects (status/data (:c ix)))))))))))
@@ -51,7 +51,7 @@
   (let [root (project! {"deps.edn" "{:paths [\"src\"]}"
                         "src/app/old/x.clj" "(ns app.old.x) (defn x [] 1)"
                         "src/app/keep.clj" "(ns app.keep) (defn k [] 1)"})]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [p (sync-project! ix root)
             dir (.getCanonicalPath (io/file root "src/app/old"))]
         (doseq [f (reverse (file-seq (io/file dir)))] (.delete ^java.io.File f))

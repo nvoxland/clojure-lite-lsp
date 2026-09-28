@@ -11,7 +11,7 @@
   (let [home (str (tu/temp-dir))
         j (jar! {"acme/core.clj" "(ns acme.core)\n(defn f [] 1)\n"})
         h (digest/sha256 (io/file j))
-        hex (apply str (map #(format "%02x" %) h))
+        hex (digest/hex h)
         loc {:path j :entry "acme/core.clj" :jar-hash h}
         path (sources/extract! home loc)]
     ;; canonical, as editors send them back (the temp dir is under a symlink)
@@ -19,14 +19,12 @@
     (is (= "(ns acme.core)\n(defn f [] 1)\n" (slurp path)))
     (is (not (.canWrite (io/file path))) "read-only: it's the library's source, not the user's")
     (testing "again: the same file, not rewritten"
-      (let [mtime (.lastModified (io/file path))]
-        (Thread/sleep 10)
-        (is (= path (sources/extract! home loc)))
-        (is (= mtime (.lastModified (io/file path))))))
+      (.setLastModified (io/file path) 0)
+      (is (= path (sources/extract! home loc)))
+      (is (zero? (.lastModified (io/file path)))))
     (testing "an extracted file says where it came from"
       (is (= {:jar-hash-hex hex :entry "acme/core.clj"} (sources/source-of home path)))
-      (is (nil? (sources/source-of home "/somewhere/else.clj")))
-      (is (= [1 2 -1] (vec (digest/unhex "0102ff")))))))
+      (is (nil? (sources/source-of home "/somewhere/else.clj"))))))
 
 (deftest extraction-refuses-what-it-cant-vouch-for
   (let [home (str (tu/temp-dir))

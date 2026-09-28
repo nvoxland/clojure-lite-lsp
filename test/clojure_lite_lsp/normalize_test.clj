@@ -2,15 +2,18 @@
   (:require
    [clojure-lite-lsp.index-fixture :refer [kondo]]
    [clojure-lite-lsp.normalize :as normalize]
+   [clojure.set :as set]
    [clojure.test :refer [deftest is testing]]))
 
-(defn elements
-  "The normalized elements of `code`, as the only file analyzed."
-  [code filename & opts]
-  (let [units (normalize/normalize (apply kondo code filename opts)
-                                   {:external? (:external? (apply hash-map opts))})]
-    (is (= [filename] (keys units)))
-    (get units filename)))
+(defn- elements
+  "The normalized elements of `code`, as file `filename`."
+  [code filename & {:keys [external?] :as opts}]
+  (-> (kondo code filename opts)
+      (normalize/normalize {:external? external?})
+      (get filename)))
+
+(deftest the-file-analyzed-is-the-only-unit
+  (is (= ["a.clj"] (keys (normalize/normalize (kondo "(ns a)" "a.clj") {:external? false})))))
 
 (defn of-kind [kind els] (filterv #(= kind (:kind %)) els))
 
@@ -70,8 +73,7 @@
       (let [els (elements code "a.clj")]
         (is (= [["a" "save"]] (map (juxt :ns :name) (of-kind :keyword-def els))))
         ;; clj-kondo also reports the ns form's :require and :as
-        (is (every? (set (map (juxt :ns :name) (of-kind :keyword-usage els)))
-                    [["a" "save"] [nil "other"]]))))
+        (is (set/subset? #{["a" "save"] [nil "other"]} (set (map (juxt :ns :name) (of-kind :keyword-usage els)))))))
     (testing "dependencies keep definitions but no keyword usages"
       (let [els (elements code "a.clj" :external? true)]
         (is (= 1 (count (of-kind :keyword-def els))))

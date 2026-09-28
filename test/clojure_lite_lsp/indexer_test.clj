@@ -1,12 +1,13 @@
 (ns clojure-lite-lsp.indexer-test
   (:require
    [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! count-of]]
+   [clojure-lite-lsp.index-fixture :refer [count-of sync-project! temp-indexer visible-defs]]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.test-util :as tu :refer [project! jar!]]
    [clojure-lite-lsp.writer :as writer]
    [clojure.java.io :as io]
+   [clojure.set :as set]
    [clojure.test :refer [deftest is testing]]))
 
 (defn fixture
@@ -25,12 +26,12 @@
 
 (deftest indexes-a-project-its-jar-and-external-dirs
   (let [{:keys [root]} (fixture)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             p (sync-project! ix root)]
-        (is (every? (visible-defs c p) ["app.a/fa" "app.b/fb" "acme.lib/from-jar" "ext.core/from-ext"
+        (is (set/subset? #{"app.a/fa" "app.b/fb" "acme.lib/from-jar" "ext.core/from-ext"
                                          ;; clojure itself is on the classpath
-                                        "clojure.core/map"]))
+                           "clojure.core/map"} (visible-defs c p)))
         (is (not (contains? (visible-defs c p) "acme.lib/hidden")) "dependencies' private vars are dropped")
         (is (zero? (queue/pending-count c p)))
 
@@ -58,7 +59,7 @@
         root2 (project! {"deps.edn" (slurp (io/file root "deps.edn"))
                          "src/app/a.clj" (slurp (io/file root "src/app/a.clj"))
                          "src/app/b.clj" (slurp (io/file root "src/app/b.clj"))})]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             p1 (sync-project! ix root)
             units (count-of c "unit")
@@ -70,7 +71,7 @@
 
 (deftest resync-after-no-change-analyzes-nothing
   (let [{:keys [root]} (fixture)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             p (sync-project! ix root)
             analyzed (atom 0)]
@@ -84,7 +85,7 @@
   ;; while one batch is written, the next one is already being analyzed
   (let [root (project! {"deps.edn" "{:paths [\"src\"]}"
                         "src/app/a.clj" "(ns app.a)" "src/app/b.clj" "(ns app.b)" "src/app/c.clj" "(ns app.c)"})]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir) :batch-sizes {:file 1}})]
+    (with-open [ix (temp-indexer :batch-sizes {:file 1})]
       (let [c (:c ix)
             p (sync-project! ix root)
             events (atom [])

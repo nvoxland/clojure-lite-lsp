@@ -99,5 +99,6 @@
     (let [t (commands/text (ctx proj) ["references" "app.a/greet"] {:limit 1})]
       (is (= 2 (count (lines t))))
       (is (str/includes? (last (lines t)) "2 more")))
-    (is (= 1 (count (:results (commands/run (ctx proj) ["references" "app.a/greet"] {:limit 1})))))
-    (is (= 3 (:total (commands/run (ctx proj) ["references" "app.a/greet"] {:limit 1}))))))
+    (let [{:keys [results total]} (commands/run (ctx proj) ["references" "app.a/greet"] {:limit 1})]
+      (is (= 1 (count results)))
+      (is (= 3 total) "and how many there are"))))

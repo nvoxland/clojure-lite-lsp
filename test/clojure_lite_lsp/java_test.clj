@@ -3,6 +3,7 @@
    [clojure-lite-lsp.java :as java]
    [clojure-lite-lsp.test-util :as tu :refer [project! jar!]]
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]))
 
 (def widget "package acme;\n\n/** A widget. */\npublic class Widget {\n  public static class Part {}\n}\n")
@@ -24,24 +25,24 @@
     (io/copy (io/file (jar! {"acme/Widget.class" "binary"})) classes)
     (io/copy (io/file (jar! {"acme/Widget.java" widget})) sources)
     (let [{:keys [path pos]} (java/source-location {:home home :class-jars [(str classes)]} "acme.Widget")]
-      (is (.startsWith ^String path (str (.getCanonicalPath (io/file home)) "/sources/")) "extracted like library files")
+      (is (str/starts-with? path (str (.getCanonicalPath (io/file home)) "/sources/")) "extracted like library files")
       (is (= widget (slurp path)))
       (is (= [4 14] (vec (take 2 pos)))))))
 
 (deftest the-jdks-own-classes-in-src-zip
   (let [src-zip (jar! {"java.base/java/io/File.java" "package java.io;\n\npublic class File {}\n"})
         {:keys [path pos]} (java/source-location {:home (str (tu/temp-dir)) :jdk-src src-zip} "java.io.File")]
-    (is (.endsWith ^String path "/java.base/java/io/File.java"))
+    (is (str/ends-with? path "/java.base/java/io/File.java"))
     (is (= [3 14] (vec (take 2 pos))))))
 
 (deftest nothing-when-there-are-no-sources
   (is (nil? (java/source-location {:home (str (tu/temp-dir))} "acme.Nowhere"))))
 
 (deftest the-jdk-sources-are-looked-for-where-jdks-keep-them
-  (let [home (fn [layout] (let [h (str (clojure-lite-lsp.test-util/temp-dir))]
-                            (io/make-parents (io/file h layout)) (spit (io/file h layout) "") h))
-        modern (home "lib/src.zip")
-        jdk8 (home "src.zip")]
+  (let [jdk-home-with (fn [layout] (let [h (str (tu/temp-dir))]
+                                     (io/make-parents (io/file h layout)) (spit (io/file h layout) "") h))
+        modern (jdk-home-with "lib/src.zip")
+        jdk8 (jdk-home-with "src.zip")]
     (is (= (str modern "/lib/src.zip") (java/jdk-src-in {:java-home-env modern})))
     (is (= (str jdk8 "/src.zip") (java/jdk-src-in {:java-home-env jdk8})) "JDK 8's layout")
     (is (= (str modern "/lib/src.zip") (java/jdk-src-in {:run (fn [cmd] (when (= ["/usr/libexec/java_home"] cmd) modern))}))

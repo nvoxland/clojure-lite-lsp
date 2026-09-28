@@ -1,8 +1,7 @@
 (ns clojure-lite-lsp.status-test
   (:require
    [clojure-lite-lsp.db :as db]
-   [clojure-lite-lsp.index-fixture :refer [sync-project! project-using]]
-   [clojure-lite-lsp.indexer :as indexer]
+   [clojure-lite-lsp.index-fixture :refer [project-using sync-project! temp-indexer]]
    [clojure-lite-lsp.status :as status]
    [clojure-lite-lsp.test-util :as tu :refer [jar!]]
    [clojure.string :as str]
@@ -12,7 +11,7 @@
   (let [shared (jar! {"shared/lib.clj" "(ns shared.lib)"})
         a (project-using [shared (jar! {"a/lib.clj" "(ns a.lib)"})])
         b (project-using [shared])]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (sync-project! ix a)
       (sync-project! ix b)
       (let [{:keys [projects index]} (status/data (:c ix))
@@ -33,7 +32,7 @@
 
 (deftest a-daemon-that-died-isnt-reported-running
   ;; its row outlives a crash; its lock doesn't
-  (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+  (with-open [ix (temp-indexer)]
     (db/execute! (:c ix) "INSERT INTO daemon (id, pid, version, started_at, heartbeat_at, stop_requested)
                               VALUES (1, 4242, 'x', 0, 0, 0)")
     (is (nil? (:daemon (status/data (:c ix) {:daemon-alive? false}))))

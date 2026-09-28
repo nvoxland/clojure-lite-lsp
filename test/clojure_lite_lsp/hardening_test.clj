@@ -1,22 +1,24 @@
 (ns clojure-lite-lsp.hardening-test
-  "Things that go wrong in real use (DESIGN.md Phase 6)."
+  "Recovering from what goes wrong in real use: missed watcher events,
+  dependency churn, full disks, killed daemons."
   (:require
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
    [clojure-lite-lsp.home :as home]
-   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! count-of]]
+   [clojure-lite-lsp.index-fixture :refer [count-of sync-project! temp-indexer visible-defs]]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
    [clojure-lite-lsp.test-util :as tu :refer [project! jar! eventually]]
    [clojure.java.io :as io]
+   [clojure.set :as set]
    [clojure.string :as str]
-   [clojure.test :refer [deftest is testing]]))
-
-(defn ix [] (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)}))
+   [clojure.test :refer [deftest is testing]])
+  (:import
+   [java.lang ProcessHandle]))
 
 (deftest a-branch-switch-the-watcher-missed
   ;; many files changed, deleted and added at once; a sync alone catches up
@@ -24,7 +26,7 @@
                         "src/app/a.clj" "(ns app.a) (defn a1 [] 1)"
                         "src/app/b.clj" "(ns app.b) (defn b1 [] 1)"
                         "src/app/c.clj" "(ns app.c) (defn c1 [] 1)"})]
-    (with-open [ix (ix)]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             p (sync-project! ix root)]
         (spit (io/file root "src/app/a.clj") "(ns app.a) (defn a2 [] 2)")
@@ -32,14 +34,14 @@
         (spit (io/file root "src/app/d.clj") "(ns app.d) (defn d1 [] 1)")
         (sync-project! ix root)
         (let [defs (visible-defs c p)]
-          (is (every? defs ["app.a/a2" "app.c/c1" "app.d/d1"]))
+          (is (set/subset? #{"app.a/a2" "app.c/c1" "app.d/d1"} defs))
           (is (not-any? defs ["app.a/a1" "app.b/b1"])))
         (is (zero? (count-of c "project_file WHERE unit_id IS NULL")))))))
 
 (deftest a-dependency-added-and-removed
   (let [lib (jar! {"acme/lib.clj" "(ns acme.lib) (defn from-lib [] 1)"})
         root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)"})]
-    (with-open [ix (ix)]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             p (sync-project! ix root)]
         (is (not (contains? (visible-defs c p) "acme.lib/from-lib")))
@@ -52,7 +54,7 @@
 
 (deftest a-clj-kondo-upgrade-reanalyzes-everything
   (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a) (defn f [] 1)"})]
-    (with-open [ix (ix)]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             p (sync-project! ix root)
             before (count-of c "unit")]
@@ -68,7 +70,7 @@
 (deftest a-full-disk-keeps-the-work
   ;; SQLite reports a full disk as SQLITE_FULL; max_page_count makes one
   (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a) (defn f [] 1)"})]
-    (with-open [ix (ix)]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             p (sync-project! ix root)
             big (str "(ns app.big)\n" (str/join "\n" (for [i (range 3000)] (str "(defn f" i " [x] (inc x))"))))]
@@ -86,7 +88,7 @@
 (deftest a-file-clj-kondo-cannot-handle-is-dropped
   ;; unlike a full disk, retrying can't help: the batch is dropped
   (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)"})]
-    (with-open [ix (ix)]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             p (sync-project! ix root)]
         (queue/enqueue! c p :file (str root "/src/app/a.clj") 0)
@@ -108,15 +110,19 @@
       (let [p (snapshot/ensure-project! c root)
             pid (db/query-value c "SELECT pid FROM daemon WHERE id = 1")
             indexed #(db/query-value c "SELECT count(*) FROM project_file WHERE project_id = ? AND unit_id IS NOT NULL" p)]
-        (queue/enqueue! c p :sync "" 1)
-        (is (eventually #(pos? (indexed))) "indexing has started")
-        (is (< (indexed) 400) "and not finished")
-        (.destroyForcibly (.orElseThrow (java.lang.ProcessHandle/of pid)))
-        (is (eventually #(not (lock/held? (:daemon-lock (home/paths home))))))
-        (is (= :spawned (client/ensure-daemon! {:home home})))
-        (is (eventually #(and (= 400 (indexed)) (zero? (queue/pending-count c p)))))
-        (is (= "ok" (db/query-value c "PRAGMA integrity_check")))
-        (testing "no half-written unit: every unit has its elements"
-          (is (zero? (db/query-value c "SELECT count(*) FROM unit u WHERE NOT EXISTS
-                                        (SELECT 1 FROM file_element fe WHERE fe.unit_id = u.id)"))))
-        (client/request-stop! c)))))
+        (try
+          (queue/enqueue! c p :sync "" 1)
+          (is (eventually #(pos? (indexed))) "indexing has started")
+          ;; 16,000 definitions are seconds of work, and it's checked as soon
+          ;; as the first file is in
+          (is (< (indexed) 400) "and not finished")
+          (.destroyForcibly (.orElseThrow (ProcessHandle/of pid)))
+          (is (eventually #(not (lock/held? (:daemon-lock (home/paths home))))))
+          (is (= :spawned (client/ensure-daemon! {:home home})))
+          (is (eventually #(and (= 400 (indexed)) (zero? (queue/pending-count c p)))))
+          (is (= "ok" (db/query-value c "PRAGMA integrity_check")))
+          (testing "no half-written unit: every unit has its elements"
+            (is (zero? (db/query-value c "SELECT count(*) FROM unit u WHERE NOT EXISTS
+                                          (SELECT 1 FROM file_element fe WHERE fe.unit_id = u.id)"))))
+          (finally
+            (client/request-stop! c)))))))

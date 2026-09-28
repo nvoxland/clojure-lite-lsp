@@ -1,15 +1,14 @@
 (ns clojure-lite-lsp.fingerprint-test
   (:require
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.digest :as digest]
    [clojure-lite-lsp.fingerprint :as fingerprint]
    [clojure-lite-lsp.test-util :as tu]
    [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]])
-  (:import
-   [java.security MessageDigest]))
+   [clojure.test :refer [deftest is testing]]))
 
 (defn sha256 [^String s]
-  (vec (.digest (MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8"))))
+  (vec (digest/sha256 s)))
 
 (deftest content-hash-is-memoized-by-mtime-and-size
   (with-open [c (db/open-writer (tu/temp-db-path))]

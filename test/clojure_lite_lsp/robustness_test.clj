@@ -9,7 +9,7 @@
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
    [clojure-lite-lsp.home :as home]
-   [clojure-lite-lsp.index-fixture :refer [file! sync-project! visible-defs]]
+   [clojure-lite-lsp.index-fixture :refer [file! sync-project! temp-indexer visible-defs]]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.kondo-config :as kc]
    [clojure-lite-lsp.kondo-hooks :as kondo-hooks]
@@ -37,6 +37,7 @@
                                    (swap! most max (swap! active inc))
                                    (try (Thread/sleep 20) (apply real args)
                                         (finally (swap! active dec))))]
+      ;; as though clj-kondo had loaded no config yet: its hooks load afresh
       (reset! @#'kondo-hooks/hooks-config nil)
       (analyze/analyze-files (vec (for [i (range 16)] (str root "/src/app/f" i ".clj")))
                              {:config cfg :mode :project :shards 8}))
@@ -57,6 +58,7 @@
     (with-redefs [hooks/hook-fn* (fn [ctx config ns-sym var-sym & more]
                                    (when (= 'named (symbol (name var-sym))) (swap! lookups inc))
                                    (apply real ctx config ns-sym var-sym more))]
+      ;; as though clj-kondo had loaded no config yet: its hooks load afresh
       (reset! @#'kondo-hooks/hooks-config nil)
       (let [res (analyze/analyze-files (vec (for [i (range 16)] (str root "/src/app/f" i ".clj")))
                                        {:config cfg :mode :project :shards 8})]
@@ -66,7 +68,7 @@
 (deftest a-retried-batch-keeps-the-analysis-started
   ;; cancelling it would stop only the outer task, leaving its clj-kondo
   ;; runs going beside the next analysis
-  (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+  (with-open [ix (temp-indexer)]
     (let [started {:batch [{:kind :file :path "/x"}] :job {:analysis (future :analyzed)}}]
       (reset! (:in-flight ix) {:batch [{:kind :file :path "/w"}] :job {:analysis (future :other)}})
       (with-redefs [queue/next-batch (fn [& _] [{:kind :file :project-id 1 :path "/x"}])
@@ -83,16 +85,18 @@
         locked (io/file root "src/app/locked.clj")]
     (.setReadable locked false)
     (try
-      (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
-        (let [done (future (sync-project! ix root))
-              p (deref done 60000 :hung)]
-          (is (not= :hung p) "it doesn't requeue the file forever")
-          (is (contains? (visible-defs (:c ix) p) "app.ok/fine") "the rest is indexed")))
+      (with-open [ix (temp-indexer)]
+        (let [done (future (sync-project! ix root))]
+          (try
+            (let [p (deref done 60000 :hung)]
+              (is (not= :hung p) "it doesn't requeue the file forever")
+              (is (contains? (visible-defs (:c ix) p) "app.ok/fine") "the rest is indexed"))
+            (finally (future-cancel done)))))
       (finally (.setReadable locked true)))))
 
 (deftest an-error-drops-its-batch-not-the-indexer
   (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a)"})]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       ;; thrown on the loop thread, writing the batch (an error inside
       ;; analysis arrives wrapped, as an ExecutionException)
       (with-redefs [snapshot/set-file-unit! (fn [& _] (throw (StackOverflowError.)))]

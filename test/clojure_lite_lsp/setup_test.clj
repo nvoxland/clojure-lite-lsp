@@ -14,12 +14,12 @@
 (defn json-in [dir path] (json/parse-string (slurp-in dir path)))
 
 (defn fake-cli
-  "A stand-in for running agents' CLIs: records [cwd & command], answers
-  with `exits` ({command-prefix exit}, default 0)."
+  "A stand-in for running agents' CLIs: records {:cwd :cmd}, answers with
+  `exits` ({command-prefix exit}, default 0)."
   [exits]
   (let [ran (atom [])]
     [ran (fn [cmd cwd]
-           (swap! ran conj (into [cwd] cmd))
+           (swap! ran conj {:cwd cwd :cmd (vec cmd)})
            {:exit (or (some (fn [[prefix exit]] (when (= prefix (take (count prefix) cmd)) exit)) exits) 0)
             :out ""})]))
 
@@ -45,8 +45,8 @@
     (testing "registered with Claude Code, and installed for the project"
       (is (= [["claude" "plugin" "marketplace" "add" market]
               ["claude" "plugin" "install" "clojure-lite-lsp@clojure-lite-lsp" "--scope" "project"]]
-             (mapv (comp vec rest) (filter #(= "claude" (second %)) (remove #(= "--version" (last %)) ran)))))
-      (is (= dir (first (last ran))) "installed from the project's dir"))
+             (into [] (comp (map :cmd) (filter #(= "claude" (first %))) (remove #(= "--version" (last %)))) ran)))
+      (is (= dir (:cwd (last ran))) "installed from the project's dir"))
     (testing "a skill for the query commands"
       (let [skill (slurp-in dir ".claude/skills/clojure-lite-lsp/SKILL.md")]
         (is (str/starts-with? skill "---\nname: clojure-lite-lsp\ndescription: "))
@@ -59,12 +59,12 @@
 (deftest a-registered-marketplace-is-updated-instead
   (let [dir (.getCanonicalPath (tu/temp-dir))
         {:keys [ran]} (run-setup "claude" dir :exits {["claude" "plugin" "marketplace" "add"] 1})]
-    (is (some #(= ["claude" "plugin" "marketplace" "update" "clojure-lite-lsp"] (vec (rest %))) ran))))
+    (is (some #(= ["claude" "plugin" "marketplace" "update" "clojure-lite-lsp"] (:cmd %)) ran))))
 
 (deftest without-the-agents-cli-it-says-what-to-run
   (let [dir (.getCanonicalPath (tu/temp-dir))
         {:keys [ran result]} (run-setup "claude" dir :exits {["claude" "--version"] 127})]
-    (is (not-any? #(= "plugin" (nth % 2 nil)) ran))
+    (is (not-any? #(= ["claude" "plugin"] (take 2 (:cmd %))) ran))
     (is (some #(str/includes? % "claude plugin install clojure-lite-lsp@clojure-lite-lsp --scope project")
               (:notes result)))
     (is (every? string? (:notes result)) "only notes, no blanks")))
@@ -76,13 +76,13 @@
       (is (str/includes? (slurp-in dir ".codex/config.toml")
                          "[mcp_servers.clojure-lite-lsp]\ncommand = \"clojure-lite-lsp\"\nargs = [\"mcp\"]\n")))
     (testing "and for the user, so it works before then (the server finds the project from where Codex runs)"
-      (is (some #(= ["codex" "mcp" "add" "clojure-lite-lsp" "--" "clojure-lite-lsp" "mcp"] (vec (rest %))) ran)))
+      (is (some #(= ["codex" "mcp" "add" "clojure-lite-lsp" "--" "clojure-lite-lsp" "mcp"] (:cmd %)) ran)))
     (is (str/includes? (slurp-in dir "AGENTS.md") "clojure-lite-lsp query references"))))
 
 (deftest codex-already-knowing-the-server-isnt-told-again
   (let [dir (.getCanonicalPath (tu/temp-dir))
         {:keys [ran]} (run-setup "codex" dir)]
-    (is (not-any? #(= "add" (nth % 3 nil)) ran))))
+    (is (not-any? #(= ["codex" "mcp" "add"] (take 3 (:cmd %))) ran))))
 
 (deftest setting-up-again-keeps-what-was-there
   (let [dir (.getCanonicalPath (tu/temp-dir))]

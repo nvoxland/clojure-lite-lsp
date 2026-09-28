@@ -2,47 +2,45 @@
   "Analysis reused across clj-kondo configs: a change to the config
   re-analyzes only the files that use what changed."
   (:require
-   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! analyzed-files]]
-   [clojure-lite-lsp.indexer :as indexer]
+   [clojure-lite-lsp.index-fixture :refer [analyzed-files sync-project! temp-indexer visible-defs]]
    [clojure-lite-lsp.test-util :as tu :refer [project!]]
    [clojure.java.io :as io]
+   [clojure.set :as set]
    [clojure.test :refer [deftest is testing]]))
-
-(defn config [m] (pr-str m))
 
 (def lint-as '{acme/defthing clojure.core/def acme/defother clojure.core/def})
 
-(defn fixture []
+(defn- lint-as-project! []
   (project! {"deps.edn" "{:paths [\"src\"]}"
-             ".clj-kondo/config.edn" (config {:lint-as lint-as})
+             ".clj-kondo/config.edn" (pr-str {:lint-as lint-as})
              "src/acme.clj" "(ns acme) (defmacro defthing [n v] `(def ~n ~v)) (defmacro defother [n v] `(def ~n ~v))"
              "src/app/uses_thing.clj" "(ns app.uses-thing (:require [acme])) (acme/defthing thing 1)"
              "src/app/uses_other.clj" "(ns app.uses-other (:require [acme])) (acme/defother other 1)"
              "src/app/plain.clj" "(ns app.plain) (defn plain [] 1)"}))
 
-(defn set-config! [root m] (spit (io/file root ".clj-kondo/config.edn") (config m)))
+(defn set-config! [root m] (spit (io/file root ".clj-kondo/config.edn") (pr-str m)))
 
 (deftest a-change-for-one-macro-reanalyzes-its-users-only
-  (let [root (fixture)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+  (let [root (lint-as-project!)]
+    (with-open [ix (temp-indexer)]
       (let [p (sync-project! ix root)]
         (is (= #{"uses_other.clj"}
                (analyzed-files ix root #(set-config! root {:lint-as (assoc lint-as 'acme/defother 'clojure.core/defonce)}))))
         (testing "the results are those of the new config"
-          (is (every? (visible-defs (:c ix) p) ["app.uses-thing/thing" "app.uses-other/other" "app.plain/plain"])))
+          (is (set/subset? #{"app.uses-thing/thing" "app.uses-other/other" "app.plain/plain"} (visible-defs (:c ix) p))))
         (testing "and going back reuses the first analysis"
           (is (= #{} (analyzed-files ix root #(set-config! root {:lint-as lint-as})))))))))
 
 (deftest linter-settings-reanalyze-nothing
-  (let [root (fixture)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+  (let [root (lint-as-project!)]
+    (with-open [ix (temp-indexer)]
       (sync-project! ix root)
       (is (= #{} (analyzed-files ix root #(set-config! root {:lint-as lint-as
                                                              :linters {:unused-binding {:level :off}}})))))))
 
 (deftest a-global-change-reanalyzes-everything
-  (let [root (fixture)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+  (let [root (lint-as-project!)]
+    (with-open [ix (temp-indexer)]
       (sync-project! ix root)
       (is (= #{"acme.clj" "uses_thing.clj" "uses_other.clj" "plain.clj"}
              (analyzed-files ix root #(set-config! root {:lint-as lint-as
@@ -65,9 +63,9 @@
    (defn expand [{:keys [node]}]
      (let [[_ n v] (:children node)] {:node (api/list-node [(api/token-node 'def) n v])}))")
 
-(defn hooks-fixture []
+(defn- hooks-project! []
   (project! {"deps.edn" "{:paths [\"src\"]}"
-             ".clj-kondo/config.edn" (config '{:hooks {:analyze-call {acme/checked hooks.lint/check acme/defx hooks.xform/expand
+             ".clj-kondo/config.edn" (pr-str '{:hooks {:analyze-call {acme/checked hooks.lint/check acme/defx hooks.xform/expand
                                                                       acme/defp hooks.plainx/expand}}
                                                :acme/strict true})
              ".clj-kondo/hooks/lint.clj" lint-hook
@@ -83,8 +81,8 @@
   ;; two hooks read :acme/strict: their users are analyzed again (whether a
   ;; hook changes the code can depend on the key, so one that only lints
   ;; counts too). The other transforming hook never reads it.
-  (let [root (hooks-fixture)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+  (let [root (hooks-project!)]
+    (with-open [ix (temp-indexer)]
       (let [p (sync-project! ix root)]
         (is (contains? (visible-defs (:c ix) p) "app.uses-defx/y") "the transforming hook ran")
         (is (= #{"uses_defx.clj" "uses_checked.clj"}

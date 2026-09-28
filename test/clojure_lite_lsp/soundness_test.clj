@@ -4,8 +4,7 @@
   (:require
    [clj-kondo.core :as kondo]
    [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! analyzed-files]]
-   [clojure-lite-lsp.indexer :as indexer]
+   [clojure-lite-lsp.index-fixture :refer [analyzed-files sync-project! temp-indexer visible-defs]]
    [clojure-lite-lsp.test-util :as tu :refer [project!]]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is]]))
@@ -27,7 +26,7 @@
   ;; clj-kondo loads hook code once per process and reloads only a file it
   ;; saw change; every config is its own directory, so it never sees one
   (let [root (hook-project)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [p (sync-project! ix root)]
         (is (contains? (visible-defs (:c ix) p) "app.uses/x-one"))
         (spit (io/file root ".clj-kondo/hooks/named.clj") (hook "-two"))
@@ -43,7 +42,7 @@
         active (atom 0)
         most (atom 0)
         real analyze/analyze-files]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir) :batch-sizes {:file 1}})]
+    (with-open [ix (temp-indexer :batch-sizes {:file 1})]
       (with-redefs [analyze/analyze-files (fn [paths opts]
                                             (swap! most max (swap! active inc))
                                             (try (Thread/sleep 50) (real paths opts)
@@ -57,7 +56,7 @@
         f (io/file root "src/app/a.clj")
         changed? (atom false)
         real @#'analyze/run-kondo]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (with-redefs [analyze/run-kondo (fn [& args]
                                         (let [r (apply real args)]
                                           ;; saved again while clj-kondo was busy
@@ -86,7 +85,7 @@
                        "src/ext/uses.clj" "(ns ext.uses (:require [ext.m])) (ext.m/defthing thing 1)"})
         root (project! {"deps.edn" (pr-str {:paths ["src"] :deps {'ext/core {:local/root ext}}})
                         "src/app/a.clj" "(ns app.a)"})]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (sync-project! ix root)
       (is (contains? (analyzed-files ix root #(spit (io/file ext "src/clj-kondo.exports/ext/m/config.edn")
                                                     "{:lint-as {ext.m/defthing clojure.core/defonce}}"))

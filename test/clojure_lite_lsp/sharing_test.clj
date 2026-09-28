@@ -5,10 +5,10 @@
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
-   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! count-of project-using]]
-   [clojure-lite-lsp.indexer :as indexer]
+   [clojure-lite-lsp.index-fixture :refer [count-of project-using sync-project! temp-indexer visible-defs]]
    [clojure-lite-lsp.test-util :as tu :refer [jar! maven-jar!]]
    [clojure.java.io :as io]
+   [clojure.set :as set]
    [clojure.test :refer [deftest is testing]]))
 
 (defn analyzed-jars
@@ -28,7 +28,7 @@
         only-b (jar! {"b/lib.clj" "(ns b.lib) (defn from-b [] 1)"})
         a (project-using [shared only-a])
         b (project-using [shared only-b])]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             pa (sync-project! ix a)
             before (count-of c "jar")
@@ -37,8 +37,8 @@
         (testing "the second project analyzes only the jar it doesn't share"
           (is (= 1 (count analyzed-for-b)))
           (is (= (inc before) (count-of c "jar"))))
-        (is (every? (visible-defs c pa) ["shared.lib/from-shared" "a.lib/from-a"]))
-        (is (every? (visible-defs c pb) ["shared.lib/from-shared" "b.lib/from-b"]))
+        (is (set/subset? #{"shared.lib/from-shared" "a.lib/from-a"} (visible-defs c pa)))
+        (is (set/subset? #{"shared.lib/from-shared" "b.lib/from-b"} (visible-defs c pb)))
         (is (not (contains? (visible-defs c pb) "a.lib/from-a")))))))
 
 (def exports-v1 "{:lint-as {acme.y/defthing clojure.core/def}}")
@@ -57,7 +57,7 @@
   (let [x (maven-jar! "acme" "x" [["acme" "y"]] {"acme/x.clj" x-jar-source})
         p1 (project-using [['acme/x x] ['acme/y (y-jar "1.0" exports-v1)]])
         p2 (project-using [['acme/x x] ['acme/y (y-jar "2.0" exports-v1)]])]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (sync-project! ix p1)
       (let [analyzed (analyzed-jars #(sync-project! ix p2))]
         (is (= 1 (count analyzed)) "only the new version of y itself")))))
@@ -67,14 +67,15 @@
   (let [x (maven-jar! "acme" "x" [["acme" "y"]] {"acme/x.clj" x-jar-source})
         p1 (project-using [['acme/x x] ['acme/y (y-jar "1.0" exports-v1)]])
         p3 (project-using [['acme/x x] ['acme/y (y-jar "3.0" exports-v3)]])]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [c (:c ix)
             pid1 (sync-project! ix p1)
             analyzed (analyzed-jars #(sync-project! ix p3))
             pid3 (db/query-value c "SELECT id FROM project WHERE root = ?" p3)]
         (is (= 2 (count analyzed)) "x again, and the new y")
         (testing "each project sees x as analyzed with its own y's config"
-          (is (contains? (visible-defs c pid1) "acme.x/thing")))
+          (is (contains? (visible-defs c pid1) "acme.x/thing") "y 1.0: defthing is a def")
+          (is (not (contains? (visible-defs c pid3) "acme.x/thing")) "y 3.0: defthing is a declare"))
         (testing "a variant lives while a project uses it"
           (db/execute! c "UPDATE project SET last_seen = 0 WHERE id = ?" pid3)
           ;; p3 was last seen in 1970; p1 just now (a short max age would

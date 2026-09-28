@@ -4,7 +4,7 @@
   again when that answer changes."
   (:require
    [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! analyzed-files]]
+   [clojure-lite-lsp.index-fixture :refer [analyzed-files sync-project! temp-indexer visible-defs]]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.kondo-config :as kc]
    [clojure-lite-lsp.ns-analysis :as nsa]
@@ -58,7 +58,7 @@
   (let [root (reexport-project src-fg)
         batches (atom 0)
         real analyze/analyze-files]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (with-redefs [analyze/analyze-files (fn [paths opts]
                                             (when (some #(re-find #"api\.clj$" %) paths) (swap! batches inc))
                                             (real paths opts))]
@@ -68,13 +68,13 @@
 
 (deftest a-namespace-analyzed-in-an-earlier-batch
   (let [root (reexport-project src-fg)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir) :batch-sizes {:file 1}})]
+    (with-open [ix (temp-indexer :batch-sizes {:file 1})]
       (let [p (sync-project! ix root)]
         (is (= #{"app.api/f" "app.api/g"} (api-defs (visible-defs (:c ix) p))))))))
 
 (deftest editing-the-namespace-reanalyzes-the-files-that-asked
   (let [root (reexport-project src-fg)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [p (sync-project! ix root)]
         (is (= #{"src.clj" "api.clj"}
                (analyzed-files ix root #(spit (io/file root "src/app/src.clj") src-fgh))))
@@ -86,7 +86,7 @@
 (deftest worktrees-with-different-answers-each-get-theirs
   (let [a (reexport-project src-fg)
         b (reexport-project src-fgh)]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (let [pa (sync-project! ix a)
             pb (sync-project! ix b)]
         (is (= #{"app.api/f" "app.api/g"} (api-defs (visible-defs (:c ix) pa))))
@@ -113,13 +113,15 @@
   (let [root (reexport-project src-fg)
         key-hash writer/unit-key-hash]
     (with-redefs [writer/unit-key-hash (fn [k] (key-hash (dissoc k :ns-deps)))]
-      (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+      (with-open [ix (temp-indexer)]
         (sync-project! ix root)
         (spit (io/file root "src/app/src.clj") src-fgh)
         (let [err (java.io.StringWriter.)
               done (binding [*err* err] (future (sync-project! ix root) :idle))]
-          (is (= :idle (deref done 60000 :still-looping)))
-          (is (str/includes? (str err) "doesn't match what its hooks are told") "and says so"))))))
+          (try
+            (is (= :idle (deref done 60000 :still-looping)))
+            (is (str/includes? (str err) "doesn't match what its hooks are told") "and says so")
+            (finally (future-cancel done))))))))
 
 (deftest questions-from-hooks-that-only-lint-count-too
   ;; a hook that returns the node it was given this time may change it
@@ -131,7 +133,7 @@
                         "src/app/re.clj" "(ns app.re) (defmacro check [x] x)"
                         "src/app/src.clj" src-fg
                         "src/app/checked.clj" "(ns app.checked (:require [app.re :as re])) (re/check 1)"})]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
+    (with-open [ix (temp-indexer)]
       (sync-project! ix root)
       (is (= #{"src.clj" "checked.clj"} (analyzed-files ix root #(spit (io/file root "src/app/src.clj") src-fgh)))))))
 
@@ -145,7 +147,7 @@
                         "src/app/src.clj" "(ns app.src) (defn f [a] a)"
                         "src/app/src_more.clj" "(in-ns 'app.src) (defn g [] 1)"
                         "src/app/api.clj" "(ns app.api (:require [app.re :refer [reexport]])) (reexport app.src f g h)"})]
-    (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir) :batch-sizes {:file 1}})]
+    (with-open [ix (temp-indexer :batch-sizes {:file 1})]
       (let [p (sync-project! ix root)]
         (is (= #{"app.api/f" "app.api/g"} (api-defs (visible-defs (:c ix) p))))))))
 

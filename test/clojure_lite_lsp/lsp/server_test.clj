@@ -12,6 +12,7 @@
    [clojure-lite-lsp.sources :as sources]
    [clojure-lite-lsp.test-util :as tu :refer [project!]]
    [clojure.java.io :as io]
+   [clojure.set :as set]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing use-fixtures]])
   (:import
@@ -120,8 +121,8 @@
         {:keys [request! notify!] :as client} (start-client! (str (tu/temp-dir)))]
     (testing "initialize advertises the reading features"
       (let [caps (:capabilities (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {}}))]
-        (is (every? caps [:definitionProvider :referencesProvider :hoverProvider :implementationProvider
-                          :documentSymbolProvider :workspaceSymbolProvider :callHierarchyProvider]))
+        (is (set/subset? #{:definitionProvider :referencesProvider :hoverProvider :implementationProvider
+                           :documentSymbolProvider :workspaceSymbolProvider :callHierarchyProvider} (set (keys caps))))
         (testing "and nothing that edits: editors don't offer rename"
           (is (not-any? caps [:renameProvider :codeActionProvider :documentFormattingProvider])))))
     (notify! "initialized" {})
@@ -242,7 +243,9 @@
           (is (seq (request! "textDocument/documentSymbol" {:textDocument {:uri uri}}))))))))
 
 (deftest navigating-to-java-sources
-  (when (java/jdk-src)
+  ;; needs the JDK's sources: skipped, and said so, without them
+  (if-not (java/jdk-src)
+    (println "Skipping navigating-to-java-sources: no JDK src.zip")
     (let [root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" "(ns app.a (:import [java.io File]))\n(defn f [] (File. \"x\"))\n"})
           {:keys [request!] :as client} (start-client! (str (tu/temp-dir)))]
       (initialize! client root {:capabilities {}})
@@ -421,6 +424,10 @@
       (is (= [(pos-of a2 "greet [")]
              (map (comp :start :range) (request! "textDocument/definition" {:textDocument doc :position (pos-of a2 "greet x")})))))))
 
+(def ^:private symbol-kind
+  "LSP's SymbolKind numbers."
+  {:namespace 3 :class 5 :interface 11 :function 12 :variable 13 :key 20})
+
 (deftest symbol-kinds-follow-what-defined-them
   (let [a (str "(ns app.a (:require [clojure.spec.alpha :as s]))\n(defn f [] 1)\n(def v 1)\n(defmacro m [])\n"
                "(defprotocol P (pm [x]))\n(defrecord R [x])\n(defmulti mm identity)\n(s/def ::k int?)\n")
@@ -429,10 +436,13 @@
     (initialize! client root)
     (let [[ns-sym] (request! "textDocument/documentSymbol" {:textDocument {:uri (uri root "src/app/a.clj")}})
           kinds (into {} (map (juxt :name :kind)) (:children ns-sym))]
-      (is (= 3 (:kind ns-sym)) "namespace")
-      (is (= {"f" 12 "v" 13 "m" 12 "P" 11 "pm" 12 "R" 5 "mm" 11} (select-keys kinds ["f" "v" "m" "P" "pm" "R" "mm"])))
-      (is (= 20 (kinds "k")) "a spec keyword"))
-    (is (= 13 (:kind (first (filter #(= "v" (:name %)) (request! "workspace/symbol" {:query "v"}))))))))
+      (is (= (symbol-kind :namespace) (:kind ns-sym)))
+      (is (= {"f" (symbol-kind :function) "v" (symbol-kind :variable) "m" (symbol-kind :function)
+              "P" (symbol-kind :interface) "pm" (symbol-kind :function) "R" (symbol-kind :class)
+              "mm" (symbol-kind :interface)}
+             (select-keys kinds ["f" "v" "m" "P" "pm" "R" "mm"])))
+      (is (= (symbol-kind :key) (kinds "k")) "a spec keyword"))
+    (is (= (symbol-kind :variable) (:kind (first (filter #(= "v" (:name %)) (request! "workspace/symbol" {:query "v"}))))))))
 
 (deftest signature-parameters-and-arities
   (testing "parameters are found as whole tokens, past a type hint"

@@ -5,6 +5,7 @@
    [clojure-lite-lsp.kinds :as kinds]
    [clojure-lite-lsp.test-util :as tu]
    [clojure-lite-lsp.writer :as writer]
+   [clojure.set :as set]
    [clojure.test :refer [deftest is testing]]))
 
 (defn sym [c id] (db/query-value c "SELECT text FROM sym WHERE id = ?" id))
@@ -30,8 +31,8 @@
       (testing "file elements by position, including locals and the alias"
         (let [kinds-at (fn [row] (set (map #(kinds/kind (first %))
                                            (db/query c "SELECT kind FROM file_element WHERE unit_id = ? AND name_row = ?" u row))))]
-          (is (every? (kinds-at 1) [:ns-def :ns-usage :ns-alias]))
-          (is (every? (kinds-at 2) [:var-def :local :local-usage :var-usage])))))))
+          (is (set/subset? #{:ns-def :ns-usage :ns-alias} (kinds-at 1)))
+          (is (set/subset? #{:var-def :local :local-usage :var-usage} (kinds-at 2))))))))
 
 (deftest units-are-content-addressed
   (with-writer [w c]
@@ -81,7 +82,7 @@
   (with-writer [w c]
     (let [code "(ns a (:require [clojure.string :as str])) (defn f [] (str/join []))"
           [u] (writer/write-units! w [[(unit-key code) (analyzed code "a.clj")]])]
-      (is (every? (set (writer/unit-refs c u)) ["clojure.string/join" "clojure.core/defn" "ns:a"]))
+      (is (set/subset? #{"clojure.string/join" "clojure.core/defn" "ns:a"} (set (writer/unit-refs c u))))
       (is (zero? (db/query-value c "SELECT count(*) FROM file_element WHERE kind = 0"))))))
 
 (deftest units-are-found-by-alias-and-by-base-key

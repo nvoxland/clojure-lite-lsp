@@ -64,7 +64,7 @@
       (file! w old "/old/a.clj" "(ns old-a)")
       (file! w fresh "/fresh/a.clj" "(ns fresh-a)")
       (db/execute! c "UPDATE project SET last_seen = 0 WHERE id = ?" old)
-      (is (= {:projects 1 :units 1} (select-keys (gc/collect! w {:project-max-age-ms (* 1000 60 60 24 30)})
+      (is (= {:projects 1 :units 1} (select-keys (gc/collect! w {:project-max-age-ms gc/default-project-max-age-ms})
                                                  [:projects :units])))
       (is (= ["/fresh"] (map first (db/query c "SELECT root FROM project"))))
       (is (zero? (count-of c "project_file WHERE project_id = ?" old))))))

@@ -8,10 +8,12 @@
    [clojure.test :refer [deftest is testing]]))
 
 (deftest reads-clojure-lite-lsp-edn
-  (is (= {:aliases [:dev :test] :extra-source-paths []}
-         (classpath/project-config (project! {}))))
-  (is (= {:aliases [:local] :extra-source-paths ["scripts"]}
-         (classpath/project-config (project! {".clojure-lite-lsp.edn" "{:aliases [:local] :extra-source-paths [\"scripts\"]}"})))))
+  (testing "without one, the defaults"
+    (is (= {:aliases [:dev :test] :extra-source-paths []}
+           (classpath/project-config (project! {})))))
+  (testing "its settings over them"
+    (is (= {:aliases [:local] :extra-source-paths ["scripts"]}
+           (classpath/project-config (project! {".clojure-lite-lsp.edn" "{:aliases [:local] :extra-source-paths [\"scripts\"]}"}))))))
 
 (def bb-command ["bb" "-e" "(println (babashka.classpath/get-classpath))"])
 
