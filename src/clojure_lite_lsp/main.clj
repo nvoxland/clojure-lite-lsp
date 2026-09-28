@@ -1,5 +1,5 @@
 (ns clojure-lite-lsp.main
-  "The `clojure-lite-lsp` command. For editors and agents: `lsp`, the
+  "The `clojure-lite-lsp` command. For agents and editors: `lsp`, the
   language server, and `mcp`, the query commands as an MCP server. The
   indexer: `index` without arguments (started by the others). For people
   and scripts: `query`, `index <dir>...`, `setup`, `gc`, `stop`, `status`
@@ -36,7 +36,8 @@
         (try
           ;; the WAL holds recent writes until they are checkpointed
           (status/print! (status/data c {:daemon-alive? (lock/held? daemon-lock)})
-                         (quot (+ (.length (io/file db)) (.length (io/file (str db "-wal")))) 1048576))
+                         {:path db
+                          :file-mb (quot (+ (.length (io/file db)) (.length (io/file (str db "-wal")))) 1048576)})
           (catch SQLException _
             (println "The index at" db "is still being created")))))))
 
@@ -45,7 +46,7 @@
        "  query <command> <arg>        look things up: definitions, references, callers, ...\n"
        "                               (clojure-lite-lsp query lists them)\n"
        "  index [<project-dir>...]     index projects and wait; without dirs, run the indexer\n"
-       "  lsp                          the language server, for editors and agents (stdio)\n"
+       "  lsp                          the language server, for agents and editors (stdio)\n"
        "  mcp                          the query commands as an MCP server, for agents (stdio)\n"
        "  setup --agent <agent> [dir]  make a project ready for a coding agent: "
        (str/join ", " (sort (keys setup/agents))) "\n"
@@ -79,7 +80,7 @@
       (throw (ex-info (str "Usage: clojure-lite-lsp setup --agent <" (str/join "|" (sort (keys setup/agents))) "> [dir] [--no-index]")
                       {:usage true})))
     (doseq [[i agent] (map-indexed vector agents)
-            :let [{:keys [wrote notes]} (setup/setup! {:agent agent :dir dir :home (home/dir)
+            :let [{:keys [wrote notes]} (setup/setup! {:agent agent :dir dir :data-dir (home/data-dir)
                                                        ;; once, after the last agent
                                                        :index! (when (and index? (= i (dec (count agents))))
                                                                  #(index-projects! [%]))})]]

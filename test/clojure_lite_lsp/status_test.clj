@@ -28,7 +28,10 @@
         (testing "printed"
           (let [out (with-out-str (status/print! (status/data (:c ix))))]
             (is (str/includes? out a))
-            (is (re-find #"jars: 5 \(4 shared with other projects\)" out))))))))
+            (is (re-find #"jars: 5 \(4 shared with other projects\)" out))))
+        (testing "with where the index is"
+          (let [out (with-out-str (status/print! (status/data (:c ix)) {:path "/x/v1/index.db" :file-mb 3}))]
+            (is (re-find #"Index: +3 MB, .*\n +/x/v1/index.db\n" out))))))))
 
 (deftest a-daemon-that-died-isnt-reported-running
   ;; its row outlives a crash; its lock doesn't

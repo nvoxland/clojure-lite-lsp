@@ -35,9 +35,10 @@
       :projects (mapv #(project-data c %) (db/query c "SELECT id, root, last_seen FROM project ORDER BY root"))})))
 
 (defn print!
-  "Print status `data` for people. `file-mb` is the index's size on disk."
+  "Print status `data` for people. `path`: the index's file; `file-mb`: its
+  size on disk."
   ([data] (print! data nil))
-  ([{:keys [daemon index projects]} file-mb]
+  ([{:keys [daemon index projects]} {:keys [path file-mb]}]
    (println "Daemon: " (if daemon
                          (str "pid " (:pid daemon) ", version " (:version daemon)
                               ", heartbeat " (:heartbeat-age-s daemon) " s ago")
@@ -46,6 +47,7 @@
                             (:units index) " analyzed files, " (:jars index) " jars"
                             (when (pos? (:opened-library-files index))
                               (str ", " (:opened-library-files index) " opened library files"))))
+   (when path (println "         " path))
    (doseq [{:keys [root files files-indexed jars jars-shared pending classpath-error]} projects]
      (println)
      (println root)

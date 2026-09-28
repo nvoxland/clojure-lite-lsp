@@ -24,16 +24,16 @@
             :out ""})]))
 
 (defn run-setup [agent dir & {:keys [exits]}]
-  (let [home (str (tu/temp-dir))
+  (let [data-dir (str (tu/temp-dir))
         indexed (atom [])
         [ran run] (fake-cli exits)
-        result (setup/setup! {:agent agent :dir dir :home home :run run :index! #(swap! indexed conj %)})]
-    {:home home :ran @ran :indexed @indexed :result result}))
+        result (setup/setup! {:agent agent :dir dir :data-dir data-dir :run run :index! #(swap! indexed conj %)})]
+    {:data-dir data-dir :ran @ran :indexed @indexed :result result}))
 
 (deftest claude-gets-the-language-server-and-a-skill
   (let [dir (.getCanonicalPath (tu/temp-dir))
-        {:keys [home ran indexed]} (run-setup "claude" dir)
-        market (str (io/file home "claude-marketplace"))]
+        {:keys [data-dir ran indexed]} (run-setup "claude" dir)
+        market (str (io/file data-dir "claude-marketplace"))]
     (testing "the plugin, in a marketplace of this machine's (a marketplace's name is per user)"
       (is (= {"clojure-lite-lsp" {"command" "clojure-lite-lsp" "args" ["lsp"]
                                   "extensionToLanguage" {".bb" "clojure" ".clj" "clojure" ".cljc" "clojure"
@@ -51,8 +51,13 @@
       (let [skill (slurp-in dir ".claude/skills/clojure-lite-lsp/SKILL.md")]
         (is (str/starts-with? skill "---\nname: clojure-lite-lsp\ndescription: "))
         (is (str/includes? skill "clojure-lite-lsp query references"))))
-    (testing "CLAUDE.md, which Claude Code always reads, points at them"
-      (is (str/includes? (slurp-in dir "CLAUDE.md") "clojure-lite-lsp query")))
+    (testing "AGENTS.md, which Claude Code reads, points at them; no CLAUDE.md"
+      (is (str/includes? (slurp-in dir "AGENTS.md") "clojure-lite-lsp query"))
+      (is (not (.exists (io/file dir "CLAUDE.md")))))
+    (testing "AGENTS.md is read every session: a nudge, not the reference (that's the skill)"
+      (let [md (slurp-in dir "AGENTS.md")]
+        (is (not (str/includes? md "| Command")))
+        (is (< (count (str/split-lines md)) 10))))
     (testing "the project indexed, so the first question is answered at once"
       (is (= [dir] indexed)))))
 
@@ -77,7 +82,7 @@
                          "[mcp_servers.clojure-lite-lsp]\ncommand = \"clojure-lite-lsp\"\nargs = [\"mcp\"]\n")))
     (testing "and for the user, so it works before then (the server finds the project from where Codex runs)"
       (is (some #(= ["codex" "mcp" "add" "clojure-lite-lsp" "--" "clojure-lite-lsp" "mcp"] (:cmd %)) ran)))
-    (is (str/includes? (slurp-in dir "AGENTS.md") "clojure-lite-lsp query references"))))
+    (is (str/includes? (slurp-in dir "AGENTS.md") "MCP"))))
 
 (deftest codex-already-knowing-the-server-isnt-told-again
   (let [dir (.getCanonicalPath (tu/temp-dir))
@@ -100,9 +105,18 @@
       (is (str/starts-with? md "# Agents\n\nBe nice.\n"))
       (is (= 1 (count (re-seq #"clojure-lite-lsp:start" md)))))))
 
+(deftest claude-and-codex-share-one-agents-md-section
+  (let [dir (.getCanonicalPath (tu/temp-dir))]
+    (run-setup "claude" dir)
+    (let [after-claude (slurp-in dir "AGENTS.md")]
+      (run-setup "codex" dir)
+      (is (= after-claude (slurp-in dir "AGENTS.md")) "the same section, whichever agent wrote it")
+      (is (str/includes? after-claude "LSP tool") "Claude Code's way in")
+      (is (str/includes? after-claude "MCP") "and Codex's"))))
+
 (deftest the-agent-must-be-one-known
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"claude, codex"
-                        (setup/setup! {:agent "emacs" :dir (str (tu/temp-dir)) :home (str (tu/temp-dir))}))))
+                        (setup/setup! {:agent "emacs" :dir (str (tu/temp-dir)) :data-dir (str (tu/temp-dir))}))))
 
 (defn codex-toml [before]
   (let [dir (.getCanonicalPath (tu/temp-dir))]
@@ -139,7 +153,7 @@
 
 (deftest the-directory-must-exist
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Not a directory"
-                        (setup/setup! {:agent "codex" :dir "/no/such/dir" :home (str (tu/temp-dir))}))))
+                        (setup/setup! {:agent "codex" :dir "/no/such/dir" :data-dir (str (tu/temp-dir))}))))
 
 (deftest setup-parses-its-arguments
   (is (= {:agents ["claude" "codex"] :dir "x" :index? false}
