@@ -2,11 +2,9 @@
   "Analysis reused across clj-kondo configs: a change to the config
   re-analyzes only the files that use what changed."
   (:require
-   [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.classpath-test :refer [project!]]
+   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! analyzed-files]]
    [clojure-lite-lsp.indexer :as indexer]
-   [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project!]]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project!]]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]))
 
@@ -21,19 +19,6 @@
              "src/app/uses_thing.clj" "(ns app.uses-thing (:require [acme])) (acme/defthing thing 1)"
              "src/app/uses_other.clj" "(ns app.uses-other (:require [acme])) (acme/defother other 1)"
              "src/app/plain.clj" "(ns app.plain) (defn plain [] 1)"}))
-
-(defn analyzed-files
-  "Re-sync the project after `change`, returning the names of the files
-  analyzed."
-  [ix root change]
-  (change)
-  (let [seen (atom #{})
-        real analyze/analyze-files]
-    (with-redefs [analyze/analyze-files (fn [paths opts]
-                                          (swap! seen into (map #(.getName (io/file ^String %)) paths))
-                                          (real paths opts))]
-      (sync-project! ix root))
-    @seen))
 
 (defn set-config! [root m] (spit (io/file root ".clj-kondo/config.edn") (config m)))
 

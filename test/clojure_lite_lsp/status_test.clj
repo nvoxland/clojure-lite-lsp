@@ -1,12 +1,10 @@
 (ns clojure-lite-lsp.status-test
   (:require
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.index-fixture :refer [sync-project! project-using]]
    [clojure-lite-lsp.indexer :as indexer]
-   [clojure-lite-lsp.indexer-test :refer [sync-project!]]
-   [clojure-lite-lsp.kondo-config-test :refer [jar!]]
-   [clojure-lite-lsp.sharing-test :refer [project-using]]
    [clojure-lite-lsp.status :as status]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [jar!]]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]))
 

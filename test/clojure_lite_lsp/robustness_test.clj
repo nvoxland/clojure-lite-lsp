@@ -4,21 +4,19 @@
   (:require
    [clj-kondo.impl.hooks :as hooks]
    [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.client :as client]
-   [clojure-lite-lsp.daemon-test :refer [home]]
+   [clojure-lite-lsp.daemon-fixture :refer [home]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
-   [clojure-lite-lsp.gc-test :as gc-test]
    [clojure-lite-lsp.home :as home]
+   [clojure-lite-lsp.index-fixture :refer [file! sync-project! visible-defs]]
    [clojure-lite-lsp.indexer :as indexer]
-   [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project!]]
    [clojure-lite-lsp.kondo-config :as kc]
    [clojure-lite-lsp.kondo-hooks :as kondo-hooks]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project!]]
    [clojure-lite-lsp.writer :as writer]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is]]))
@@ -106,13 +104,13 @@
   (with-open [c (db/open-writer (tu/temp-db-path))]
     (let [w (writer/writer c)
           p (snapshot/ensure-project! c "/a")
-          file! (fn [path code] (gc-test/file! w p path code))
+          write! (fn [path code] (file! w p path code))
           sym? #(some? (db/query-value c "SELECT id FROM sym WHERE text = ?" %))]
-      (file! "/a/one.clj" "(ns one) (defn only-one [] 1)")
+      (write! "/a/one.clj" "(ns one) (defn only-one [] 1)")
       (snapshot/remove-file! w p "/a/one.clj")
       (gc/collect! w {})
       (is (not (sym? "only-one")) "the first collection sweeps")
-      (file! "/a/two.clj" "(ns two) (defn only-two [] 1)")
+      (write! "/a/two.clj" "(ns two) (defn only-two [] 1)")
       (snapshot/remove-file! w p "/a/two.clj")
       (gc/collect! w {})
       (is (sym? "only-two") "a few dead units soon after: no sweep")

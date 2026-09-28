@@ -1,47 +1,9 @@
 (ns clojure-lite-lsp.kondo-config-test
   (:require
-   [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.kondo-config :as kc]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project! jar! maven-jar! files-in]]
    [clojure.java.io :as io]
-   [clojure.test :refer [deftest is testing]])
-  (:import
-   [java.util.jar JarEntry JarOutputStream]))
-
-(defn jar!
-  "A jar file with `entries` ({path content})."
-  [entries]
-  (let [f (io/file (tu/temp-dir) "lib.jar")]
-    (with-open [out (JarOutputStream. (io/output-stream f))]
-      (doseq [[path content] entries]
-        (.putNextEntry out (JarEntry. ^String path))
-        (.write out (.getBytes ^String content "UTF-8"))
-        (.closeEntry out)))
-    (str f)))
-
-(defn maven-jar!
-  "A jar for group/artifact that depends on `deps` ([group artifact]) and
-  has `extra` entries."
-  [group artifact deps extra]
-  (jar! (merge {(str "META-INF/maven/" group "/" artifact "/pom.properties")
-                (str "groupId=" group "\nartifactId=" artifact "\nversion=1.0\n")
-                (str "META-INF/maven/" group "/" artifact "/pom.xml")
-                ;; a valid Maven model: tools.deps reads poms inside local jars
-                (str "<project><modelVersion>4.0.0</modelVersion>"
-                     "<groupId>" group "</groupId><artifactId>" artifact "</artifactId><version>1.0</version>"
-                     "<dependencies>"
-                     (apply str (for [[g a] deps]
-                                  (str "<dependency><groupId>" g "</groupId><artifactId>" a "</artifactId>"
-                                       "<version>1.0</version></dependency>")))
-                     "</dependencies></project>")}
-               extra)))
-
-(defn files-in [dir]
-  (let [base (count (str dir "/"))]
-    (->> (file-seq (io/file dir))
-         (filter #(.isFile ^java.io.File %))
-         (map #(subs (str %) base))
-         set)))
+   [clojure.test :refer [deftest is testing]]))
 
 (deftest reads-exports-from-jars-and-dirs
   (let [j (jar! {"clj-kondo.exports/acme/lib/config.edn" "{:lint-as {acme.lib/defthing clojure.core/def}}"

@@ -2,7 +2,6 @@
   "End to end: LSP over streams to the real server, with an in-process
   daemon, on a real indexed project."
   (:require
-   [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.java :as java]
    [clojure-lite-lsp.lsp.convert :as convert]
@@ -10,7 +9,7 @@
    [clojure-lite-lsp.lsp.server :as server]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.sources :as sources]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project!]]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]])

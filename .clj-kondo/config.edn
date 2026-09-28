@@ -1,4 +1,6 @@
-{:lint-as {clojure-lite-lsp.query-fixture/with-project clojure.core/let}
+{:lint-as {clojure-lite-lsp.query-fixture/with-project clojure.core/let
+           clojure-lite-lsp.index-fixture/with-writer clojure.core/fn
+           clojure-lite-lsp.daemon-fixture/with-in-process-daemons clojure.core/fn}
  :linters {:unsorted-required-namespaces {:level :warning}
            :redundant-str-call {:level :warning}
            :unused-private-var {:level :warning}}}

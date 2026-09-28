@@ -4,11 +4,9 @@
   (:require
    [clj-kondo.core :as kondo]
    [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.classpath-test :refer [project!]]
+   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! analyzed-files]]
    [clojure-lite-lsp.indexer :as indexer]
-   [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project!]]
-   [clojure-lite-lsp.reuse-test :refer [analyzed-files]]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project!]]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is]]))
 

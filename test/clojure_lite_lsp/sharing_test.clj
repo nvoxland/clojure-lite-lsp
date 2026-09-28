@@ -3,29 +3,13 @@
   unless the projects give it genuinely different configs."
   (:require
    [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
+   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! count-of project-using]]
    [clojure-lite-lsp.indexer :as indexer]
-   [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project! count-of]]
-   [clojure-lite-lsp.kondo-config-test :refer [jar! maven-jar!]]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [jar! maven-jar!]]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]))
-
-(defn project-using
-  "A project whose deps.edn uses the given jars, with one source file. A
-  jar is a path, or [lib path] for jars with Maven metadata: tools.deps
-  reads the poms inside local jars, so a jar depending on acme/y resolves
-  only when acme/y is itself declared under that name."
-  [jars]
-  (project! {"deps.edn" (pr-str {:paths ["src"]
-                                 :deps (into {} (map-indexed (fn [i j]
-                                                               (if (vector? j)
-                                                                 [(first j) {:local/root (second j)}]
-                                                                 [(symbol "dep" (str "d" i)) {:local/root j}]))
-                                                             jars))})
-             "src/app/core.clj" (str "(ns app.core) (defn own-" (hash jars) " [] 1)")}))
 
 (defn analyzed-jars
   "Run f, returning the file names of the jars analyzed meanwhile."

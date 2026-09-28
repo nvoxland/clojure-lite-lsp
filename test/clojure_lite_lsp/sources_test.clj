@@ -2,9 +2,8 @@
   (:require
    [clojure-lite-lsp.digest :as digest]
    [clojure-lite-lsp.kondo-config :as kc]
-   [clojure-lite-lsp.kondo-config-test :refer [jar!]]
    [clojure-lite-lsp.sources :as sources]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [jar!]]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]))
 

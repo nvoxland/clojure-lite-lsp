@@ -1,23 +1,8 @@
 (ns clojure-lite-lsp.normalize-test
   (:require
-   [clj-kondo.core :as kondo]
+   [clojure-lite-lsp.index-fixture :refer [kondo]]
    [clojure-lite-lsp.normalize :as normalize]
    [clojure.test :refer [deftest is testing]]))
-
-(defn kondo
-  "Run clj-kondo on `code` as file `filename` with the options clojure-lite-lsp uses."
-  [code filename & {:keys [external?]}]
-  (with-in-str code
-    (kondo/run! {:lint ["-"]
-                 :filename filename
-                 :lang (keyword (re-find #"[^.]+$" filename))
-                 :cache false
-                 :skip-lint external?
-                 :config {:output {:canonical-paths true}
-                          :linters normalize/kept-linters
-                          :analysis (if external?
-                                      normalize/dependency-analysis-options
-                                      normalize/project-analysis-options)}})))
 
 (defn elements
   "The normalized elements of `code`, as the only file analyzed."

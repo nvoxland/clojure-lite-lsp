@@ -1,9 +1,7 @@
 (ns clojure-lite-lsp.java-test
   (:require
-   [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.java :as java]
-   [clojure-lite-lsp.kondo-config-test :refer [jar!]]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project! jar!]]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]))
 

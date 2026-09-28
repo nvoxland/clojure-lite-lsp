@@ -1,10 +1,8 @@
 (ns clojure-lite-lsp.analyze-test
   (:require
    [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.kondo-config :as kc]
-   [clojure-lite-lsp.kondo-config-test :refer [jar! files-in]]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project! jar! files-in]]
    [clojure.test :refer [deftest is testing]]
    [clojure.walk :as walk]))
 

@@ -2,18 +2,16 @@
   "Things that go wrong in real use (DESIGN.md Phase 6)."
   (:require
    [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
    [clojure-lite-lsp.home :as home]
+   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! count-of]]
    [clojure-lite-lsp.indexer :as indexer]
-   [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project! count-of]]
-   [clojure-lite-lsp.kondo-config-test :refer [jar!]]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project! jar! eventually]]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]))
@@ -95,9 +93,6 @@
         (with-redefs [analyze/analyze-files (fn [& _] (throw (ex-info "boom" {})))]
           (indexer/run-until-idle! ix))
         (is (zero? (queue/pending-count c p)))))))
-
-(defn eventually [f]
-  (loop [n 0] (or (f) (when (< n 3000) (Thread/sleep 20) (recur (inc n))))))
 
 (deftest a-daemon-killed-mid-write
   ;; a real daemon process, killed with SIGKILL while indexing: the next one

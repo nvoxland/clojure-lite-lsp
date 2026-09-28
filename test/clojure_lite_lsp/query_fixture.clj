@@ -3,12 +3,11 @@
   index, so jars (Clojure itself) are analyzed once and then only linked,
   thanks to content addressing."
   (:require
-   [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project!]]
    [clojure.java.io :as io]
    [clojure.string :as str]))
 

@@ -1,83 +1,63 @@
 (ns clojure-lite-lsp.cli-test
-  "The commands for humans: index projects and wait, collect garbage."
+  "The commands besides the servers: index projects and wait, collect
+  garbage, stop the indexer, query."
   (:require
    [cheshire.core :as json]
    [clojure-lite-lsp.cli :as cli]
-   [clojure-lite-lsp.client :as client]
-   [clojure-lite-lsp.daemon :as daemon]
-   [clojure-lite-lsp.daemon-test :refer [home project! fast client-db]]
-   [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.daemon-fixture :refer [home client-db with-in-process-daemons]]
    [clojure-lite-lsp.home :as home]
+   [clojure-lite-lsp.index-fixture :as index-fixture]
+   [clojure-lite-lsp.kinds :as kinds]
    [clojure-lite-lsp.lock :as lock]
-   [clojure-lite-lsp.test-util :as tu]
-   [clojure-lite-lsp.version :as version]
+   [clojure-lite-lsp.test-util :as tu :refer [build-free-project!]]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]))
 
-(defn opts
-  "Client options whose daemon runs in this process."
-  [h daemons]
-  {:home h :spawn! #(swap! daemons conj (future (daemon/serve! (merge fast {:home h :version version/version}))))})
-
-(defn stop! [h daemons]
-  (with-open [c (client-db h)] (client/request-stop! c))
-  (doseq [d @daemons] (deref d 30000 :timeout)))
-
-(defn defs [h]
+(defn- defs
+  "How many var definitions the index of home `h` has."
+  [h]
   (with-open [c (client-db h)]
-    (db/query-value c "SELECT count(*) FROM definition WHERE kind = 1")))
+    (index-fixture/count-of c "definition WHERE kind = ?" (kinds/code :var-def))))
+
+(def ^:private ignore-progress (constantly nil))
 
 (deftest index-waits-until-the-projects-are-indexed
-  (let [h (home)
-        daemons (atom [])
-        a (project! {"src/a.clj" "(ns a) (defn f [] 1)"})
-        b (project! {"src/b.clj" "(ns b) (defn g [] 1) (defn h [] 2)"})
-        progress (atom [])]
-    (try
-      (let [result (cli/index! (opts h daemons) [a b] #(swap! progress conj %))]
-        (is (= 3 (defs h)) "done when it returns")
-        (is (= {a 1 b 1} (:files result)))
-        (is (seq @progress) "reports progress"))
-      (finally (stop! h daemons)))))
+  (with-in-process-daemons [o h _]
+    (let [a (build-free-project! {"src/a.clj" "(ns a) (defn f [] 1)"})
+          b (build-free-project! {"src/b.clj" "(ns b) (defn g [] 1) (defn h [] 2)"})
+          progress (atom [])
+          result (cli/index! o [a b] #(swap! progress conj %))]
+      (is (= 3 (defs h)) "done when it returns")
+      (is (= {a 1 b 1} (:files result)))
+      (is (seq @progress) "reports progress"))))
 
 (deftest gc-goes-through-the-daemon
-  (let [h (home)
-        daemons (atom [])
-        root (project! {"src/a.clj" "(ns a) (defn f [] 1)"})
-        o (opts h daemons)]
-    (try
-      (cli/index! o [root] (fn [_]))
+  (with-in-process-daemons [o _ daemons]
+    (let [root (build-free-project! {"src/a.clj" "(ns a) (defn f [] 1)"})]
+      (cli/index! o [root] ignore-progress)
       (spit (io/file root "src/a.clj") "(ns a) (defn f [] 2)")
-      (cli/index! o [root] (fn [_]))
+      (cli/index! o [root] ignore-progress)
       (testing "the replaced analysis is dropped"
         (is (= 1 (:units (cli/gc! o)))))
-      (is (= 1 (count @daemons)) "by the one daemon")
-      (finally (stop! h daemons)))))
+      (is (= 1 (count @daemons)) "by the one daemon"))))
 
 (deftest concurrent-gc-requests-all-finish
-  (let [h (home)
-        daemons (atom [])
-        o (opts h daemons)]
-    (try
-      (cli/index! o [(project! {"src/a.clj" "(ns a)"})] (fn [_]))
-      (let [runs (doall (for [_ (range 3)] (future (cli/gc! o))))]
-        (is (every? map? (map #(deref % 60000 :hung) runs))))
-      (finally (stop! h daemons)))))
+  (with-in-process-daemons [o _ _]
+    (cli/index! o [(build-free-project! {"src/a.clj" "(ns a)"})] ignore-progress)
+    (let [runs (doall (for [_ (range 3)] (future (cli/gc! o))))]
+      (is (every? map? (map #(deref % 60000 :hung) runs))))))
 
 (deftest index-refuses-what-isnt-a-directory
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Not a directory"
                         (cli/index! {:home (home) :spawn! #(throw (ex-info "no daemon needed" {}))}
-                                    ["/no/such/dir"] (fn [_])))))
+                                    ["/no/such/dir"] ignore-progress))))
 
 (deftest query-answers-from-the-projects-index
-  (let [h (home)
-        daemons (atom [])
-        root (project! {"src/app/a.clj" "(ns app.a)\n(defn greet [who] who)\n"
-                        "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/greet 1)\n"})
-        o (opts h daemons)
-        q #(cli/query! o %& {:cwd root})]
-    (try
+  (with-in-process-daemons [o _ _]
+    (let [root (build-free-project! {"src/app/a.clj" "(ns app.a)\n(defn greet [who] who)\n"
+                                     "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/greet 1)\n"})
+          q #(cli/query! o %& {:cwd root})]
       (testing "it indexes the project first, then answers"
         (is (= {:exit 0 :out "src/app/b.clj:2:2: (a/greet 1)"} (q "references" "app.a/greet"))))
       (testing "the project is found from a directory inside it"
@@ -97,15 +77,11 @@
       (testing "an unknown command: an error and the commands"
         (let [{:keys [exit out]} (q "frobnicate" "x")]
           (is (= 2 exit))
-          (is (str/includes? out "definition"))))
-      (finally (stop! h daemons)))))
+          (is (str/includes? out "definition")))))))
 
 (deftest query-outside-a-project-and-failures
-  (let [h (home)
-        daemons (atom [])
-        o (opts h daemons)
-        bare (str (tu/temp-dir))]
-    (try
+  (with-in-process-daemons [o _ _]
+    (let [bare (str (tu/temp-dir))]
       (testing "not in a Clojure project: said so, exit 1"
         (let [{:keys [exit out]} (cli/query! o ["definition" "a/b"] {:cwd bare})]
           (is (= 1 exit))
@@ -115,17 +91,13 @@
           (is (= 1 exit))
           (is (not (str/includes? out "Commands:")))))
       (testing "--limit"
-        (let [root (project! {"src/app/a.clj" "(ns app.a)\n(defn g [] 1)\n(g) (g) (g)\n"})
+        (let [root (build-free-project! {"src/app/a.clj" "(ns app.a)\n(defn g [] 1)\n(g) (g) (g)\n"})
               {:keys [out]} (cli/query! o ["references" "app.a/g" "--limit" "1"] {:cwd root})]
-          (is (= 2 (count (str/split-lines out))))))
-      (finally (stop! h daemons)))))
+          (is (= 2 (count (str/split-lines out)))))))))
 
-(deftest stop-ends-the-indexer
-  (let [h (home)
-        daemons (atom [])
-        o (opts h daemons)]
+(deftest stop-ends-the-daemon
+  (with-in-process-daemons [o h _]
     (is (= :not-running (cli/stop! o)))
-    (cli/index! o [(project! {"src/a.clj" "(ns a)"})] (fn [_]))
+    (cli/index! o [(build-free-project! {"src/a.clj" "(ns a)"})] ignore-progress)
     (is (= :stopped (cli/stop! o)))
-    (is (not (lock/held? (:daemon-lock (home/paths h)))))
-    (doseq [d @daemons] (deref d 30000 :timeout))))
+    (is (not (lock/held? (:daemon-lock (home/paths h)))))))

@@ -2,50 +2,16 @@
   (:require
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.daemon :as daemon]
+   [clojure-lite-lsp.daemon-fixture :refer [home fast client-db start!]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [build-free-project! eventually]]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]))
-
-(defn home [] (str (tu/temp-dir)))
-
-(defn project!
-  "A project without a build tool: its .clojure-lite-lsp.edn names the source dir, so
-  indexing it needs no classpath and no jars."
-  [files]
-  (let [root (.getCanonicalPath (tu/temp-dir))]
-    (spit (io/file root ".clojure-lite-lsp.edn") "{:extra-source-paths [\"src\"]}")
-    (doseq [[path code] files]
-      (let [f (io/file root path)] (io/make-parents f) (spit f code)))
-    root))
-
-(def fast {:poll-ms 20 :idle-exit-ms 60000 :gc-after-idle-ms 60000 :version "test"})
-
-(defn eventually
-  "Wait (up to 30 s) for (f) to be truthy; return its value."
-  [f]
-  (loop [n 0]
-    (or (f)
-        (if (< n 1500) (do (Thread/sleep 20) (recur (inc n))) nil))))
-
-(defn start!
-  "Run a daemon in a future, returning once it is up (as clients do through
-  ensure-daemon!, since the daemon creates the schema)."
-  [h opts]
-  (.mkdirs (io/file (:dir (home/paths h))))
-  (let [d (future (daemon/serve! (merge fast {:home h} opts)))]
-    (eventually #(or (realized? d)
-                     (with-open [c (db/open-client (:db (home/paths h)))]
-                       (try (db/query-value c "SELECT version FROM daemon WHERE id = 1")
-                            (catch java.sql.SQLException _ nil)))))
-    d))
-
-(defn client-db [h] (db/open-client (:db (home/paths h))))
 
 (deftest locks
   (let [f (str (io/file (home) "x.lock"))
@@ -60,7 +26,7 @@
 (deftest the-daemon-works-the-queue-and-stops-on-request
   (let [h (home)
         d (start! h {})
-        root (project! {"src/a.clj" "(ns a) (defn f [] 1)"})]
+        root (build-free-project! {"src/a.clj" "(ns a) (defn f [] 1)"})]
     (is (eventually #(lock/held? (:daemon-lock (home/paths h)))))
     (with-open [c (client-db h)]
       (is (eventually #(= "test" (db/query-value c "SELECT version FROM daemon WHERE id = 1"))))
@@ -81,7 +47,7 @@
 (deftest the-daemon-collects-garbage-when-idle
   (let [h (home)
         d (start! h {:gc-after-idle-ms 100})
-        root (project! {"src/a.clj" "(ns a) (defn f [] 1)" "src/b.clj" "(ns b)"})]
+        root (build-free-project! {"src/a.clj" "(ns a) (defn f [] 1)" "src/b.clj" "(ns b)"})]
     (with-open [c (client-db h)]
       (let [p (snapshot/ensure-project! c root)]
         (queue/enqueue! c p :sync "" 1)
@@ -215,7 +181,7 @@
   ;; a client enqueues while the idle daemon is on its way out (still
   ;; holding its lock, so the client sees it running)
   (let [h (home)
-        root (project! {"src/a.clj" "(ns a) (defn f [] 1)"})
+        root (build-free-project! {"src/a.clj" "(ns a) (defn f [] 1)"})
         real @#'daemon/unregister!
         once (atom true)]
     (with-redefs [daemon/unregister! (fn [c]
@@ -245,7 +211,7 @@
 
 (deftest the-daemon-survives-an-error-in-its-loop
   (let [h (home)
-        root (project! {"src/a.clj" "(ns a) (defn f [] 1)"})
+        root (build-free-project! {"src/a.clj" "(ns a) (defn f [] 1)"})
         real indexer/step!
         once (atom true)]
     (with-redefs [indexer/step! (fn [ix]

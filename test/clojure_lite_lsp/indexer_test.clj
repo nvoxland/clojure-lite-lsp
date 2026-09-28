@@ -1,13 +1,10 @@
 (ns clojure-lite-lsp.indexer-test
   (:require
    [clojure-lite-lsp.analyze :as analyze]
-   [clojure-lite-lsp.classpath-test :refer [project!]]
-   [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.index-fixture :refer [visible-defs sync-project! count-of]]
    [clojure-lite-lsp.indexer :as indexer]
-   [clojure-lite-lsp.kondo-config-test :refer [jar!]]
    [clojure-lite-lsp.queue :as queue]
-   [clojure-lite-lsp.snapshot :as snapshot]
-   [clojure-lite-lsp.test-util :as tu]
+   [clojure-lite-lsp.test-util :as tu :refer [project! jar!]]
    [clojure-lite-lsp.writer :as writer]
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]))
@@ -25,23 +22,6 @@
                         "src/app/a.clj" "(ns app.a (:require [acme.lib :as lib])) (defn fa [] (lib/from-jar))"
                         "src/app/b.clj" "(ns app.b) (defn fb [] 1)"})]
     {:root root :lib lib :ext ext}))
-
-(defn visible-defs
-  "The var definitions project `p` can see, as #{\"ns/name\"}."
-  [c p]
-  (set (map first (db/query c "SELECT n.text || '/' || m.text FROM definition d
-                               JOIN project_unit pu ON pu.unit_id = d.unit_id AND pu.project_id = ?
-                               JOIN sym n ON n.id = d.ns JOIN sym m ON m.id = d.name
-                               WHERE d.kind = 1" p))))
-
-(defn count-of [c table] (db/query-value c (str "SELECT count(*) FROM " table)))
-
-(defn sync-project! [ix root]
-  (let [c (:c ix)
-        p (snapshot/ensure-project! c root)]
-    (queue/enqueue! c p :sync "" 1)
-    (indexer/run-until-idle! ix)
-    p))
 
 (deftest indexes-a-project-its-jar-and-external-dirs
   (let [{:keys [root]} (fixture)]
