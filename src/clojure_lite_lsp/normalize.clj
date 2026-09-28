@@ -38,12 +38,11 @@
    :java-member-definitions false
    :var-definitions {:shallow true :meta [:deprecated]}})
 
-(defn only-unresolved-namespace-linter
-  "Every clj-kondo linter off except those whose findings csl keeps:
-  :unresolved-namespace, the only record of calls through an unknown
-  namespace (every one: duplicates too), and :refer-all and :use, which
-  mark the namespaces a file refers all of."
-  []
+(def kept-linters
+  "clj-kondo's linters for project files: every one off except those whose
+  findings clojure-lite-lsp keeps. :unresolved-namespace is the only record
+  of calls through an unknown namespace (every one: duplicates too);
+  :refer-all and :use mark the namespaces a file refers all of."
   (-> (update-vals (:linters kondo-config/default-config) (constantly {:level :off}))
       (assoc :unresolved-namespace {:level :warning :report-duplicates true}
              :refer-all {:level :warning}
@@ -114,68 +113,64 @@
                               :alias (sname (:alias e))
                               :pos [(:alias-row e) (:alias-col e) (:alias-end-row e) (:alias-end-col e)])))))
 
-(defn- keyword-element [external? e]
-  (let [el (cond-> (assoc (base (if (:reg e) :keyword-def :keyword-usage) e)
-                          :ns (sname (:ns e)) :name (sname (:name e)))
-             ;; ::al/k: a use of the alias
-             (:alias e) (assoc :alias (sname (:alias e))))]
-    (cond
-      (:reg e) [(assoc el :defined-by (sname (:reg e)))]
-      external? []
-      :else [el])))
+(defn- keyword-element [external? {:keys [reg] :as e}]
+  ;; a dependency's keywords matter only where they're registered
+  (when (or reg (not external?))
+    [(cond-> (assoc (base (if reg :keyword-def :keyword-usage) e)
+                    :ns (sname (:ns e)) :name (sname (:name e)))
+       ;; ::al/k: a use of the alias
+       (:alias e) (assoc :alias (sname (:alias e)))
+       reg (assoc :defined-by (sname reg)))]))
 
-(defn- bucket->elements [external? bucket elements]
+(defn- raw->elements
+  "The elements of one entry `e` of clj-kondo's analysis `bucket`."
+  [external? bucket e]
   (case bucket
     :namespace-definitions
-    (map #(cond-> (assoc (base :ns-def %) :name (sname (:name %)) :form (form-pos %))
-            (:doc %) (assoc :doc (:doc %)))
-         elements)
+    [(cond-> (assoc (base :ns-def e) :name (sname (:name e)) :form (form-pos e))
+       (:doc e) (assoc :doc (:doc e)))]
 
     :namespace-usages
-    (mapcat namespace-usage elements)
+    (namespace-usage e)
 
     :var-definitions
-    (keep #(when (and (:name %) (not (and external? (:private %))))
-             (var-definition %))
-          elements)
+    (when (and (:name e) (not (and external? (:private e))))
+      [(var-definition e)])
 
     :var-usages
-    (map var-usage elements)
+    [(var-usage e)]
 
     :keywords
-    (mapcat #(keyword-element external? %) elements)
+    (keyword-element external? e)
 
     :locals
-    (map #(assoc (base :local %)
-                 :name (sname (:name %)) :local-id (:id %)
-                 :form [(:row %) (:col %) (:scope-end-row %) (:scope-end-col %)])
-         elements)
+    [(assoc (base :local e)
+            :name (sname (:name e)) :local-id (:id e)
+            :form [(:row e) (:col e) (:scope-end-row e) (:scope-end-col e)])]
 
     :local-usages
-    (map #(assoc (base :local-usage %) :name (sname (:name %)) :local-id (:id %)) elements)
+    [(assoc (base :local-usage e) :name (sname (:name e)) :local-id (:id e))]
 
     :symbols
     ;; a quoted symbol of a namespace that isn't required (or in .edn) has
     ;; no :to: the namespace written in it
-    (map #(assoc (base :symbol-usage %)
-                 :ns (sname (or (:to %) (some-> (:symbol %) namespace)))
-                 :name (sname (:name %)) :from-ns (sname (:from %)))
-         elements)
+    [(assoc (base :symbol-usage e)
+            :ns (sname (or (:to e) (some-> (:symbol e) namespace)))
+            :name (sname (:name e)) :from-ns (sname (:from e)))]
 
     :protocol-impls
-    (map #(assoc (base :protocol-impl %)
-                 :ns (sname (:protocol-ns %)) :name (sname (:method-name %))
-                 :impl-ns (sname (:impl-ns %)) :form (form-pos %)
-                 :defined-by (sname (:defined-by %)))
-         elements)
+    [(assoc (base :protocol-impl e)
+            :ns (sname (:protocol-ns e)) :name (sname (:method-name e))
+            :impl-ns (sname (:impl-ns e)) :form (form-pos e)
+            :defined-by (sname (:defined-by e)))]
 
     :java-class-definitions
-    (map #(assoc (base :java-class-def %) :name (sname (:class %)) :pos nil) elements)
+    [(assoc (base :java-class-def e) :name (sname (:class e)) :pos nil)]
 
     :java-class-usages
-    (map #(assoc (base :java-class-usage %) :name (sname (:class %))) elements)
+    [(assoc (base :java-class-usage e) :name (sname (:class e)))]
 
-    []))
+    nil))
 
 (defn- finding->elements [{:keys [type filename row col end-row end-col] :as f}]
   (when (= :unresolved-namespace type)
@@ -240,7 +235,7 @@
         at #(vector (:row %) (:col %))
         refer-all (set (keep (fn [f] (last (filter #(before? (take 2 (:pos %)) (at f)) usages)))
                              (filter #(= :refer-all (:type %)) findings)))
-        use-from (some->> (filter #(= :use (:type %)) findings) (map at) sort first)
+        use-from (->> (filter #(= :use (:type %)) findings) (map at) sort first)
         refer-all? #(or (refer-all %)
                         (and use-from (before? use-from (take 2 (:pos %)))))]
     (mapv #(if (and (= :ns-usage (:kind %)) (refer-all? %)) (update % :flags (fnil conj #{}) :refer-all) %) els)))
@@ -250,20 +245,20 @@
   [{:keys [analysis findings]} {:keys [external?]}]
   (let [from-analysis (for [[bucket raws] analysis
                             raw raws
-                            :let [els (bucket->elements external? bucket [raw])]
-                            el els
+                            el (raw->elements external? bucket raw)
                             :when (valid? raw el)]
                         (assoc el :filename (:filename raw)))
         from-findings (when-not external? (mapcat finding->elements findings))
-        from-refs (refs analysis)]
-    (let [findings-by-file (group-by :filename findings)]
-      (into {}
-            (map (fn [[filename els]]
-                   (let [els (-> (mapv #(dissoc % :filename) els)
-                                 (mark-refer-alls (findings-by-file filename)))]
-                     ;; only a .cljc file is analyzed once per language
-                     [filename (if (str/ends-with? filename ".cljc") (merge-langs els) els)])))
-            (group-by :filename (concat from-analysis from-findings from-refs))))))
+        findings-by-file (group-by :filename findings)]
+    (into {}
+          (map (fn [[filename els]]
+                 (let [els (-> (mapv #(dissoc % :filename) els)
+                               (mark-refer-alls (findings-by-file filename)))]
+                   ;; only a .cljc file is analyzed once per language
+                   [filename (cond-> els (str/ends-with? filename ".cljc") merge-langs)])))
+          (group-by :filename (concat from-analysis from-findings (refs analysis))))))
 
-(defn file-extension [filename]
+(defn file-extension
+  "The extension of `filename`, lower case, or nil."
+  [filename]
   (some-> (re-find #"\.([^./:]+)$" filename) second str/lower-case))

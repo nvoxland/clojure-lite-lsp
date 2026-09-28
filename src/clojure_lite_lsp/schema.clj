@@ -147,3 +147,16 @@
       id INTEGER PRIMARY KEY CHECK (id = 1), pid INTEGER, version TEXT,
       started_at INTEGER, heartbeat_at INTEGER,
       stop_requested INTEGER NOT NULL DEFAULT 0)"])
+
+;;;; meta keys clients and the daemon talk through
+
+(def gc-request-prefix
+  "meta key prefix of a client's request for garbage collection, by id."
+  "gc_request:")
+
+(defn gc-request-key [id] (str gc-request-prefix id))
+
+(defn gc-result-key
+  "meta key of the daemon's answer to garbage collection request `id`."
+  [id]
+  (str "gc_result:" id))

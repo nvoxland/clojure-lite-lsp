@@ -15,42 +15,42 @@
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.kinds :as kinds]
    [clojure-lite-lsp.writer :as writer]
+   [clojure.java.io :as io]
    [clojure.string :as str]))
 
 (def default-project-max-age-ms (* 1000 60 60 24 30))
 
-(def ^:private batch 500)
-
-(defn- in [n] (str "(" (str/join "," (repeat n "?")) ")"))
+(def ^:private units-per-tx 500)
 
 (defn- drop-stale-projects! [c max-age-ms]
   (let [ids (map first (db/query c "SELECT id FROM project WHERE last_seen < ?"
                                  (- (System/currentTimeMillis) max-age-ms)))]
     (doseq [p ids
-            t ["project_file" "project_jar" "project_unit" "pending" "classpath_memo"]]
-      (db/execute! c (str "DELETE FROM " t " WHERE project_id = ?") p))
-    (doseq [p ids] (db/execute! c "DELETE FROM project WHERE id = ?" p))
+            [table col] [["project_file" "project_id"] ["project_jar" "project_id"] ["project_unit" "project_id"]
+                         ["pending" "project_id"] ["classpath_memo" "project_id"] ["project" "id"]]]
+      (db/execute! c (str "DELETE FROM " table " WHERE " col " = ?") p))
     (count ids)))
 
 (defn- delete-units! [c us]
-  (let [q (in (count us))
+  (let [in-units (str "(" (db/placeholders us) ")")
         usage-kinds (str/join "," (map kinds/code kinds/usage-kinds))
         searchable-kinds (str/join "," (map kinds/code kinds/searchable-kinds))
-        names (map first (apply db/query c (str "SELECT DISTINCT name FROM definition WHERE unit_id IN " q
+        names (map first (apply db/query c (str "SELECT DISTINCT name FROM definition WHERE unit_id IN " in-units
                                                 " AND kind IN (" searchable-kinds ")")
                                 us))]
     ;; a unit's usage rows are found through its file elements, which hold
     ;; the whole usage key (usage has no unit_id index)
     (apply db/execute! c (str "DELETE FROM usage WHERE (to_ns, name, unit_id, name_row, name_col, lang, kind) IN (
                                  SELECT ns, name, unit_id, name_row, name_col, lang, kind FROM file_element
-                                 WHERE unit_id IN " q " AND kind IN (" usage-kinds "))")
+                                 WHERE unit_id IN " in-units " AND kind IN (" usage-kinds "))")
            us)
-    (apply db/execute! c (str "DELETE FROM file_element WHERE unit_id IN " q) us)
-    (apply db/execute! c (str "DELETE FROM doc WHERE definition_id IN (SELECT id FROM definition WHERE unit_id IN " q ")") us)
-    (apply db/execute! c (str "DELETE FROM definition WHERE unit_id IN " q) us)
-    (apply db/execute! c (str "DELETE FROM unit_key WHERE unit_id IN " q) us)
-    (apply db/execute! c (str "DELETE FROM unit_ref WHERE unit_id IN " q) us)
-    (apply db/execute! c (str "DELETE FROM unit WHERE id IN " q) us)
+    (doseq [sql [(str "DELETE FROM file_element WHERE unit_id IN " in-units)
+                 (str "DELETE FROM doc WHERE definition_id IN (SELECT id FROM definition WHERE unit_id IN " in-units ")")
+                 (str "DELETE FROM definition WHERE unit_id IN " in-units)
+                 (str "DELETE FROM unit_key WHERE unit_id IN " in-units)
+                 (str "DELETE FROM unit_ref WHERE unit_id IN " in-units)
+                 (str "DELETE FROM unit WHERE id IN " in-units)]]
+      (apply db/execute! c sql us))
     (doseq [n names
             :when (nil? (db/query-value c (str "SELECT 1 FROM definition WHERE name = ? AND kind IN (" searchable-kinds ") LIMIT 1") n))]
       (db/execute! c "DELETE FROM name_fts WHERE rowid = ?" n))))
@@ -101,13 +101,13 @@
 (defn- sweep?
   "Sweep symbols now? It scans every symbol reference in the index, holding
   the write lock: after a project or jar went, many units, a day since the
-  last, or when asked (`sweep` :always, csl gc). Not after a few edits."
+  last, or when asked (`sweep` :always, clojure-lite-lsp gc). Not after a few edits."
   [c sweep projects jars dead]
   (or (= :always sweep)
       (and (pos? (+ projects jars dead))
            (or (pos? projects) (pos? jars) (> dead sweep-after-units)
-               (let [last (some-> (db/query-value c "SELECT value FROM meta WHERE key = 'last_sweep'") parse-long)]
-                 (or (nil? last) (> (- (System/currentTimeMillis) last) sweep-every-ms)))))))
+               (let [last-sweep (some-> (db/query-value c "SELECT value FROM meta WHERE key = 'last_sweep'") parse-long)]
+                 (or (nil? last-sweep) (> (- (System/currentTimeMillis) last-sweep) sweep-every-ms)))))))
 
 (defn collect!
   "Collect garbage through writer `w`. Returns what was dropped:
@@ -119,12 +119,12 @@
                                       [(drop-stale-projects! c project-max-age-ms)
                                        (drop-dead-jars! c)
                                        (drop-orphan-dep-files! c)])
-          _ (doseq [path dep-files] (.delete (java.io.File. ^String path)))
+          _ (run! #(io/delete-file % true) dep-files)
           dead (map first (db/query c "SELECT id FROM unit WHERE id NOT IN (SELECT unit_id FROM project_unit)
                                        AND id NOT IN (SELECT unit_id FROM dep_file)"))]
       ;; dead units are unreachable, so deleting them a batch at a time is
       ;; as good as at once
-      (doseq [us (partition-all batch dead)]
+      (doseq [us (partition-all units-per-tx dead)]
         (writer/with-write-tx w (delete-units! c us)))
       (when (sweep? c sweep projects jars (count dead))
         (writer/with-write-tx w

@@ -7,6 +7,7 @@
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.daemon-test :refer [home project! fast client-db]]
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.test-util :as tu]
    [clojure-lite-lsp.version :as version]
@@ -17,7 +18,7 @@
 (defn opts
   "Client options whose daemon runs in this process."
   [h daemons]
-  {:home h :spawn! #(swap! daemons conj (future (daemon/run! (merge fast {:home h :version version/version}))))})
+  {:home h :spawn! #(swap! daemons conj (future (daemon/serve! (merge fast {:home h :version version/version}))))})
 
 (defn stop! [h daemons]
   (with-open [c (client-db h)] (client/request-stop! c))
@@ -126,5 +127,5 @@
     (is (= :not-running (cli/stop! o)))
     (cli/index! o [(project! {"src/a.clj" "(ns a)"})] (fn [_]))
     (is (= :stopped (cli/stop! o)))
-    (is (not (lock/held? (:daemon-lock (daemon/paths h)))))
+    (is (not (lock/held? (:daemon-lock (home/paths h)))))
     (doseq [d @daemons] (deref d 30000 :timeout))))

@@ -20,9 +20,12 @@
   (:require
    [cheshire.core :as json]
    [clojure-lite-lsp.commands :as commands]
+   [clojure-lite-lsp.process :as process]
    [clojure-lite-lsp.version :as version]
    [clojure.java.io :as io]
-   [clojure.string :as str]))
+   [clojure.string :as str])
+  (:import
+   [java.util.regex Pattern]))
 
 (set! *warn-on-reflection* true)
 
@@ -68,14 +71,16 @@
 (def ^:private start-marker "<!-- clojure-lite-lsp:start -->")
 (def ^:private end-marker "<!-- clojure-lite-lsp:end -->")
 
+(defn- occurrences [s sub] (count (re-seq (re-pattern (Pattern/quote sub)) s)))
+
 (defn- replace-section
   "[text note]: `text` with its marked clojure-lite-lsp section replaced by
   `section`, or `section` appended. A damaged section (a marker missing or
   repeated, or out of order) is left for the user: [text note]."
   [text section file]
   (let [block (str start-marker "\n" section end-marker "\n")
-        starts (count (re-seq (re-pattern (java.util.regex.Pattern/quote start-marker)) text))
-        ends (count (re-seq (re-pattern (java.util.regex.Pattern/quote end-marker)) text))
+        starts (occurrences text start-marker)
+        ends (occurrences text end-marker)
         start (str/index-of text start-marker)
         end (some-> (str/index-of text end-marker) (+ (count end-marker)))]
     (cond
@@ -96,14 +101,15 @@
 (defn- depth-change
   "How many arrays `line` opens minus closes, outside strings and comments."
   [^String line]
-  (loop [i 0 depth 0 quote nil]
+  (loop [i 0 depth 0 in-string nil]
     (if (>= i (count line))
       depth
       (let [c (.charAt line i)]
         (cond
-          quote (cond (= \\ c) (recur (+ i 2) depth quote)
-                      (.equals ^Object quote c) (recur (inc i) depth nil)
-                      :else (recur (inc i) depth quote))
+          ;; only "..." has escapes: '...' is literal
+          in-string (cond (and (= \" in-string) (= \\ c)) (recur (+ i 2) depth in-string)
+                          (= in-string c) (recur (inc i) depth nil)
+                          :else (recur (inc i) depth in-string))
           (#{\" \'} c) (recur (inc i) depth c)
           (= \# c) depth
           (= \[ c) (recur (inc i) (inc depth) nil)
@@ -161,34 +167,26 @@
 ;;;; agents' CLIs
 
 (defn run-command
-  "Run `cmd` in `cwd`: {:exit :out}; exit 127 when it can't be started, 124
-  when it didn't end within `timeout-ms`. Its stdin is closed: nothing
-  waits on input that can't come."
-  [cmd cwd & [{:keys [timeout-ms] :or {timeout-ms 120000}}]]
-  (try
-    (let [p (-> (ProcessBuilder. ^java.util.List (vec cmd))
-                (.directory (io/file cwd))
-                (.redirectErrorStream true)
-                (.start))
-          _ (.close (.getOutputStream p))
-          out (future (slurp (.getInputStream p)))]
-      (if (.waitFor p (long timeout-ms) java.util.concurrent.TimeUnit/MILLISECONDS)
-        {:exit (.exitValue p) :out @out}
-        (do (.destroyForcibly p)
-            {:exit 124 :out (str (str/join " " cmd) " didn't finish in " (quot timeout-ms 1000) " s")})))
-    (catch java.io.IOException e {:exit 127 :out (ex-message e)})))
+  "Run `cmd` in `cwd`: {:exit :out}, its output and errors together
+  (`process/run`)."
+  ([cmd cwd] (run-command cmd cwd {}))
+  ([cmd cwd opts]
+   (let [{:keys [exit out err]} (process/run cmd (assoc opts :dir cwd :merge-err? true))]
+     {:exit exit :out (str out err)})))
 
 (defn- has-cli? [run cli dir] (zero? (:exit (run [cli "--version"] dir))))
 
 ;;;; agents
 
-(defn- claude! [{:keys [dir home run]}]
-  (let [market (str (io/file home "claude-marketplace"))
-        description "Clojure code navigation from clojure-lite-lsp"
-        plugin-id (str binary "@" binary)
-        install ["claude" "plugin" "install" plugin-id "--scope" "project"]]
+(def ^:private plugin-description "Clojure code navigation from clojure-lite-lsp")
+
+(defn- write-marketplace!
+  "Write the Claude Code plugin marketplace with this server into `home`:
+  its directory."
+  [home]
+  (let [market (str (io/file home "claude-marketplace"))]
     (write! market "plugin/.claude-plugin/plugin.json"
-            (json-str {:name binary :version version/version :description description :author author}))
+            (json-str {:name binary :version version/version :description plugin-description :author author}))
     (write! market "plugin/.lsp.json"
             (json-str {binary {:command binary :args ["lsp"]
                                :extensionToLanguage (into (sorted-map) (map (fn [e] [e "clojure"])) extensions)
@@ -198,58 +196,67 @@
                                ;; it has none: don't wait for them after edits
                                :diagnostics false}}))
     (write! market ".claude-plugin/marketplace.json"
-            (json-str {:name binary :owner author :description description
-                       :plugins [{:name binary :source "./plugin" :description description}]}))
-    (let [[claude-text claude-note] (replace-section (let [f (io/file dir "CLAUDE.md")] (if (.isFile f) (slurp f) ""))
-                                                     (str "## Navigating Clojure code\n\n"
-                                                          "To find where Clojure code is defined, used or called, use "
-                                                          "`clojure-lite-lsp query` (the clojure-lite-lsp skill) or the LSP tool, "
-                                                          "not grep: they resolve aliases, refers and macros. "
-                                                          "`clojure-lite-lsp query` lists the commands.\n")
-                                                     "CLAUDE.md")
-          claude-md (when-not claude-note (write! dir "CLAUDE.md" claude-text))
-          skill (write! dir ".claude/skills/clojure-lite-lsp/SKILL.md"
-                        (str "---\nname: " binary "\n"
-                             "description: Use whenever you need where a Clojure var, function, macro or namespace "
-                             "is defined, used, called or implemented, or what a function calls: run "
-                             "`clojure-lite-lsp query` instead of grep. It resolves aliases, refers and macros; "
-                             "grep misses them and matches strings and comments.\n---\n\n"
-                             "# Navigating Clojure code\n\n" (instructions "claude")))]
-      (if (has-cli? run "claude" dir)
-        (do (when-not (zero? (:exit (run ["claude" "plugin" "marketplace" "add" market] dir)))
-              ;; registered before: take this version's plugin
-              (run ["claude" "plugin" "marketplace" "update" binary] dir))
-            (let [{:keys [exit out]} (run install dir)]
-              {:wrote (remove nil? [skill claude-md (when (zero? exit) ".claude/settings.json")])
-               :notes (remove nil? [claude-note (when-not (zero? exit) (str "Installing the plugin failed: " out))])}))
-        {:wrote (remove nil? [skill claude-md])
-         :notes [(str "claude isn't on PATH. With it, run in " dir ":\n"
-                      "  claude plugin marketplace add " market "\n"
-                      "  " (str/join " " install))
-                 claude-note]}))))
+            (json-str {:name binary :owner author :description plugin-description
+                       :plugins [{:name binary :source "./plugin" :description plugin-description}]}))
+    market))
+
+(def ^:private claude-md-section
+  (str "## Navigating Clojure code\n\n"
+       "To find where Clojure code is defined, used or called, use "
+       "`clojure-lite-lsp query` (the clojure-lite-lsp skill) or the LSP tool, "
+       "not grep: they resolve aliases, refers and macros. "
+       "`clojure-lite-lsp query` lists the commands.\n"))
+
+(defn- skill-md []
+  (str "---\nname: " binary "\n"
+       "description: Use whenever you need where a Clojure var, function, macro or namespace "
+       "is defined, used, called or implemented, or what a function calls: run "
+       "`clojure-lite-lsp query` instead of grep. It resolves aliases, refers and macros; "
+       "grep misses them and matches strings and comments.\n---\n\n"
+       "# Navigating Clojure code\n\n" (instructions "claude")))
+
+(defn- slurp-if-exists [f] (if (.isFile (io/file f)) (slurp f) ""))
+
+(defn- claude! [{:keys [dir home run]}]
+  (let [market (write-marketplace! home)
+        install ["claude" "plugin" "install" (str binary "@" binary) "--scope" "project"]
+        [claude-text claude-note] (replace-section (slurp-if-exists (io/file dir "CLAUDE.md")) claude-md-section "CLAUDE.md")
+        claude-md (when-not claude-note (write! dir "CLAUDE.md" claude-text))
+        skill (write! dir ".claude/skills/clojure-lite-lsp/SKILL.md" (skill-md))]
+    (if (has-cli? run "claude" dir)
+      (do (when-not (zero? (:exit (run ["claude" "plugin" "marketplace" "add" market] dir)))
+            ;; registered before: take this version's plugin
+            (run ["claude" "plugin" "marketplace" "update" binary] dir))
+          (let [{:keys [exit out]} (run install dir)
+                installed? (zero? exit)]
+            {:wrote (filterv some? [skill claude-md (when installed? ".claude/settings.json")])
+             :notes (filterv some? [claude-note (when-not installed? (str "Installing the plugin failed: " out))])}))
+      {:wrote (filterv some? [skill claude-md])
+       :notes (filterv some? [(str "claude isn't on PATH. With it, run in " dir ":\n"
+                                   "  claude plugin marketplace add " market "\n"
+                                   "  " (str/join " " install))
+                              claude-note])})))
 
 (defn- codex! [{:keys [dir run]}]
   (let [config ".codex/config.toml"
-        f (io/file dir config)
-        agents (io/file dir "AGENTS.md")
         add ["codex" "mcp" "add" binary "--" binary "mcp"]
-        [toml toml-note] (codex-table (if (.isFile f) (slurp f) ""))
-        [md md-note] (replace-section (if (.isFile agents) (slurp agents) "")
+        [toml toml-note] (codex-table (slurp-if-exists (io/file dir config)))
+        [md md-note] (replace-section (slurp-if-exists (io/file dir "AGENTS.md"))
                                       (str "## Navigating Clojure code\n\n" (instructions "codex"))
                                       "AGENTS.md")
-        wrote (remove nil? [(when-not toml-note (write! dir config toml))
-                            (when-not md-note (write! dir "AGENTS.md" md))])
-        notes (remove nil? [toml-note md-note])]
+        wrote (filterv some? [(when-not toml-note (write! dir config toml))
+                              (when-not md-note (write! dir "AGENTS.md" md))])
+        notes (filterv some? [toml-note md-note])]
     (cond
       (not (has-cli? run "codex" dir))
-      {:wrote wrote :notes (conj (vec notes) (str "codex isn't on PATH. With it, run: " (str/join " " add)))}
+      {:wrote wrote :notes (conj notes (str "codex isn't on PATH. With it, run: " (str/join " " add)))}
 
       (zero? (:exit (run ["codex" "mcp" "get" binary] dir)))
       {:wrote wrote :notes notes}
 
       :else
       (let [{:keys [exit out]} (run add dir)]
-        {:wrote wrote :notes (cond-> (vec notes) (not (zero? exit)) (conj (str "codex mcp add failed: " out)))}))))
+        {:wrote wrote :notes (cond-> notes (not (zero? exit)) (conj (str "codex mcp add failed: " out)))}))))
 
 (def agents
   "The agents `setup` knows, and what it does for each."
@@ -260,13 +267,13 @@
   :notes [for the user]}. `home` is clojure-lite-lsp's home dir; `run`
   runs agents' CLIs (run-command); `index!` indexes the project."
   [{:keys [agent dir home run index!] :or {run run-command}}]
-  (let [f (or (agents agent)
-              (throw (ex-info (str "Unknown agent: " agent ". Agents: " (str/join ", " (sort (keys agents))))
-                              {:agent agent})))
+  (let [configure! (or (agents agent)
+                      (throw (ex-info (str "Unknown agent: " agent ". Agents: " (str/join ", " (sort (keys agents))))
+                                      {:agent agent})))
         _ (when-not (.isDirectory (io/file dir))
             (throw (ex-info (str "Not a directory: " dir) {:dir dir})))
         dir (.getCanonicalPath (io/file dir))
-        result (f {:dir dir :home home :run run})]
+        result (configure! {:dir dir :home home :run run})]
     (when index! (index! dir))
     result))
 

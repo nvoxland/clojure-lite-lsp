@@ -3,6 +3,7 @@
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.queue :as queue]
@@ -36,15 +37,15 @@
   "Run a daemon in a future, returning once it is up (as clients do through
   ensure-daemon!, since the daemon creates the schema)."
   [h opts]
-  (.mkdirs (io/file (:dir (daemon/paths h))))
-  (let [d (future (daemon/run! (merge fast {:home h} opts)))]
+  (.mkdirs (io/file (:dir (home/paths h))))
+  (let [d (future (daemon/serve! (merge fast {:home h} opts)))]
     (eventually #(or (realized? d)
-                     (with-open [c (db/open-client (:db (daemon/paths h)))]
+                     (with-open [c (db/open-client (:db (home/paths h)))]
                        (try (db/query-value c "SELECT version FROM daemon WHERE id = 1")
                             (catch java.sql.SQLException _ nil)))))
     d))
 
-(defn client-db [h] (db/open-client (:db (daemon/paths h))))
+(defn client-db [h] (db/open-client (:db (home/paths h))))
 
 (deftest locks
   (let [f (str (io/file (home) "x.lock"))
@@ -60,18 +61,18 @@
   (let [h (home)
         d (start! h {})
         root (project! {"src/a.clj" "(ns a) (defn f [] 1)"})]
-    (is (eventually #(lock/held? (:daemon-lock (daemon/paths h)))))
+    (is (eventually #(lock/held? (:daemon-lock (home/paths h)))))
     (with-open [c (client-db h)]
       (is (eventually #(= "test" (db/query-value c "SELECT version FROM daemon WHERE id = 1"))))
       (let [p (snapshot/ensure-project! c root)]
         (queue/enqueue! c p :sync "" 1)
         (is (eventually #(= 1 (db/query-value c "SELECT count(*) FROM project_file WHERE unit_id IS NOT NULL"))))
         (testing "only one daemon at a time"
-          (is (= :already-running (daemon/run! (merge fast {:home h})))))
+          (is (= :already-running (daemon/serve! (merge fast {:home h})))))
         (client/request-stop! c)
         (is (= :stopped (deref d 30000 :timeout)))
         (is (nil? (db/query-value c "SELECT pid FROM daemon WHERE id = 1")))
-        (is (not (lock/held? (:daemon-lock (daemon/paths h)))))))))
+        (is (not (lock/held? (:daemon-lock (home/paths h)))))))))
 
 (deftest the-daemon-exits-when-idle
   (let [d (start! (home) {:idle-exit-ms 200})]
@@ -94,7 +95,7 @@
 (deftest clients-start-a-daemon-once
   (let [h (home)
         spawned (atom [])
-        spawn! (fn [] (swap! spawned conj (future (daemon/run! (merge fast {:home h})))))
+        spawn! (fn [] (swap! spawned conj (future (daemon/serve! (merge fast {:home h})))))
         opts {:home h :version "test" :spawn! spawn!}]
     (testing "concurrent clients: one spawn"
       (is (= #{:spawned :running} (set (pmap (fn [_] (client/ensure-daemon! opts)) (range 4)))))
@@ -108,9 +109,9 @@
   (let [h (home)
         old (start! h {:version "0.1.0"})
         spawned (atom nil)]
-    (is (eventually #(lock/held? (:daemon-lock (daemon/paths h)))))
+    (is (eventually #(lock/held? (:daemon-lock (home/paths h)))))
     (is (= :spawned (client/ensure-daemon! {:home h :version "0.2.0"
-                                            :spawn! #(reset! spawned (future (daemon/run! (merge fast {:home h :version "0.2.0"}))))})))
+                                            :spawn! #(reset! spawned (future (daemon/serve! (merge fast {:home h :version "0.2.0"}))))})))
     (is (= :stopped (deref old 30000 :timeout)))
     (with-open [c (client-db h)]
       (is (eventually #(= "0.2.0" (db/query-value c "SELECT version FROM daemon WHERE id = 1"))))
@@ -139,8 +140,8 @@
   ;; clojure-lite-lsp versions with different schemas run side by side: neither
   ;; rebuilds the other's index
   (let [h (home)
-        a (daemon/paths h 5)
-        b (daemon/paths h 6)]
+        a (home/paths h 5)
+        b (home/paths h 6)]
     (doseq [k [:db :daemon-lock :spawn-lock :log]]
       (is (not= (k a) (k b)) (str k)))
     (is (= (:home a) (:home b)) "configs and extracted sources are shared")))
@@ -148,7 +149,7 @@
 (deftest unused-older-indexes-are-removed
   (let [h (home)
         day-and-more (- (System/currentTimeMillis) (* 25 60 60 1000))
-        make! (fn [v age] (let [{:keys [db]} (daemon/paths h v)]
+        make! (fn [v age] (let [{:keys [db]} (home/paths h v)]
                             (io/make-parents (io/file db))
                             (spit db "x")
                             (.setLastModified (io/file db) age)
@@ -157,7 +158,7 @@
         recent (make! 2 (System/currentTimeMillis))
         in-use (make! 3 day-and-more)
         newer (make! 999 day-and-more)
-        held (lock/try-lock (:daemon-lock (daemon/paths h 3)))
+        held (lock/try-lock (:daemon-lock (home/paths h 3)))
         d (start! h {})]
     (try
       (is (not (.exists unused)))
@@ -173,10 +174,10 @@
   ;; clients probe liveness by briefly taking daemon.lock; a daemon
   ;; starting at that moment must not conclude another daemon runs
   (let [h (home)
-        probe (lock/try-lock (:daemon-lock (daemon/paths h)))]
+        probe (lock/try-lock (:daemon-lock (home/paths h)))]
     (future (Thread/sleep 200) (lock/release! probe))
-    (let [d (future (daemon/run! (merge fast {:home h})))]
-      (is (eventually #(and (not (realized? d)) (lock/held? (:daemon-lock (daemon/paths h))))))
+    (let [d (future (daemon/serve! (merge fast {:home h})))]
+      (is (eventually #(and (not (realized? d)) (lock/held? (:daemon-lock (home/paths h))))))
       (is (not= :already-running (deref d 500 :still-running)))
       (with-open [c (client-db h)] (client/request-stop! c))
       (is (= :stopped (deref d 30000 :timeout))))))
@@ -185,7 +186,7 @@
   ;; separate processes: the OS file lock and the database are all that
   ;; connect them
   (let [h (home)
-        {:keys [daemon-lock log]} (daemon/paths h)]
+        {:keys [daemon-lock log]} (home/paths h)]
     (is (= :spawned (client/ensure-daemon! {:home h})))
     (is (lock/held? daemon-lock))
     (is (= :running (client/ensure-daemon! {:home h})))
@@ -231,13 +232,13 @@
   ;; the lock held with no daemon row: a daemon exiting, or one that died
   ;; starting. Waiting for its row would stall an editor for 30 s
   (let [h (home)
-        _ (.mkdirs (io/file (:dir (daemon/paths h))))
-        held (lock/try-lock (:daemon-lock (daemon/paths h)))
+        _ (.mkdirs (io/file (:dir (home/paths h))))
+        held (lock/try-lock (:daemon-lock (home/paths h)))
         spawned (atom nil)
         started (System/currentTimeMillis)]
     (future (Thread/sleep 300) (lock/release! held))
     (is (= :spawned (client/ensure-daemon! {:home h :version "test"
-                                            :spawn! #(reset! spawned (future (daemon/run! (merge fast {:home h}))))})))
+                                            :spawn! #(reset! spawned (future (daemon/serve! (merge fast {:home h}))))})))
     (is (< (- (System/currentTimeMillis) started) 10000))
     (with-open [c (client-db h)] (client/request-stop! c))
     (deref @spawned 30000 :timeout)))
@@ -262,7 +263,7 @@
   ;; an editor of an older version still reading its index, its daemon
   ;; long gone idle
   (let [h (home)
-        {:keys [db clients-lock]} (daemon/paths h 3)
+        {:keys [db clients-lock]} (home/paths h 3)
         _ (io/make-parents (io/file db))
         _ (spit db "x")
         _ (.setLastModified (io/file db) (- (System/currentTimeMillis) (* 48 60 60 1000)))

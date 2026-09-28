@@ -18,7 +18,7 @@
   stdio transport has it): its responses."
   [o cwd messages]
   (let [out (ByteArrayOutputStream.)]
-    (mcp/run! {:in (ByteArrayInputStream. (.getBytes (str (str/join "\n" (map json/generate-string messages)) "\n") "UTF-8"))
+    (mcp/serve! {:in (ByteArrayInputStream. (.getBytes (str (str/join "\n" (map json/generate-string messages)) "\n") "UTF-8"))
                :out out :opts o :cwd cwd})
     (mapv #(json/parse-string % true) (str/split-lines (.toString out "UTF-8")))))
 

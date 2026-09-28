@@ -14,7 +14,7 @@
                  :cache false
                  :skip-lint external?
                  :config {:output {:canonical-paths true}
-                          :linters (normalize/only-unresolved-namespace-linter)
+                          :linters normalize/kept-linters
                           :analysis (if external?
                                       normalize/dependency-analysis-options
                                       normalize/project-analysis-options)}})))

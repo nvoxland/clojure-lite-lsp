@@ -7,6 +7,7 @@
    [clojure-lite-lsp.cli :as cli]
    [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.lsp.server :as server]
    [clojure-lite-lsp.mcp :as mcp]
@@ -24,7 +25,7 @@
       (str (io/file (System/getProperty "user.home") ".cache" "clojure-lite-lsp"))))
 
 (defn- status [h]
-  (let [{:keys [db daemon-lock]} (daemon/paths h)]
+  (let [{:keys [db daemon-lock]} (home/paths h)]
     (if-not (.isFile (io/file db))
       (println "No index at" db)
       (with-open [c (db/open-reader db)]
@@ -82,7 +83,7 @@
 (defn -main [& [cmd & args]]
   (case cmd
     ;; stdout is the LSP connection: nothing else may print there
-    "lsp" (let [code (server/run! {:in System/in :out System/out :home (home)})]
+    "lsp" (let [code (server/serve! {:in System/in :out System/out :home (home)})]
             (shutdown-agents)
             (System/exit code))
     "index" (do (if (seq args)
@@ -90,7 +91,7 @@
                        (catch clojure.lang.ExceptionInfo e
                          (println (ex-message e))
                          (System/exit 1)))
-                  (daemon/run! {:home (home)}))
+                  (daemon/serve! {:home (home)}))
                 (shutdown-agents)
                 (System/exit 0))
     "gc" (do (gc) (shutdown-agents) (System/exit 0))
@@ -108,7 +109,7 @@
               (shutdown-agents)
               (System/exit exit))
     ;; stdout is the MCP connection
-    "mcp" (do (mcp/run! {:in System/in :out System/out :opts {:home (home)}
+    "mcp" (do (mcp/serve! {:in System/in :out System/out :opts {:home (home)}
                          :cwd (System/getProperty "user.dir")})
               (shutdown-agents)
               (System/exit 0))

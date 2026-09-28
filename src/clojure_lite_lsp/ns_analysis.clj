@@ -22,7 +22,7 @@
 
 (set! *warn-on-reflection* true)
 
-(def ext-langs
+(def lang->ext
   "Which files answer for each language clj-kondo asks about."
   {:clj "clj" :cljs "cljs" :cljc "cljc"})
 
@@ -41,13 +41,13 @@
   map from language to {name entry}, or nil when no file of that kind
   defines it."
   [lang defs]
-  (let [defs (filter #(= (ext-langs lang) (:ext %)) defs)
+  (let [defs (filter #(= (lang->ext lang) (:ext %)) defs)
         for-lang (fn [l] (not-empty (into {} (for [d defs :when (contains? (:lang d) l)]
                                                [(symbol (:name d)) (var-entry d)]))))]
-    (when (seq defs)
-      (if (= :cljc lang)
-        (into {} (keep (fn [l] (some->> (for-lang l) (vector l)))) [:clj :cljs])
-        (some->> (for-lang lang) (hash-map lang))))))
+    (not-empty (into {}
+                     (keep (fn [l] (some->> (for-lang l) (vector l))))
+                     ;; a .cljc file answers for both
+                     (if (= :cljc lang) [:clj :cljs] [lang])))))
 
 (defn digest
   "A short digest of an answer."
@@ -72,17 +72,19 @@
   at the best precedence."
   [c p lang ns-sym]
   (when-let [ns-id (db/query-value c "SELECT id FROM sym WHERE text = ?" (str ns-sym))]
-    (let [ext (ext-langs lang)
-          rows (db/query c (str "SELECT d.unit_id, pu.ord, m.text, d.lang, d.flags, d.extra,
+    (let [ext (lang->ext lang)
+          suffix (str "." ext)
+          rows (->> (db/query c "SELECT d.unit_id, pu.ord, m.text, d.lang, d.flags, d.extra,
                                         COALESCE(pf.path, (SELECT je.entry_path FROM jar_entry je
                                                            WHERE je.unit_id = d.unit_id LIMIT 1))
                                  FROM definition d
                                  JOIN project_unit pu ON pu.unit_id = d.unit_id AND pu.project_id = ?
                                  JOIN sym m ON m.id = d.name
                                  LEFT JOIN project_file pf ON pf.project_id = pu.project_id AND pf.unit_id = d.unit_id
-                                 WHERE d.ns = ? AND d.kind = ?")
-                         p ns-id (kinds/code :var-def))
-          rows (filter (fn [[_ _ _ _ _ _ path]] (some-> ^String path (str/ends-with? (str "." ext)))) rows)
+                                 WHERE d.ns = ? AND d.kind = ?"
+                              p ns-id (kinds/code :var-def))
+                    ;; the path is the last column
+                    (filter #(some-> ^String (peek %) (str/ends-with? suffix))))
           ;; every file of the namespace (in-ns) at the best precedence
           top (when (seq rows) (apply min (map second rows)))]
       (answer lang (for [[_ ord nm lang-bits flags extra] (distinct rows)

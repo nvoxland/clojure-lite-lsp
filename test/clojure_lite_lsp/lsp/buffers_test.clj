@@ -93,3 +93,12 @@
              (change "(def s \"😀\") (def u 1)" {:range {:start {:line 0 :character 18} :end {:line 0 :character 19}} :text "t"}))))
     (testing "no range: the whole text"
       (is (= "new" (change text {:text "new"}))))))
+
+(deftest documents-that-arent-open-stay-untracked
+  (let [store (buffers/store)
+        path (str (io/file (tu/temp-dir) "a.clj"))]
+    (buffers/change! store path [{:text "x"}])
+    (buffers/saved! store path)
+    (buffers/changed-on-disk! store path "y")
+    (buffers/indexed! store path)
+    (is (= {} @store))))

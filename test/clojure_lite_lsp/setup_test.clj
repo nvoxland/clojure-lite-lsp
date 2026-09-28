@@ -66,7 +66,8 @@
         {:keys [ran result]} (run-setup "claude" dir :exits {["claude" "--version"] 127})]
     (is (not-any? #(= "plugin" (nth % 2 nil)) ran))
     (is (some #(str/includes? % "claude plugin install clojure-lite-lsp@clojure-lite-lsp --scope project")
-              (:notes result)))))
+              (:notes result)))
+    (is (every? string? (:notes result)) "only notes, no blanks")))
 
 (deftest codex-gets-the-mcp-server-and-instructions
   (let [dir (.getCanonicalPath (tu/temp-dir))
@@ -123,7 +124,10 @@
       (is (= before (codex-toml before)))))
   (testing "a multi-line array in the table after is kept whole"
     (let [toml (codex-toml "[mcp_servers.clojure-lite-lsp]\ncommand = \"old\"\n\n[other]\nlist = [\n  [\"a\"],\n  [\"b\"],\n]\n")]
-      (is (str/includes? toml "[other]\nlist = [\n  [\"a\"],\n  [\"b\"],\n]\n")))))
+      (is (str/includes? toml "[other]\nlist = [\n  [\"a\"],\n  [\"b\"],\n]\n"))))
+  (testing "a literal string ending in a backslash (no escapes in '...')"
+    (let [toml (codex-toml "paths = ['C:\\', 'd']\n\n[mcp_servers.clojure-lite-lsp]\ncommand = \"old\"\n")]
+      (is (= 1 (count (re-seq #"(?m)^\[mcp_servers\." toml))) toml))))
 
 (deftest a-damaged-section-is-left-to-the-user
   (let [dir (.getCanonicalPath (tu/temp-dir))

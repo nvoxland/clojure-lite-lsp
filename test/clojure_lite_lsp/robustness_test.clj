@@ -6,14 +6,15 @@
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.client :as client]
-   [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.daemon-test :refer [home]]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
    [clojure-lite-lsp.gc-test :as gc-test]
+   [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project!]]
    [clojure-lite-lsp.kondo-config :as kc]
+   [clojure-lite-lsp.kondo-hooks :as kondo-hooks]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
@@ -38,7 +39,7 @@
                                                   (swap! most max (swap! active inc))
                                                   (try (Thread/sleep 20) (apply real args)
                                                        (finally (swap! active dec))))]
-      (reset! @#'analyze/hooks-config nil)
+      (reset! @#'kondo-hooks/hooks-config nil)
       (analyze/analyze-files (vec (for [i (range 16)] (str root "/src/app/f" i ".clj")))
                              {:config cfg :mode :project :shards 8}))
     (is (= 1 @most))))
@@ -58,7 +59,7 @@
     (with-redefs [hooks/hook-fn* (fn [ctx config ns-sym var-sym & more]
                                                   (when (= 'named (symbol (name var-sym))) (swap! lookups inc))
                                                   (apply real ctx config ns-sym var-sym more))]
-      (reset! @#'analyze/hooks-config nil)
+      (reset! @#'kondo-hooks/hooks-config nil)
       (let [res (analyze/analyze-files (vec (for [i (range 16)] (str root "/src/app/f" i ".clj")))
                                        {:config cfg :mode :project :shards 8})]
         (is (every? (fn [{:keys [elements]}] (some #(= "gen" (:name %)) elements)) res) "the hook still runs")))
@@ -122,7 +123,7 @@
   ;; asked to stop mid-way through a long step, it stays until the step
   ;; ends; clients go on meanwhile instead of waiting 30 s each
   (let [h (home)
-        {:keys [dir daemon-lock db]} (daemon/paths h)
+        {:keys [dir daemon-lock db]} (home/paths h)
         _ (.mkdirs (io/file dir))
         held (lock/try-lock daemon-lock)]
     (try

@@ -15,15 +15,19 @@
   Analysis is sharded across concurrent clj-kondo runs (clojure-lite-lsp.analyze), and
   pipelined: while one :file or :jar batch is written, the next one is
   already being analyzed. Analyses themselves never overlap: hooks share
-  clj-kondo's process-wide state, and batches can have different configs. Every database access (preparing a batch,
-  writing one) still happens on the loop thread, one after the other:
-  only analysis, which touches no database, runs alongside."
+  clj-kondo's process-wide state, and batches can have different configs.
+  Every database access (preparing a batch, writing one) still happens on
+  the loop thread, one after the other: only analysis, which touches no
+  database, runs alongside."
   (:require
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.digest :as digest]
    [clojure-lite-lsp.fingerprint :as fingerprint]
    [clojure-lite-lsp.kondo-config :as kc]
+   [clojure-lite-lsp.kondo-hooks :as kondo-hooks]
+   [clojure-lite-lsp.log :as log]
    [clojure-lite-lsp.ns-analysis :as nsa]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.reuse :as reuse]
@@ -33,34 +37,38 @@
    [clojure.java.io :as io]
    [clojure.string :as str])
   (:import
-   [java.io Closeable File]))
+   [java.io Closeable File]
+   [java.sql Connection]
+   [java.util.concurrent ExecutionException]
+   [org.sqlite SQLiteErrorCode SQLiteException]))
 
 (set! *warn-on-reflection* true)
 
 (defrecord Indexer [c w reader cache-dir shards contexts batch-sizes in-flight reuser requeued]
   Closeable
   (close [_]
-    (when (realized? reader) (.close ^java.sql.Connection @reader))
-    (.close ^java.sql.Connection c)))
+    (when (realized? reader) (.close ^Connection @reader))
+    (.close ^Connection c)))
 
-(defn default-cache-dir []
+(defn- default-cache-dir []
   (io/file (System/getProperty "user.home") ".cache" "clojure-lite-lsp"))
 
 (defn indexer
   "An indexer writing to the index at `db-path`, keeping clj-kondo configs
   under `cache-dir`."
-  [{:keys [db-path cache-dir shards batch-sizes] :or {shards 8}}]
-  (let [c (db/open-writer db-path)]
+  [{:keys [db-path cache-dir shards batch-sizes] :or {shards analyze/default-shards}}]
+  (let [c (db/open-writer db-path)
+        cache-dir (or cache-dir (default-cache-dir))]
     (map->Indexer {:c c :w (writer/writer c)
                    ;; for analysis, which runs beside the loop thread's writes
                    :reader (delay (db/open-reader db-path))
-                   :cache-dir (or cache-dir (default-cache-dir))
+                   :cache-dir cache-dir
                    :shards shards
                    :batch-sizes batch-sizes
                    :contexts (atom {})
                    ;; the batch being analyzed: {:batch :job}
                    :in-flight (atom nil)
-                   :reuser (reuse/reuser (or cache-dir (default-cache-dir)))
+                   :reuser (reuse/reuser cache-dir)
                    ;; {[project path] [unit answers]}: see recheck-dependents!
                    :requeued (atom {})})))
 
@@ -103,17 +111,14 @@
   "Where `path` belongs in project `p`: {:ord :external? :mode :config},
   or nil when it's in none of the project's source or external dirs."
   [{:keys [root source-dirs external-dirs project-config]} path]
-  (cond
-    (some #(under? % path) source-dirs)
-    {:ord 0 :external? false :mode :project :config project-config}
-
-    :else
-    (or (when-let [{:keys [ord config]} (first (filter #(under? (:path %) path) external-dirs))]
-          {:ord ord :external? true :mode :dependency :config config})
+  (let [own {:ord 0 :external? false :mode :project :config project-config}]
+    (or (when (some #(under? % path) source-dirs) own)
+        (some (fn [{dir :path :keys [ord config]}]
+                (when (under? dir path) {:ord ord :external? true :mode :dependency :config config}))
+              external-dirs)
         ;; anywhere else under the root (build.clj, scripts/): when asked
         ;; for (an editor opened it), as the project's own
-        (when (under? root path)
-          {:ord 0 :external? false :mode :project :config project-config}))))
+        (when (under? root path) own))))
 
 (defn- file-unit-key [{:keys [c]} {:keys [mode config]} path]
   (when-let [h (fingerprint/content-hash! c path)]
@@ -125,13 +130,14 @@
   [{:keys [reader]} p]
   (fn [lang ns-sym]
     (let [r @reader]
+      ;; one reader connection, shared by the concurrent clj-kondo runs
       (locking r (nsa/index-answer r p lang ns-sym)))))
 
 (defn- digest-fn
   "Digests of today's answers in project `p`, on the loop thread."
   [{:keys [c]} p]
   (memoize (fn [lang ns-sym]
-             (nsa/digest (analyze/answer (fn [l n] (nsa/index-answer c p l n)) lang ns-sym)))))
+             (nsa/digest (kondo-hooks/answer (partial nsa/index-answer c p) lang ns-sym)))))
 
 (defn- existing-unit
   "The unit for a file's key: analyzed under this config, or under another
@@ -144,156 +150,177 @@
   "How many (unit, answers) pairs of a file the requeue guard remembers."
   8)
 
-(defn requeue?
-  "Should a file (`k`) whose analysis doesn't match its hooks' answers be
-  queued again, for `entry` [unit answers]? Once per entry: had analyzing
-  it given back one already seen, it would cycle forever. `seen` is an
-  atom {k [entry ...]}."
+(defn first-requeue!
+  "Record that a file (`k`) whose analysis doesn't match its hooks'
+  answers is queued again for `entry` [unit answers]: true the first time
+  for that entry. Had analyzing it given back one already seen, it would
+  cycle forever. `seen` is an atom {k [entry ...]}."
   [seen k entry]
-  (if (some #{entry} (@seen k))
-    false
-    (do (swap! seen update k #(vec (take-last requeues-remembered (conj (or % []) entry))))
-        true)))
+  (let [[before] (swap-vals! seen update k
+                             (fn [entries]
+                               (if (some #{entry} entries)
+                                 entries
+                                 (vec (take-last requeues-remembered (conj (vec entries) entry))))))]
+    (not (some #{entry} (before k)))))
 
 (defn- recheck-dependents!
   "Queue the files of project `p` whose hooks' answers no longer hold.
+  `taken` is {path enqueued-at} of the file batch being written, whose
+  rows are still queued: a file of it isn't waiting again unless queued
+  since.
 
   A file is queued again for the same unit and the same answers only once:
   had analyzing it again given back that unit, nothing would change, and it
   would be queued forever."
-  [{:keys [c requeued in-flight] :as ix} p]
-  (when-let [marker (db/query-value c "SELECT id FROM sym WHERE text = ?" nsa/marker)]
-    (let [digest-of (digest-fn ix p)]
-      (doseq [[u] (db/query c "SELECT r.unit_id FROM unit_ref r
-                               JOIN project_unit pu ON pu.unit_id = r.unit_id AND pu.project_id = ?
-                               WHERE r.ref = ?" p marker)
-              :let [deps (reuse/ns-deps c u)
-                    today (mapv (fn [[lang ns-sym]] (digest-of lang ns-sym)) deps)]
-              :when (not= (map last deps) today)
-              [path] (db/query c "SELECT path FROM project_file WHERE project_id = ? AND unit_id = ?" p u)]
-        (if (requeue? requeued [p path] [u today])
-          (queue/enqueue! c p :file path 1)
-          ;; unless it's still waiting to be analyzed again, that didn't help
-          (when-not (or (db/query-value c "SELECT 1 FROM pending WHERE project_id = ? AND kind = 'file' AND path = ?" p path)
-                        (some #(= path (:path %)) (:batch @in-flight)))
-            (binding [*out* *err*]
-              (println "clojure-lite-lsp: analysis of" path "doesn't match what its hooks are told; left as is"))))))))
+  ([ix p] (recheck-dependents! ix p {}))
+  ([{:keys [c requeued] :as ix} p taken]
+   (when-let [marker (db/query-value c "SELECT id FROM sym WHERE text = ?" nsa/marker)]
+     (let [digest-of (digest-fn ix p)
+           waiting? (fn [path]
+                      (when-let [at (db/query-value c "SELECT enqueued_at FROM pending
+                                                       WHERE project_id = ? AND kind = 'file' AND path = ?"
+                                                    p path)]
+                        (not= at (taken path))))]
+       (doseq [[u] (db/query c "SELECT r.unit_id FROM unit_ref r
+                                JOIN project_unit pu ON pu.unit_id = r.unit_id AND pu.project_id = ?
+                                WHERE r.ref = ?" p marker)
+               :let [deps (reuse/ns-deps c u)
+                     today (mapv (fn [[lang ns-sym]] (digest-of lang ns-sym)) deps)]
+               :when (not= (map last deps) today)
+               [path] (db/query c "SELECT path FROM project_file WHERE project_id = ? AND unit_id = ?" p u)]
+         (cond
+           (first-requeue! requeued [p path] [u today]) (queue/enqueue! c p :file path 1)
+           ;; analyzed again and still not matching: that didn't help
+           (not (waiting? path)) (log/warn "analysis of" path "doesn't match what its hooks are told; left as is")))))))
 
 ;;;; work
 
 (def ^:private files-per-tx 500)
 
+(defn- link-jars!
+  "Link project `p`'s jars that are already indexed; queue the rest."
+  [{:keys [c w cache-dir]} p {:keys [jars jar-context]}]
+  (let [linked (vec (for [[ord path] jars
+                          :let [config (kc/jar-config! cache-dir jar-context path)
+                                h (fingerprint/content-hash! c path)]]
+                      [ord path (snapshot/jar-id c (analyze/jar-key h config))]))]
+    (snapshot/set-project-jars! w p linked)
+    (doseq [[_ path jar-id] linked :when (nil? jar-id)]
+      (queue/enqueue! c p :jar path 2))))
+
+(defn- wanted-files
+  "{path placement} of the files project `p` has: those in its dirs, and
+  those outside, indexed because an editor opened them, while they exist."
+  [{:keys [root source-dirs external-dirs] :as ctx} current]
+  (let [listed (into {} (for [dir (concat source-dirs (map :path external-dirs))
+                              path (source-files dir)]
+                          [path (file-placement ctx path)]))
+        kept? (fn [path] (and (not (listed path)) (under? root path) (.isFile (io/file path))
+                              (re-find source-extensions path)))]
+    (into listed (for [path (keys current) :when (kept? path)]
+                   [path (file-placement ctx path)]))))
+
 (defn- sync-project!
-  [{:keys [c w cache-dir contexts] :as ix} p]
+  [{:keys [c w contexts] :as ix} p]
   (swap! contexts dissoc p)
-  (let [{:keys [source-dirs external-dirs jars jar-context project-config] :as ctx} (context ix p)]
+  (let [{:keys [project-config] :as ctx} (context ix p)
+        current (snapshot/file-paths c p)
+        wanted (wanted-files ctx current)
+        unit-of (fn [digest-of path] (existing-unit ix (file-unit-key ix (wanted path) path) digest-of))
+        link! (fn [path u]
+                (let [{:keys [ord external?]} (wanted path)]
+                  (when-not (= (current path) {:unit-id u :external? external? :ord ord})
+                    (snapshot/set-file-unit! w p path u {:ord ord :external? external?}))))]
     (db/execute! c "UPDATE project SET config_hash = ?, last_seen = ? WHERE id = ?"
                  (:hash project-config) (System/currentTimeMillis) p)
-    ;; jars: link the ones already indexed, enqueue the rest
-    (let [linked (vec (for [[ord path] jars
-                            :let [config (kc/jar-config! cache-dir jar-context path)
-                                  h (fingerprint/content-hash! c path)]]
-                        [ord path (snapshot/jar-id c (analyze/jar-key h config))]))]
-      (snapshot/set-project-jars! w p linked)
-      (doseq [[_ path jar-id] linked :when (nil? jar-id)]
-        (queue/enqueue! c p :jar path 2)))
-    ;; files: link unchanged ones, enqueue the rest, forget vanished ones
-    (let [current (snapshot/file-paths c p)
-          ;; a file outside the source dirs, indexed because an editor
-          ;; opened it: kept (and checked) while it exists
-          kept? (fn [path] (and (under? (:root ctx) path) (.isFile (io/file path))
-                                (re-find source-extensions path)))
-          listed (into {} (for [dir (concat source-dirs (map :path external-dirs))
-                                path (source-files dir)]
-                            [path (file-placement ctx path)]))
-          wanted (into listed (for [path (keys current)
-                                    :when (and (not (listed path)) (kept? path))]
-                                [path (file-placement ctx path)]))]
-      (let [missing (atom [])
-            link! (fn [path {:keys [ord external?]} u]
-                    (when-not (= (current path) {:unit-id u :external? external? :ord ord})
-                      (snapshot/set-file-unit! w p path u {:ord ord :external? external?})))]
-        (doseq [batch (partition-all files-per-tx (concat (keys wanted) (remove wanted (keys current))))]
-          (writer/with-write-tx w
-            (doseq [path batch]
-              (if-let [placement (wanted path)]
-                (if-let [u (existing-unit ix (file-unit-key ix placement path) nil)]
-                  (link! path placement u)
-                  (swap! missing conj path))
-                (snapshot/remove-file! w p path)))))
-        ;; a file whose hooks asked about other namespaces can only be
-        ;; checked once everything else is linked
-        (let [digest-of (digest-fn ix p)]
-          (doseq [batch (partition-all files-per-tx @missing)]
-            (writer/with-write-tx w
-              (doseq [path batch
-                      :let [placement (wanted path)
-                            u (existing-unit ix (file-unit-key ix placement path) digest-of)]]
-                (link! path placement u)
-                (when-not u (queue/enqueue! c p :file path 1))))))))))
+    (link-jars! ix p ctx)
+    ;; files: forget vanished ones, link unchanged ones, queue the rest
+    (doseq [batch (partition-all files-per-tx (remove wanted (keys current)))]
+      (writer/with-write-tx w (run! #(snapshot/remove-file! w p %) batch)))
+    (let [missing (into [] (mapcat (fn [batch]
+                                     (writer/with-write-tx w
+                                       (reduce (fn [missing path]
+                                                 (if-let [u (unit-of nil path)]
+                                                   (do (link! path u) missing)
+                                                   (conj missing path)))
+                                               [] batch))))
+                        (partition-all files-per-tx (keys wanted)))
+          ;; a file whose hooks asked about other namespaces can only be
+          ;; checked once everything else is linked
+          digest-of (digest-fn ix p)]
+      (doseq [batch (partition-all files-per-tx missing)]
+        (writer/with-write-tx w
+          (doseq [path batch
+                  :let [u (unit-of digest-of path)]]
+            (link! path u)
+            (when-not u (queue/enqueue! c p :file path 1))))))))
 
 (defn- files-job
-  "Index project or external-dir files that changed. Returns a job:
-  {:analyze (fn [], the clj-kondo work) :write (fn [analysis])}."
-  [{:keys [c w shards] :as ix} p paths]
+  "Index project or external-dir files that changed (`batch`, of project
+  `p`). Returns a job: {:analyze (fn [], the clj-kondo work) :write (fn
+  [analysis])}."
+  [{:keys [c w shards] :as ix} p batch]
   (let [ctx (context ix p)
         digest-of (digest-fn ix p)
-        placed (for [path paths
-                     :let [f (io/file path)]]
-                 (if (.isFile f)
-                   (assoc (file-placement ctx (.getCanonicalPath f)) :path (.getCanonicalPath f))
-                   {:path (.getCanonicalPath f) :gone? true}))
+        placed (mapv (fn [{:keys [path]}]
+                       (let [f (io/file path)
+                             canonical (.getCanonicalPath f)]
+                         (if (.isFile f)
+                           (assoc (file-placement ctx canonical) :path canonical)
+                           {:path canonical :gone? true})))
+                     batch)
         ;; files outside the project's dirs (:mode nil) are not part of it
-        groups (vec (for [[[mode config] group] (group-by (juxt :mode :config) (filter :mode placed))
-                          :let [placement (first group)]]
+        groups (vec (for [[[mode config] group] (group-by (juxt :mode :config) (filter :mode placed))]
                       {:mode mode :config config :group group
-                       :known (into {} (for [{:keys [path]} group]
-                                         [path (existing-unit ix (file-unit-key ix placement path) digest-of)]))}))
+                       :known (into {} (map (fn [{:keys [path] :as placement}]
+                                              [path (existing-unit ix (file-unit-key ix placement path) digest-of)]))
+                                    group)}))
         serve (serve-fn ix p)]
     {:analyze (fn []
                 (mapv (fn [{:keys [mode config known]}]
-                        (analyze/analyze-files (vec (keep (fn [[path u]] (when-not u path)) known))
+                        (analyze/analyze-files (into [] (comp (remove val) (map key)) known)
                                                {:config config :mode mode :shards shards :serve serve}))
                       groups))
      :write (fn [analysis]
               (doseq [{:keys [path gone?]} placed :when gone?]
                 (snapshot/remove-file! w p path))
-              (doseq [[{:keys [group known]} fresh] (map vector groups analysis)]
-                (let [;; changed while analyzed: analyze it again
-                      [fresh changed] ((juxt filter remove) :unit-key fresh)
-                      fresh-ids (writer/write-units! w (map (juxt :unit-key :elements) fresh))
-                      ids (merge (into {} (filter second) known)
-                                 (zipmap (map :path fresh) fresh-ids))
-                      changed (set (map :path changed))]
+              (doseq [[{:keys [group known]} results] (map vector groups analysis)]
+                (let [;; no :unit-key: changed while analyzed
+                      [analyzed changed] ((juxt filter remove) :unit-key results)
+                      ids (merge (into {} (filter val) known)
+                                 (zipmap (map :path analyzed)
+                                         (writer/write-units! w (map (juxt :unit-key :elements) analyzed))))
+                      changed-paths (set (map :path changed))]
                   (writer/with-write-tx w
                     (doseq [{:keys [path ord external?]} group
-                            :when (not (changed path))]
+                            :when (not (changed-paths path))]
                       (snapshot/set-file-unit! w p path (ids path) {:ord ord :external? external?})))
                   ;; changed while analyzed: again. Unreadable: left out,
                   ;; until it changes (it would be queued forever)
-                  (doseq [path changed]
+                  (doseq [path changed-paths]
                     (if (.canRead (io/file path))
                       (queue/enqueue! c p :file path 1)
-                      (binding [*out* *err*] (println "clojure-lite-lsp: can't read" path "- skipped"))))))
-              (recheck-dependents! ix p))}))
+                      (log/warn "can't read" path "- skipped")))))
+              (recheck-dependents! ix p (into {} (map (juxt :path :enqueued-at)) batch)))}))
 
 (defn- delete-files! [{:keys [c w] :as ix} p paths]
   (let [current (keys (snapshot/file-paths c p))]
-    (doseq [path paths
-            :let [path (.getCanonicalPath (io/file path))
-                  ;; a directory: the files under it
-                  under (filter #(str/starts-with? % (str path File/separator)) current)]
-            gone (cons path under)]
-      (snapshot/remove-file! w p gone)))
+    (writer/with-write-tx w
+      (doseq [path paths
+              :let [path (.getCanonicalPath (io/file path))]
+              ;; a directory: the files under it
+              gone (cons path (filter #(under? path %) current))]
+        (snapshot/remove-file! w p gone))))
   (recheck-dependents! ix p))
 
 (defn- jars-job
-  "Analyze jars (those not indexed yet) and link them into the project.
-  Returns a job: {:analysis (a future) :write (fn [analysis])}."
-  [{:keys [c w cache-dir shards] :as ix} p paths]
+  "Analyze jars (those of `batch` not indexed yet) and link them into
+  project `p`. Returns a job: {:analyze (fn [], the clj-kondo work) :write
+  (fn [analysis])}."
+  [{:keys [c w cache-dir shards] :as ix} p batch]
   (let [{:keys [jars jar-context]} (context ix p)
         ord-of (into {} (map (fn [[ord path]] [path ord])) jars)
-        todo (vec (for [path paths
+        todo (vec (for [{:keys [path]} batch
                         :let [ord (ord-of path)]
                         ;; a jar no longer on the classpath: nothing to do
                         :when ord
@@ -317,7 +344,7 @@
   [{:keys [c w cache-dir shards] :as ix} p paths]
   (let [{:keys [jar-context]} (context ix p)]
     (doseq [path paths
-            :let [jar-hash (some-> (sources/source-of cache-dir path) :jar-hash-hex sources/unhex)
+            :let [jar-hash (some-> (sources/source-of cache-dir path) :jar-hash-hex digest/unhex)
                   jar-path (when jar-hash
                              (db/query-value c "SELECT pj.path FROM project_jar pj JOIN jar j ON j.id = pj.jar_id
                                                 WHERE pj.project_id = ? AND j.jar_hash = ?" p jar-hash))]
@@ -329,26 +356,28 @@
           (let [[u] (writer/write-units! w [[unit-key elements]])]
             (snapshot/set-dep-file-unit! w path jar-hash u)))))))
 
+(def ^:private environment-codes
+  "Primary SQLite result codes of the machine failing: a full disk, an I/O
+  error (extended codes, like SQLITE_IOERR_WRITE, share their primary
+  code's low byte)."
+  #{(.code SQLiteErrorCode/SQLITE_FULL) (.code SQLiteErrorCode/SQLITE_IOERR)})
+
 (defn- environment-failure?
-  "Did the machine fail, rather than the input: a full disk or an I/O
-  error? Retrying later can succeed."
-  [^Throwable e]
-  (some (fn [^Throwable t]
-          (when (instance? org.sqlite.SQLiteException t)
-            (contains? #{org.sqlite.SQLiteErrorCode/SQLITE_FULL org.sqlite.SQLiteErrorCode/SQLITE_IOERR}
-                       (.getResultCode ^org.sqlite.SQLiteException t))))
-        (take-while some? (iterate #(.getCause ^Throwable %) e))))
+  "Did the machine fail, rather than the input? Retrying later can succeed."
+  [e]
+  (some #(and (instance? SQLiteException %)
+              (contains? environment-codes (bit-and 0xff (.code (.getResultCode ^SQLiteException %)))))
+        (take-while some? (iterate ex-cause e))))
 
 (defn- failed!
   "A batch failed with `e`. A machine failure keeps it queued (:retry); bad
   input is dropped, so it can't stop the daemon or be retried forever."
-  [{:keys [c]} batch ^Throwable e]
+  [{:keys [c]} batch e]
   (let [{:keys [project-id kind]} (first batch)
-        log #(binding [*out* *err*]
-               (println "clojure-lite-lsp:" % kind (count batch) "item(s) of project" project-id ":" (ex-message e)))]
+        warn #(log/warn % kind (count batch) "item(s) of project" project-id ":" (ex-message e))]
     (if (environment-failure? e)
-      (do (log "will retry") :retry)
-      (do (log "dropped")
+      (do (warn "will retry") :retry)
+      (do (warn "dropped")
           (queue/done! c batch)
           batch))))
 
@@ -358,8 +387,7 @@
   "Prepare a :file or :jar batch and start its analysis, once the analysis
   of the batch before (`previous`, in flight) is done."
   [ix {:keys [project-id kind]} batch previous]
-  (let [paths (mapv :path batch)
-        job (try ((case kind :file files-job :jar jars-job) ix project-id paths)
+  (let [job (try ((case kind :file files-job :jar jars-job) ix project-id batch)
                  (catch Exception e {:error e}))
         before (get-in previous [:job :analysis])]
     {:batch batch
@@ -377,7 +405,7 @@
     ((:write job) @(:analysis job))
     (queue/done! c batch)
     batch
-    (catch java.util.concurrent.ExecutionException e (failed! ix batch (or (.getCause e) e)))
+    (catch ExecutionException e (failed! ix batch (or (ex-cause e) e)))
     ;; Throwable: an Error (out of memory) must drop its batch too, not end
     ;; the daemon and leave the batch first in line for the next
     (catch Throwable e (failed! ix batch e))))
@@ -413,7 +441,6 @@
         finished (when current (finish! ix current))]
     (cond
       (= :retry finished)
-      ;; the batch just started is abandoned too: its rows stay queued
       ;; the batch just started stays in flight, its analysis running: it's
       ;; written on the next try (cancelling it would stop only its outer
       ;; task, leaving its clj-kondo runs going beside the next analysis)
@@ -441,6 +468,5 @@
   or the machine fails (:retry)."
   [ix]
   (loop []
-    (let [r (step! ix)]
-      (cond (= :retry r) :retry
-            r (recur)))))
+    (when-let [r (step! ix)]
+      (if (= :retry r) :retry (recur)))))

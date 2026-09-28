@@ -25,8 +25,8 @@
         server-in (PipedInputStream. to-server (* 1024 1024))
         from-server (PipedOutputStream.)
         client-in (PipedInputStream. from-server (* 1024 1024))
-        spawn! #(future (daemon/run! {:home home :poll-ms 20 :version "test"}))
-        srv (future (server/run! {:in server-in :out from-server :home home :version "test" :spawn! spawn!}))
+        spawn! #(future (daemon/serve! {:home home :poll-ms 20 :version "test"}))
+        srv (future (server/serve! {:in server-in :out from-server :home home :version "test" :spawn! spawn!}))
         ids (atom 0)
         responses (atom {})
         notifications (atom [])
@@ -238,8 +238,8 @@
                         "src/app/a.clj" "(ns app.a)\n(defn f [] 1)\n"
                         "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/f)\n"})
         daemons (atom 0)
-        real-run daemon/run!]
-    (with-redefs [daemon/run! (fn [opts] (swap! daemons inc) (real-run opts))]
+        real-run daemon/serve!]
+    (with-redefs [daemon/serve! (fn [opts] (swap! daemons inc) (real-run opts))]
       (let [editors [(start! home) (start! home)]]
         (doseq [{:keys [request! notify!]} editors]
           (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {}})
@@ -306,7 +306,7 @@
   responses]."
   [input]
   (let [out (java.io.ByteArrayOutputStream.)
-        code (server/run! {:in (java.io.ByteArrayInputStream. (.getBytes ^String input "UTF-8")) :out out
+        code (server/serve! {:in (java.io.ByteArrayInputStream. (.getBytes ^String input "UTF-8")) :out out
                            :home (str (tu/temp-dir)) :version "test"})
         in (java.io.ByteArrayInputStream. (.toByteArray out))]
     [code (vec (take-while some? (repeatedly #(rpc/read-message in))))]))

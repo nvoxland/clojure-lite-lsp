@@ -82,7 +82,7 @@
                (::error result) {:error {:code -32603 :message (::error result)}}
                :else {:result result})))))
 
-(defn run!
+(defn serve!
   "Serve MCP on `in`/`out` until the input ends. `opts` are
   clojure-lite-lsp.client/ensure-daemon!'s; `cwd` the default project dir."
   [{:keys [^InputStream in ^OutputStream out] :as ctx}]

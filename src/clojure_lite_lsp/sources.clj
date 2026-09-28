@@ -8,6 +8,7 @@
   the jar's content means a new version of a library never reuses an old
   extraction."
   (:require
+   [clojure-lite-lsp.digest :as digest]
    [clojure-lite-lsp.fingerprint :as fingerprint]
    [clojure.java.io :as io]
    [clojure.string :as str])
@@ -19,16 +20,6 @@
 
 (set! *warn-on-reflection* true)
 
-(defn- hex [^bytes bs] (apply str (map #(format "%02x" %) bs)))
-
-(defn unhex
-  "The bytes of a hex string."
-  ^bytes [^String s]
-  (let [bs (byte-array (quot (count s) 2))]
-    (dotimes [i (alength bs)]
-      (aset-byte bs i (unchecked-byte (Integer/parseInt (subs s (* 2 i) (+ 2 (* 2 i))) 16))))
-    bs))
-
 (defn sources-dir
   "Where extracted sources live, canonical: the paths handed to editors and
   the ones recognized from them must agree even when the home dir is
@@ -36,21 +27,16 @@
   ^File [home]
   (.getCanonicalFile (io/file home "sources")))
 
-(def ^:private hashes (atom {}))
-
-(defn file-hash
-  "The content hash of a jar or zip, remembered while it's unchanged."
-  [path]
-  (let [f (io/file path)
-        k [(str path) (.lastModified f) (.length f)]]
-    (or (@hashes k)
-        (let [h (fingerprint/sha256 f)] (swap! hashes assoc k h) h))))
+(def file-hash
+  "The content hash of a jar or zip at a path, remembered while it's
+  unchanged."
+  (fingerprint/memoize-by-file #(digest/sha256 (io/file %))))
 
 (defn extracted-file
   "Where jar location {:entry :jar-hash} is (or will be) extracted, or nil
   when its entry would land outside the sources dir (zip-slip)."
   ^File [home {:keys [entry jar-hash]}]
-  (let [dir (io/file (sources-dir home) (hex jar-hash))
+  (let [dir (io/file (sources-dir home) (digest/hex jar-hash))
         f (.getCanonicalFile (io/file dir ^String entry))]
     (when (str/starts-with? (str f) (str dir File/separator))
       f)))
@@ -70,11 +56,14 @@
         (with-open [jf (JarFile. (str path))]
           (when-let [je (.getJarEntry jf ^String entry)]
             (io/make-parents f)
+            ;; written aside, then moved into place: a reader never sees half a file
             (let [tmp (io/file (.getParentFile f) (str "." (.getName f) ".tmp-" (System/nanoTime)))]
-              (with-open [in (.getInputStream jf je)]
-                (io/copy in tmp))
-              (.setReadOnly tmp)
-              (Files/move (.toPath tmp) (.toPath f) (into-array [StandardCopyOption/ATOMIC_MOVE])))
+              (try
+                (with-open [in (.getInputStream jf je)]
+                  (io/copy in tmp))
+                (.setReadOnly tmp)
+                (Files/move (.toPath tmp) (.toPath f) (into-array [StandardCopyOption/ATOMIC_MOVE]))
+                (finally (io/delete-file tmp true))))
             (str f)))))))
 
 (defonce ^:private extractor

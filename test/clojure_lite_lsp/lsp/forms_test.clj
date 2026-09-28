@@ -55,7 +55,8 @@
   (is (= ["f" 1] (ctx "(f #inst \"2020\" |")) "a tagged literal is one")
   (is (= ["f" 1] (ctx "(f #:a{:b 1} |")) "a namespaced map is one")
   (is (= ["f" 1] (ctx "(f #'x |")) "a var quote is one")
-  (is (= ["f" 1] (ctx "(f #\"re\" |")) "a regex is one"))
+  (is (= ["f" 1] (ctx "(f #\"re\" |")) "a regex is one")
+  (is (= ["f" 2] (ctx "(f ##Inf x |")) "a symbolic value is one, prefixing nothing"))
 
 (deftest a-cursor-in-a-string-is-in-that-argument
   (is (= ["str" 0] (ctx "(str \"hello |"))))

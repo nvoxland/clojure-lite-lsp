@@ -4,14 +4,16 @@
   (precedence = position on the classpath)."
   (:require
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.digest :as digest]
+   [clojure-lite-lsp.log :as log]
+   [clojure-lite-lsp.process :as process]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str])
   (:import
    [java.io File]
-   [java.lang ProcessBuilder$Redirect]
-   [java.security MessageDigest]
-   [java.util.concurrent TimeUnit]))
+   [java.nio.file Files]
+   [java.util.regex Pattern]))
 
 (set! *warn-on-reflection* true)
 
@@ -39,42 +41,39 @@
   babashka's when it has a bb.edn too. Empty when it has no build file
   clojure-lite-lsp knows."
   [root {:keys [aliases]}]
-  (let [build-tool (cond
-                     (.isFile (file root "deps.edn"))
-                     (let [defined (set (keys (:aliases (read-edn (file root "deps.edn")))))
-                           use (filter defined aliases)]
+  (let [deps-edn (file root "deps.edn")
+        build-tool (cond
+                     (.isFile deps-edn)
+                     (let [defined (set (keys (:aliases (read-edn deps-edn))))
+                           enabled (filter defined aliases)]
                        (cond-> ["clojure" "-Spath"]
-                         (seq use) (conj (str "-A" (str/join use)))))
+                         (seq enabled) (conj (str "-A" (str/join enabled)))))
 
                      (.isFile (file root "project.clj"))
                      (if (seq aliases)
                        ["lein" "with-profile" (str/join "," (map #(str "+" (name %)) aliases)) "classpath"]
                        ["lein" "classpath"]))]
-    (cond-> (if build-tool [build-tool] [])
+    (cond-> []
+      build-tool (conj build-tool)
       (.isFile (file root "bb.edn")) (conj ["bb" "-e" "(println (babashka.classpath/get-classpath))"]))))
 
 (defn run-command
-  "Run `cmd` in `dir` and return its stdout. Stdin is closed: clojure-lite-lsp lsp's own
-  stdin is the LSP connection."
+  "Run `cmd` in `dir`: what it prints. Throws when it fails."
   [cmd dir]
-  (let [p (-> (ProcessBuilder. ^java.util.List cmd)
-              (.directory (io/file dir))
-              (.redirectInput ProcessBuilder$Redirect/PIPE)
-              (.start))
-        _ (.close (.getOutputStream p))
-        out (future (slurp (.getInputStream p)))
-        err (future (slurp (.getErrorStream p)))]
-    (if-not (.waitFor p 5 TimeUnit/MINUTES)
-      (do (.destroyForcibly p)
-          (throw (ex-info (str "Timed out computing the classpath: " (str/join " " cmd)) {:cmd cmd})))
-      (if (zero? (.exitValue p))
-        @out
-        (throw (ex-info (str "Computing the classpath failed: " (str/join " " cmd) "\n" @err)
-                        {:cmd cmd :exit (.exitValue p) :stderr @err}))))))
+  (let [{:keys [exit out err]} (process/run cmd {:dir dir :timeout-ms (* 5 60 1000)})]
+    (if (zero? exit)
+      out
+      (throw (ex-info (str "Computing the classpath failed: " (str/join " " cmd) "\n" err)
+                      {:cmd cmd :exit exit :stderr err})))))
+
+(defn resolve-file
+  "`path` as a file, resolved against `root` when relative."
+  ^File [root path]
+  (let [f (io/file path)]
+    (if (.isAbsolute f) f (io/file root path))))
 
 (defn- canonical [root path]
-  (let [f (io/file path)
-        ^File f (if (.isAbsolute f) f (io/file root path))]
+  (let [f (resolve-file root path)]
     (when (.exists f) (.getCanonicalPath f))))
 
 (defn classify
@@ -99,10 +98,18 @@
                    (map (fn [path] {:path path :kind :source-dir :ord 0})))]
     (vec (concat classified extra))))
 
-(defn- parse [classpath-str]
-  (remove str/blank? (str/split (str/trim classpath-str) (re-pattern File/pathSeparator))))
+(defn parse
+  "The entries of a classpath string."
+  [classpath-str]
+  (remove str/blank? (str/split (str/trim classpath-str) (re-pattern (Pattern/quote File/pathSeparator)))))
 
-(declare fallback-paths)
+(defn- fallback-paths
+  "Source dirs to go on with when there's no classpath: deps.edn's :paths
+  if it can be read, else src and test."
+  [root]
+  (let [paths (try (let [f (file root "deps.edn")] (when (.isFile f) (:paths (read-edn f))))
+                   (catch Exception _ nil))]
+    (filter #(.isDirectory (io/file root %)) (or (seq (filter string? paths)) ["src" "test"]))))
 
 (defn- run-all
   "The classpath the `cmds` print, joined; with none (no build file), the
@@ -113,10 +120,12 @@
     (str/join File/pathSeparator (fallback-paths root))))
 
 (defn compute
-  "Compute the classpath of the project at `root` from scratch."
-  [root & [{:keys [run] :or {run run-command}}]]
-  (let [cfg (project-config root)]
-    (classify root (parse (run-all root (commands root cfg) run)) cfg)))
+  "Compute the classpath of the project at `root` from scratch. `run` runs
+  a command (`run-command`)."
+  ([root] (compute root {}))
+  ([root {:keys [run] :or {run run-command}}]
+   (let [cfg (project-config root)]
+     (classify root (parse (run-all root (commands root cfg) run)) cfg))))
 
 (defn- user-build-files
   "Build files outside the project that shape its classpath."
@@ -137,25 +146,26 @@
               [_ coord] deps
               :let [dir (:local/root coord)]
               :when (string? dir)]
-          (.getCanonicalPath (let [d (io/file dir)] (if (.isAbsolute d) d (io/file root dir)))))))))
+          (.getCanonicalPath (resolve-file root dir)))))))
 
 (defn- spec-hash
-  "A hash of everything the classpath is computed from: the project's
-  build files, its :local/root deps' (transitively), and the user's."
+  "A hash of everything the classpath is computed from: the commands, the
+  project's build files, its :local/root deps' (transitively), and the
+  user's."
   ^bytes [root cmds]
-  (let [md (MessageDigest/getInstance "SHA-256")
-        add! (fn [label ^File f]
-               (.update md (.getBytes (str label "\u0000") "UTF-8"))
-               (when (.isFile f) (.update md (.getBytes (slurp f) "UTF-8"))))]
-    (.update md (.getBytes (pr-str cmds) "UTF-8"))
-    (loop [todo [(.getCanonicalPath (io/file root))] seen #{}]
-      (when-let [[dir & more] (seq todo)]
-        (if (seen dir)
-          (recur more seen)
-          (do (doseq [name build-files] (add! (str dir "/" name) (file dir name)))
-              (recur (into (vec more) (local-roots dir)) (conj seen dir))))))
-    (doseq [f (user-build-files)] (add! (str f) f))
-    (.digest md)))
+  (let [dirs (loop [todo [(.getCanonicalPath (io/file root))] seen []]
+               (if-let [[dir & more] (seq todo)]
+                 (if (some #{dir} seen)
+                   (recur more seen)
+                   (recur (into (vec more) (local-roots dir)) (conj seen dir)))
+                 seen))
+        files (concat (for [dir dirs, build-file build-files] (file dir build-file))
+                      (user-build-files))]
+    (apply digest/sha256
+           (pr-str cmds)
+           (for [^File f files
+                 part [(str f "\u0000") (if (.isFile f) (Files/readAllBytes (.toPath f)) (byte-array 0))]]
+             part))))
 
 (defn- error-key [p] (str "classpath_error:" p))
 
@@ -163,14 +173,6 @@
   "Why project `p`'s classpath couldn't be computed, when it couldn't."
   [c p]
   (db/query-value c "SELECT value FROM meta WHERE key = ?" (error-key p)))
-
-(defn- fallback-paths
-  "Source dirs to go on with when there's no classpath: deps.edn's :paths
-  if it can be read, else src and test."
-  [root]
-  (let [paths (try (let [f (file root "deps.edn")] (when (.isFile f) (:paths (read-edn f))))
-                   (catch Exception _ nil))]
-    (filter #(.isDirectory (io/file root %)) (or (seq (filter string? paths)) ["src" "test"]))))
 
 (defn memoized!
   "The classpath of project `p` at `root`, recomputed only when a build file
@@ -180,8 +182,9 @@
   When computing fails (a build file mid-edit, the build tool offline),
   the last classpath that worked is used: its memo stays, under the old
   build files' hash, so the next change tries again."
-  [c p root & [{:keys [run] :or {run run-command}}]]
-  (let [cfg (project-config root)]
+  ([c p root] (memoized! c p root {}))
+  ([c p root {:keys [run] :or {run run-command}}]
+   (let [cfg (project-config root)]
     (try
       (let [cmds (commands root cfg)
             h (spec-hash root cmds)
@@ -195,10 +198,9 @@
         (db/execute! c "DELETE FROM meta WHERE key = ?" (error-key p))
         (classify root (parse raw) cfg))
       (catch Exception e
-        (binding [*out* *err*]
-          (println "clojure-lite-lsp: classpath of" root "failed:" (ex-message e)))
+        (log/warn "classpath of" root "failed:" (ex-message e))
         (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)" (error-key p) (str (ex-message e)))
         ;; the last one that worked, else the usual source dirs
         (if-let [last-good (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
           (classify root (parse last-good) cfg)
-          (classify root (map #(str (io/file root %)) (fallback-paths root)) cfg))))))
+          (classify root (map #(str (io/file root %)) (fallback-paths root)) cfg)))))))

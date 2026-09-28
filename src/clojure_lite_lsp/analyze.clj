@@ -9,19 +9,24 @@
   (:require
    [clj-kondo.core :as kondo]
    [clj-kondo.impl.version :as kondo-version]
-   [clojure-lite-lsp.fingerprint :as fingerprint]
+   [clojure-lite-lsp.digest :as digest]
+   [clojure-lite-lsp.kondo-hooks :as kondo-hooks]
    [clojure-lite-lsp.normalize :as normalize]
    [clojure-lite-lsp.ns-analysis :as nsa]
    [clojure.java.io :as io]
    [clojure.string :as str])
   (:import
-   [java.io File]
-   [java.security MessageDigest]
+   [java.io IOException]
+   [java.util Arrays]
    [java.util.jar JarEntry JarFile]))
 
 (set! *warn-on-reflection* true)
 
 (def kondo-version kondo-version/version)
+
+(def default-shards
+  "How many clj-kondo runs share a batch."
+  8)
 
 (def ^:private modes
   {:project {:external? false :skip-lint false :analysis normalize/project-analysis-options}
@@ -29,93 +34,10 @@
    ;; a library file someone opened: everything, as for project files
    :dep-file {:external? true :skip-lint true :analysis normalize/project-analysis-options}})
 
-(defn- sha256 ^bytes [^String s]
-  (.digest (MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8")))
-
 (def ^:private options-hashes
   "Per mode, a hash of everything besides content and config that shapes
   its analysis."
-  (update-vals modes (fn [m] (sha256 (pr-str [normalize/version (dissoc m :external?)])))))
-
-(def ^:dynamic *lookups*
-  "While analyzing: {:serve (fn [lang ns-sym]) :record atom}. Hooks asking
-  about a namespace (hooks-api/ns-analysis) are answered by :serve, and
-  [file lang ns digest] is recorded for each question: whether a hook
-  changes the code can depend on the answer."
-  nil)
-
-(defn- wrap-var!
-  "Replace var `v`'s value with (wrap original), keeping the original on
-  the var so reloading this namespace wraps it afresh rather than twice."
-  [v wrap]
-  (let [original (or (::original (meta v)) @v)]
-    (alter-meta! v assoc ::original original)
-    (alter-var-root v (constantly (wrap original)))))
-
-(defn- kondo-answer
-  "clj-kondo's own answer: without a cache, only its built-in namespaces."
-  [lang ns-sym]
-  ((or (::original (meta #'clj-kondo.hooks-api/ns-analysis*)) @#'clj-kondo.hooks-api/ns-analysis*)
-   lang ns-sym))
-
-(defn answer
-  "The answer to a hook asking about `ns-sym` for `lang`, given `serve`."
-  [serve lang ns-sym]
-  (or (when serve (serve lang ns-sym)) (kondo-answer lang ns-sym)))
-
-(def ^:private hook-lock (Object.))
-
-(def ^:private resolved-hooks
-  "The hook (or nil) for each [ns-sym var-sym] under the config clj-kondo
-  last loaded (hooks-config). clj-kondo's own cache is emptied whenever it
-  sees another config object, and each concurrent run has its own: it
-  would look the hook up (load its code, hash its file) at nearly every
-  hooked call."
-  (atom {}))
-
-(def ^:private watch-hooks
-  ;; questions about namespaces are answered by clojure-lite-lsp
-  (delay
-    ;; finding a hook loads its code into clj-kondo's one, process-wide
-    ;; interpreter: two concurrent runs loading the same namespace can lose
-    ;; its vars. Lookups take turns; running the hooks doesn't.
-    (wrap-var! #'clj-kondo.impl.hooks/hook-fn
-               (fn [hook-fn]
-                 (fn [ctx config ns-sym var-sym & more]
-                   (let [k [ns-sym var-sym]]
-                     (if-let [e (find @resolved-hooks k)]
-                       (val e)
-                       (locking hook-lock
-                         (if-let [e (find @resolved-hooks k)]
-                           (val e)
-                           (let [h (apply hook-fn ctx config ns-sym var-sym more)]
-                             (swap! resolved-hooks assoc k h)
-                             h))))))))
-    (wrap-var! #'clj-kondo.hooks-api/ns-analysis*
-               (fn [ns-analysis*]
-                 (fn [lang ns-sym]
-                   (if-let [{:keys [serve record]} *lookups*]
-                     (let [r (answer serve lang ns-sym)]
-                       (swap! record conj [(:filename clj-kondo.impl.utils/*ctx*) lang ns-sym (nsa/digest r)])
-                       r)
-                     (ns-analysis* lang ns-sym)))))))
-
-(def ^:private hooks-config
-  "The config dir whose hooks clj-kondo has loaded."
-  (atom nil))
-
-(defn- use-config!
-  "Make clj-kondo load hooks afresh when `config-dir` isn't the one it last
-  ran with. It loads a hook namespace once per process and reloads only a
-  file it saw change, and every config is a directory of its own: an
-  edited hook would otherwise keep its old code. Runs never overlap across
-  configs (clojure-lite-lsp.indexer), so this can't pull hooks from under one."
-  [config-dir]
-  (when (not= config-dir @hooks-config)
-    (locking hook-lock
-      (clj-kondo.impl.hooks/reset-ctx!)
-      (reset! resolved-hooks {})
-      (reset! hooks-config config-dir))))
+  (update-vals modes (fn [m] (digest/sha256 (pr-str [normalize/version (dissoc m :external?)])))))
 
 (defn- run-kondo [lint mode config-dir]
   (let [{:keys [skip-lint analysis]} (modes mode)]
@@ -129,7 +51,7 @@
                  :config (cond-> {:auto-load-configs false
                                   :output {:canonical-paths true}
                                   :analysis analysis}
-                           (not skip-lint) (assoc :linters (normalize/only-unresolved-namespace-linter)))})))
+                           (not skip-lint) (assoc :linters normalize/kept-linters))})))
 
 (defn- shard [xs n]
   (let [n (max 1 (min n (count xs)))]
@@ -137,11 +59,14 @@
 
 (defn- in-shards
   "Run (f shard) for each of `n` shards of `xs` concurrently; concat the
-  results in order."
+  results in order. `f` must return realized results: its work is only
+  concurrent inside the future."
   [xs n f]
-  (->> (shard xs n)
-       (mapv #(future (f %)))
-       (into [] (mapcat deref))))
+  (let [runs (mapv #(future (f %)) (shard xs n))]
+    ;; every run ends before a failure is thrown: analyses must never
+    ;; overlap, and the next one may use another config
+    (run! #(try @% (catch Throwable _)) runs)
+    (into [] (mapcat deref) runs)))
 
 (defn- canonical ^String [path] (.getCanonicalPath (io/file path)))
 
@@ -161,9 +86,9 @@
   questions answered by `serve`: {filename {:elements :lookups}}."
   [lint mode config-dir serve]
   (let [record (atom #{})
-        units (normalize/normalize (binding [*lookups* {:serve serve :record record}]
-                                     (run-kondo (vec lint) mode config-dir))
-                                   {:external? (:external? (modes mode))})
+        result (binding [kondo-hooks/*lookups* {:serve serve :record record}]
+                 (run-kondo (vec lint) mode config-dir))
+        units (normalize/normalize result {:external? (:external? (modes mode))})
         lookups (group-by first @record)]
     (into {} (for [f (into (set (keys units)) (keys lookups))]
                [f {:elements (get units f [])
@@ -177,7 +102,7 @@
                    :when (= :var-def (:kind e))]
                (assoc e :ext (normalize/file-extension filename)))]
     (into {} (for [[ns-name ds] (group-by :ns defs)
-                   lang (keys nsa/ext-langs)
+                   lang (keys nsa/lang->ext)
                    :let [a (nsa/answer lang ds)]
                    :when a]
                [[lang (symbol ns-name)] a]))))
@@ -197,7 +122,7 @@
                    (fn [lang ns-sym] (or (own [lang ns-sym]) (when serve (serve lang ns-sym)))))
           redo (set (for [[filename {:keys [lookups]}] results
                           [lang ns-sym d] lookups
-                          :when (not= d (nsa/digest (answer serve' lang ns-sym)))]
+                          :when (not= d (nsa/digest (kondo-hooks/answer serve' lang ns-sym)))]
                       filename))]
       (if (or (empty? redo) (= max-rounds round))
         results
@@ -207,19 +132,20 @@
   (sort (map (fn [[lang ns-sym d]] (nsa/dep-ref lang ns-sym d)) lookups)))
 
 (defn analyze-files
-  "Analyze source files with `config` ({:dir :hash} from clojure-lite-lsp.kondo-config)
-  in `mode` (:project, or :dependency for external dirs). Hooks asking
+  "Analyze source files with `config` ({:dir :hash} from
+  clojure-lite-lsp.kondo-config) in `mode` (:project; :dependency for
+  external dirs; :dep-file for a library file someone opened). Hooks asking
   about a namespace are answered by `serve` (fn [lang ns-sym], the index
   as the project sees it) or the batch itself. Returns, in order,
   [{:path :unit-key :elements}], including files with no analysis. A file
   that changed (or went) while it was analyzed has no :unit-key: what was
   analyzed isn't what a key would say."
-  [paths {:keys [config mode shards serve] :or {shards 8}}]
-  @watch-hooks
-  (use-config! (:dir config))
+  [paths {:keys [config mode shards serve] :or {shards default-shards}}]
+  (kondo-hooks/install!)
+  (kondo-hooks/use-config! (:dir config))
   (let [dir (:dir config)
         files (vec (distinct (map canonical paths)))
-        content-hash #(try (fingerprint/sha256 %) (catch java.io.IOException _ nil))
+        content-hash #(try (digest/sha256 (io/file %)) (catch IOException _ nil))
         before (into {} (map (juxt identity content-hash)) files)
         results (into {} (in-shards files shards #(run-pass % mode dir serve)))
         results (settle results serve (fn [redo serve'] (run-pass redo mode dir serve')))]
@@ -229,7 +155,7 @@
                      refs (dep-refs lookups)
                      h (before c)]]
            {:path p
-            :unit-key (when (and h (java.util.Arrays/equals ^bytes h ^bytes (content-hash c)))
+            :unit-key (when (and h (Arrays/equals ^bytes h ^bytes (content-hash c)))
                         (cond-> (unit-key mode config h p)
                           (seq refs) (assoc :ns-deps (vec refs))))
             :elements (into (or elements [])
@@ -252,18 +178,25 @@
                    :let [^JarEntry je (.getJarEntry jf e)]
                    :when je]
                [e (with-open [in (.getInputStream jf je)]
-                    (.digest (MessageDigest/getInstance "SHA-256") (.readAllBytes in)))]))))
+                    (digest/sha256 in))]))))
 
-(defn- jar-of [filename] (first (str/split filename #"(?<=\.jar):" 2)))
-(defn- entry-of [filename] (second (str/split filename #"(?<=\.jar):" 2)))
+(defn- split-jar-path
+  "clj-kondo's name for a file in a jar, \"<jar>:<entry>\", as [jar entry]."
+  [filename]
+  (str/split filename #"(?<=\.jar):" 2))
+
+(defn- jar-of [filename] (first (split-jar-path filename)))
+(defn- entry-of [filename] (second (split-jar-path filename)))
 
 (defn- analyze-jar-group [jars config shards jar-hashes]
-  (use-config! (:dir config))
+  (kondo-hooks/use-config! (:dir config))
   (in-shards jars shards
              (fn [part]
                (let [dir (:dir config)
                      by-jar (group-by (comp jar-of key) (run-pass (mapv canonical part) :dependency dir nil))]
-                 (for [j part
+                 ;; realized here, in the shard's future
+                 (vec
+                  (for [j part
                        :let [cj (canonical j)
                              ;; a jar's hooks are answered from the jar
                              ;; alone: its analysis is shared by every
@@ -281,7 +214,7 @@
                                     {:entry-path entry
                                      :unit-key (cond-> (unit-key :dependency config (hashes entry) entry)
                                                  (seq refs) (assoc :ns-deps (vec refs)))
-                                     :elements elements}))})))))
+                                     :elements elements}))}))))))
 
 (defn analyze-jars
   "Analyze jars, each with its config from `configs` ({jar {:dir :hash}}).
@@ -289,11 +222,12 @@
   configs run one after the other. `jar-hashes` is {jar content-hash}.
   Returns, in order, [{:jar :jar-key :entries [{:entry-path :unit-key
   :elements}]}]."
-  [jars {:keys [configs jar-hashes shards] :or {shards 8}}]
-  @watch-hooks
-  (let [results (into {}
-                      (comp (mapcat (fn [[_ group]]
-                                      (analyze-jar-group (mapv first group) (second (first group)) shards jar-hashes)))
+  [jars {:keys [configs jar-hashes shards] :or {shards default-shards}}]
+  (kondo-hooks/install!)
+  (let [;; config hashes are byte arrays: vec for value equality
+        by-config (group-by (comp vec :hash configs) jars)
+        results (into {}
+                      (comp (mapcat (fn [[_ group]] (analyze-jar-group group (configs (first group)) shards jar-hashes)))
                             (map (juxt :jar identity)))
-                      (group-by (comp vec :hash second) (map (juxt identity configs) jars)))]
+                      by-config)]
     (mapv results jars)))

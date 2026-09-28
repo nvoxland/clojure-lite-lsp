@@ -4,9 +4,9 @@
    [clojure-lite-lsp.analyze :as analyze]
    [clojure-lite-lsp.classpath-test :refer [project!]]
    [clojure-lite-lsp.client :as client]
-   [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.gc :as gc]
+   [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.indexer :as indexer]
    [clojure-lite-lsp.indexer-test :refer [visible-defs sync-project! count-of]]
    [clojure-lite-lsp.kondo-config-test :refer [jar!]]
@@ -107,7 +107,7 @@
                              (for [i (range 400)]
                                [(str "src/app/n" i ".clj")
                                 (str "(ns app.n" i ")\n" (str/join "\n" (for [j (range 40)] (str "(defn f" j " [x] (str x " j "))"))))])))
-        {:keys [db]} (daemon/paths home)]
+        {:keys [db]} (home/paths home)]
     (is (= :spawned (client/ensure-daemon! {:home home})))
     (with-open [c (db/open-client db)]
       (let [p (snapshot/ensure-project! c root)
@@ -117,7 +117,7 @@
         (is (eventually #(pos? (indexed))) "indexing has started")
         (is (< (indexed) 400) "and not finished")
         (.destroyForcibly (.orElseThrow (java.lang.ProcessHandle/of pid)))
-        (is (eventually #(not (lock/held? (:daemon-lock (daemon/paths home))))))
+        (is (eventually #(not (lock/held? (:daemon-lock (home/paths home))))))
         (is (= :spawned (client/ensure-daemon! {:home home})))
         (is (eventually #(and (= 400 (indexed)) (zero? (queue/pending-count c p)))))
         (is (= "ok" (db/query-value c "PRAGMA integrity_check")))

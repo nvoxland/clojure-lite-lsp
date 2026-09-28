@@ -5,12 +5,12 @@
   queue for the daemon, which this server makes sure is running. Positions
   in edited buffers are mapped onto the indexed version and back
   (clojure-lite-lsp.lsp.buffers)."
-  (:refer-clojure :exclude [run!])
   (:require
    [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.client :as client]
-   [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.digest :as digest]
+   [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.java :as java]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.lsp.buffers :as buffers]
@@ -48,7 +48,7 @@
   [{:keys [projects reader opts]} path]
   (if-let [{:keys [jar-hash-hex]} (sources/source-of (:home opts) path)]
     (let [ps (set (map first (db/query @reader "SELECT pj.project_id FROM project_jar pj JOIN jar j ON j.id = pj.jar_id
-                                                WHERE j.jar_hash = ?" (sources/unhex jar-hash-hex))))]
+                                                WHERE j.jar_hash = ?" (digest/unhex jar-hash-hex))))]
       (first (filter #(ps (:p %)) @projects)))
     (->> (when path @projects)
          (filter #(or (= (:root %) path) (str/starts-with? path (str (:root %) File/separator))))
@@ -371,7 +371,7 @@
        distinct))
 
 (defn- initialize! [{:keys [opts projects client-c reader] :as state} params]
-  (let [{:keys [db]} (daemon/paths (:home opts))]
+  (let [{:keys [db]} (home/paths (:home opts))]
     (client/ensure-daemon! opts)
     (reset! client-c (db/open-client db))
     (reset! reader (db/open-reader db))
@@ -410,7 +410,7 @@
   [{:keys [send! projects running? opts]}]
   (future
     (try
-      (with-open [c (db/open-reader (:db (daemon/paths (:home opts))))]
+      (with-open [c (db/open-reader (:db (home/paths (:home opts))))]
         (loop [told {}]
           (when @running?
             (Thread/sleep 1000)
@@ -432,7 +432,7 @@
   [{:keys [send! projects running? opts]}]
   (future
     (try
-      (with-open [c (db/open-reader (:db (daemon/paths (:home opts))))]
+      (with-open [c (db/open-reader (:db (home/paths (:home opts))))]
         (loop [n 0 token nil begun? false shown nil]
           (when @running?
             (Thread/sleep 300)
@@ -493,7 +493,7 @@
                                                (catch Exception e (log "watched file" uri "failed:" (ex-message e)))))
       nil)))
 
-(defn run!
+(defn serve!
   "Serve LSP on `in`/`out` until `exit`. Returns the exit code."
   [{:keys [in out home version spawn!] :or {version version/version}}]
   (let [opts-atom (atom {:home home :version version :spawn! spawn!})
@@ -506,8 +506,8 @@
                :send! #(rpc/write-message! out %)}
         state-now #(assoc state :opts @opts-atom)
         reply! (fn [id m] ((:send! state) (merge {:jsonrpc "2.0" :id id} m)))
-        ;; held while this editor runs: its index is in use (daemon/paths)
-        in-use (try (lock/try-share (:clients-lock (daemon/paths home))) (catch Exception _ nil))]
+        ;; held while this editor runs: its index is in use (home/paths)
+        in-use (try (lock/try-share (:clients-lock (home/paths home))) (catch Exception _ nil))]
     (try
       (loop [shutdown? false]
         (let [{:keys [id method] :as msg} (rpc/read-message in)]

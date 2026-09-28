@@ -7,10 +7,11 @@
    [cheshire.core :as json]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.commands :as commands]
-   [clojure-lite-lsp.daemon :as daemon]
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.lock :as lock]
    [clojure-lite-lsp.queue :as queue]
+   [clojure-lite-lsp.schema :as schema]
    [clojure-lite-lsp.snapshot :as snapshot]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
@@ -23,7 +24,7 @@
 (defn- keep-daemon!
   "Start a daemon again should it have gone (it crashed, or was replaced)."
   [opts]
-  (when-not (lock/held? (:daemon-lock (daemon/paths (:home opts))))
+  (when-not (lock/held? (:daemon-lock (home/paths (:home opts))))
     (client/ensure-daemon! opts)))
 
 (defn index!
@@ -37,7 +38,7 @@
     (when-not (.isDirectory (io/file d))
       (throw (ex-info (str "Not a directory: " d) {:dir d}))))
   (client/ensure-daemon! opts)
-  (with-open [c (db/open-client (:db (daemon/paths (:home opts))))]
+  (with-open [c (db/open-client (:db (home/paths (:home opts))))]
     (let [projects (into {} (for [d dirs
                                   :let [root (.getCanonicalPath (io/file d))]]
                               [root (snapshot/ensure-project! c root)]))]
@@ -60,12 +61,12 @@
   :units}."
   [opts]
   (client/ensure-daemon! opts)
-  (with-open [c (db/open-client (:db (daemon/paths (:home opts))))]
+  (with-open [c (db/open-client (:db (home/paths (:home opts))))]
     (let [request (str (random-uuid))]
-      (db/execute! c "INSERT INTO meta (key, value) VALUES (?, '')" (str "gc_request:" request))
+      (db/execute! c "INSERT INTO meta (key, value) VALUES (?, '')" (schema/gc-request-key request))
       (loop []
-        (if-let [result (db/query-value c "SELECT value FROM meta WHERE key = ?" (str "gc_result:" request))]
-          (do (db/execute! c "DELETE FROM meta WHERE key = ?" (str "gc_result:" request))
+        (if-let [result (db/query-value c "SELECT value FROM meta WHERE key = ?" (schema/gc-result-key request))]
+          (do (db/execute! c "DELETE FROM meta WHERE key = ?" (schema/gc-result-key request))
               (edn/read-string result))
           (do (Thread/sleep (long poll-ms))
               (keep-daemon! opts)
@@ -75,7 +76,7 @@
   "Stop the indexer, once it finishes its batch: :stopped, or
   :not-running. Editors and queries start it again when they need it."
   [{:keys [home]}]
-  (let [{:keys [db daemon-lock]} (daemon/paths home)]
+  (let [{:keys [db daemon-lock]} (home/paths home)]
     (if-not (lock/held? daemon-lock)
       :not-running
       (with-open [c (db/open-client db)]
@@ -135,7 +136,7 @@
             {:exit 1 :out (str "Not in a Clojure project: no deps.edn, project.clj, bb.edn or "
                                ".clojure-lite-lsp.edn in " cwd " or above (--project <dir> names one)")}
             (let [{:keys [pending]} (when sync? (index! opts [root] (fn [_]) {:deadline-ms deadline-ms}))
-                  {:keys [db]} (daemon/paths (:home opts))
+                  {:keys [db]} (home/paths (:home opts))
                   note (when (seq pending)
                          (str "(clojure-lite-lsp is still indexing " root ": " (reduce + (vals pending))
                               " to go; answers may be incomplete)\n"))]

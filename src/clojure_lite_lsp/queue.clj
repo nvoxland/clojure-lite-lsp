@@ -30,6 +30,9 @@
     ;; work on a project is seeing it: GC drops projects unseen for long
     (db/execute! c "UPDATE project SET last_seen = ? WHERE id = ?" (System/currentTimeMillis) p)))
 
+(def ^:private select-requests
+  "SELECT project_id, kind, path, priority, enqueued_at FROM pending ")
+
 (defn- row->request [[p kind path priority enqueued-at]]
   {:project-id p :kind (keyword kind) :path path :priority priority :enqueued-at enqueued-at})
 
@@ -45,22 +48,19 @@
   ([c batch-sizes] (next-batch c batch-sizes nil))
   ([c batch-sizes in-flight]
    (let [skip? (set in-flight)
-         n (count skip?)]
+         ;; fetch enough to have what's wanted once the skipped are removed
+         skipped (count skip?)
+         requests #(->> % (map row->request) (remove (comp skip? request-key)))]
      (if-let [{:keys [project-id kind priority]}
-              (->> (db/query c "SELECT project_id, kind, path, priority, enqueued_at FROM pending
-                                ORDER BY priority, enqueued_at LIMIT ?" (inc n))
-                   (map row->request)
-                   (remove #(skip? (request-key %)))
-                   first)]
-       (->> (db/query c "SELECT project_id, kind, path, priority, enqueued_at FROM pending
-                         WHERE project_id = ? AND kind = ? AND priority = ?
-                         ORDER BY enqueued_at LIMIT ?"
-                      project-id (name kind) priority
-                      (+ n (get (merge default-batch-sizes batch-sizes) kind 100)))
-            (map row->request)
-            (remove #(skip? (request-key %)))
-            (take (get (merge default-batch-sizes batch-sizes) kind 100))
-            vec)
+              (first (requests (db/query c (str select-requests "ORDER BY priority, enqueued_at LIMIT ?")
+                                         (inc skipped))))]
+       (let [size (get (merge default-batch-sizes batch-sizes) kind 100)]
+         (->> (db/query c (str select-requests "WHERE project_id = ? AND kind = ? AND priority = ?
+                                                ORDER BY enqueued_at LIMIT ?")
+                        project-id (name kind) priority (+ skipped size))
+              requests
+              (take size)
+              vec))
        []))))
 
 (defn done!
@@ -71,5 +71,7 @@
       (db/execute! c "DELETE FROM pending WHERE project_id = ? AND kind = ? AND path = ? AND enqueued_at = ?"
                    project-id (name kind) path enqueued-at))))
 
-(defn pending-count [c p]
+(defn pending-count
+  "How many requests project `p` has waiting."
+  [c p]
   (db/query-value c "SELECT count(*) FROM pending WHERE project_id = ?" p))

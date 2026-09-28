@@ -16,12 +16,13 @@
   option: that stops it writing inline configs into these directories,
   while the config dir's own auto-loading of imports still applies."
   (:require
+   [clojure-lite-lsp.digest :as digest]
+   [clojure-lite-lsp.fingerprint :as fingerprint]
    [clojure.java.io :as io]
    [clojure.string :as str])
   (:import
    [java.io File]
-   [java.nio.file Files StandardCopyOption]
-   [java.security MessageDigest]
+   [java.nio.file FileAlreadyExistsException Files StandardCopyOption]
    [java.util Properties]
    [java.util.jar JarEntry JarFile]))
 
@@ -36,6 +37,18 @@
          (mapv (fn [^JarEntry e]
                  [(.getName e) (with-open [in (.getInputStream jf e)] (.readAllBytes in))])))))
 
+(defn- relative-path
+  "`f`'s path under directory `dir`, with / separators."
+  [^File dir ^File f]
+  (str/replace (str (.relativize (.toPath dir) (.toPath f))) File/separator "/"))
+
+(defn- files-under
+  "[[relative-path file] ...] of the files under directory `dir`."
+  [dir]
+  (let [d (io/file dir)]
+    (for [^File f (file-seq d) :when (.isFile f)]
+      [(relative-path d f) f])))
+
 (defn- export-path
   "The part of `path` after a clj-kondo.exports segment, or nil. Like
   clj-kondo, the segment can be anywhere: malli ships its config at
@@ -43,73 +56,80 @@
   [path]
   (second (re-find #"(?:^|/)clj-kondo\.exports/(.+)$" path)))
 
+(def ^:private jar-exports
+  (fingerprint/memoize-by-file
+   (fn [jar]
+     (into {}
+           (map (fn [[n bs]] [(export-path n) bs]))
+           (jar-entries jar #(some? (export-path %)))))))
+
 (defn exports
   "The clj-kondo configs a jar or directory exports, as {path bytes} with
   paths relative to their `clj-kondo.exports/`."
   [path]
-  (let [f (io/file path)]
-    (if (.isDirectory f)
-      (let [base (count (str f File/separator))]
-        (into {}
-              (keep (fn [^File x]
-                      (when (.isFile x)
-                        (when-let [p (export-path (str/replace (subs (str x) base) File/separator "/"))]
-                          [p (Files/readAllBytes (.toPath x))]))))
-              (file-seq f)))
-      (into {}
-            (map (fn [[n bs]] [(export-path n) bs]))
-            (jar-entries f #(some? (export-path %)))))))
+  (if (.isDirectory (io/file path))
+    (into {}
+          (keep (fn [[rel ^File f]]
+                  (when-let [p (export-path rel)]
+                    [p (Files/readAllBytes (.toPath f))])))
+          (files-under path))
+    (jar-exports path)))
 
-(defn- pom-files [jar]
-  (jar-entries jar #(re-matches #"META-INF/maven/[^/]+/[^/]+/pom\.(properties|xml)" %)))
+(defn- tag [xml t] (some-> (re-find (re-pattern (str "<" t ">\\s*([^<]*?)\\s*</" t ">")) xml) second))
+
+(def ^:private pom-info
+  "{:coords [group artifact] :deps #{[group artifact]}} of the jar at a
+  path, from its Maven pom (nil when it has none, or several as in an
+  uberjar); test dependencies left out."
+  (fingerprint/memoize-by-file
+   (fn [jar]
+     (let [poms (jar-entries jar #(re-matches #"META-INF/maven/[^/]+/[^/]+/pom\.(properties|xml)" %))
+           only (fn [suffix] (let [[[_ bs] :as found] (filter #(str/ends-with? (first %) suffix) poms)]
+                               (when (= 1 (count found)) bs)))
+           coords (when-let [bs (only "pom.properties")]
+                    (let [p (doto (Properties.) (.load (io/input-stream ^bytes bs)))]
+                      [(.getProperty p "groupId") (.getProperty p "artifactId")]))
+           deps (when-let [bs (only "pom.xml")]
+                  (->> (re-seq #"(?s)<dependency>(.*?)</dependency>" (String. ^bytes bs "UTF-8"))
+                       (map second)
+                       (remove #(= "test" (tag % "scope")))
+                       (map (fn [d] [(str/replace (or (tag d "groupId") "") "${project.groupId}" (str (first coords)))
+                                     (tag d "artifactId")]))
+                       set))]
+       {:coords coords :deps deps}))))
 
 (defn maven-coords
   "The [group artifact] a jar was published as, or nil (none, or several as
   in an uberjar)."
   [jar]
-  (let [props (filter #(str/ends-with? (first %) "pom.properties") (pom-files jar))]
-    (when (= 1 (count props))
-      (let [p (doto (Properties.) (.load (io/input-stream ^bytes (second (first props)))))]
-        [(.getProperty p "groupId") (.getProperty p "artifactId")]))))
-
-(defn- tag [xml t] (some-> (re-find (re-pattern (str "<" t ">\\s*([^<]*?)\\s*</" t ">")) xml) second))
+  (:coords (pom-info jar)))
 
 (defn maven-deps
   "The [group artifact]s a jar's pom declares, except test dependencies."
   [jar]
-  (let [xmls (filter #(str/ends-with? (first %) "pom.xml") (pom-files jar))]
-    (when (= 1 (count xmls))
-      (let [xml (String. ^bytes (second (first xmls)) "UTF-8")
-            own-group (first (maven-coords jar))]
-        (->> (re-seq #"(?s)<dependency>(.*?)</dependency>" xml)
-             (map second)
-             (remove #(= "test" (tag % "scope")))
-             (map (fn [d] [(str/replace (or (tag d "groupId") "") "${project.groupId}" (str own-group))
-                           (tag d "artifactId")]))
-             set)))))
+  (:deps (pom-info jar)))
+
+(defn- reachable
+  "What `start` reaches through `edges` (a fn of a node to its next
+  nodes), not counting itself."
+  [edges start]
+  (loop [seen #{} frontier (edges start)]
+    (if (empty? frontier)
+      (disj seen start)
+      (let [seen (into seen frontier)]
+        (recur seen (into #{} (comp (mapcat edges) (remove seen)) frontier))))))
 
 (defn dependency-closure
   "{jar #{jars it depends on, transitively}}, among `jars`."
   [jars]
-  (let [by-coords (into {} (keep (fn [j] (when-let [c (maven-coords j)] [c j]))) jars)
-        direct (into {} (map (fn [j] [j (set (keep by-coords (maven-deps j)))])) jars)
-        closure (fn [j]
-                  (loop [todo (vec (direct j)) seen #{}]
-                    (if-let [[x & more] (seq todo)]
-                      (if (or (seen x) (= x j))
-                        (recur (vec more) seen)
-                        (recur (into (vec more) (direct x)) (conj seen x)))
-                      seen)))]
-    (into {} (map (fn [j] [j (closure j)])) jars)))
-
-(defn- hex [^bytes bs] (apply str (map #(format "%02x" %) bs)))
+  (let [by-coords (into {} (keep (fn [j] (some-> (maven-coords j) (vector j)))) jars)
+        direct (zipmap jars (map #(into #{} (keep by-coords) (maven-deps %)) jars))]
+    (zipmap jars (map #(reachable direct %) jars))))
 
 (defn- content-hash ^bytes [files]
-  (let [md (MessageDigest/getInstance "SHA-256")]
-    (doseq [[path ^bytes bs] (sort-by key files)]
-      (.update md (.getBytes (str path "\u0000" (count bs) "\u0000") "UTF-8"))
-      (.update md bs))
-    (.digest md)))
+  (apply digest/sha256 (for [[path ^bytes bs] (sort-by key files)
+                             part [(str path "\u0000" (count bs) "\u0000") bs]]
+                         part)))
 
 (defn materialize!
   "Write `files` ({relative-path bytes}) as a config dir under
@@ -117,19 +137,26 @@
   Returns {:dir :hash}."
   [cache-dir files]
   (let [h (content-hash files)
-        dir (io/file cache-dir "configs" (hex h))]
+        dir (io/file cache-dir "configs" (digest/hex h))]
     (when-not (.isDirectory dir)
-      (let [tmp (io/file cache-dir "configs" (str (hex h) ".tmp-" (System/nanoTime)))]
-        (.mkdirs tmp)
-        (doseq [[path ^bytes bs] files]
-          (let [f (io/file tmp ^String path)]
-            ;; paths come from jars: none may leave the config dir (zip-slip)
-            (when-not (str/starts-with? (.getCanonicalPath f) (str (.getCanonicalPath tmp) File/separator))
-              (throw (ex-info (str "Config file outside its dir: " path) {:path path})))
-            (io/make-parents f)
-            (Files/write (.toPath f) bs ^"[Ljava.nio.file.OpenOption;" (into-array java.nio.file.OpenOption []))))
-        ;; atomic, so a crash never leaves a half-written config under its hash
-        (Files/move (.toPath tmp) (.toPath dir) (into-array [StandardCopyOption/ATOMIC_MOVE]))))
+      (let [tmp (io/file cache-dir "configs" (str (digest/hex h) ".tmp-" (System/nanoTime)))
+            inside (str (.getCanonicalPath tmp) File/separator)]
+        (try
+          (.mkdirs tmp)
+          (doseq [[path ^bytes bs] files]
+            (let [f (io/file tmp ^String path)]
+              ;; paths come from jars: none may leave the config dir (zip-slip)
+              (when-not (str/starts-with? (.getCanonicalPath f) inside)
+                (throw (ex-info (str "Config file outside its dir: " path) {:path path})))
+              (io/make-parents f)
+              (io/copy bs f)))
+          ;; atomic, so a crash never leaves a half-written config under its hash
+          (Files/move (.toPath tmp) (.toPath dir) (into-array [StandardCopyOption/ATOMIC_MOVE]))
+          ;; another process wrote the same config meanwhile: that one will do
+          (catch FileAlreadyExistsException _ nil)
+          (finally
+            (when (.exists tmp)
+              (run! #(.delete ^File %) (reverse (file-seq tmp))))))))
     {:dir (str dir) :hash h}))
 
 (defn- lib-dir
@@ -147,17 +174,14 @@
     dirs of the classpath's exports, which are imported afresh anyway;
   - bookkeeping files at the top (.lock, .deps.edn.md5sum, ...)."
   [root exported]
-  (let [d (io/file root ".clj-kondo")
-        base (count (str d File/separator))]
+  (let [d (io/file root ".clj-kondo")]
     (into {}
-          (comp (filter #(.isFile ^File %))
-                (map (fn [^File f] [(str/replace (subs (str f) base) File/separator "/") f]))
-                (remove (fn [[path]]
+          (comp (remove (fn [[path]]
                           (or (re-find #"^(\.cache|inline-configs|gen-macros|imports)/" path)
                               (re-find #"^\.[^/]*$" path)
                               (exported (lib-dir path)))))
                 (map (fn [[path ^File f]] [path (Files/readAllBytes (.toPath f))])))
-          (when (.isDirectory d) (file-seq d)))))
+          (when (.isDirectory d) (files-under d)))))
 
 (defn- imports [exports-maps]
   (into {} (for [m exports-maps, [path bs] m] [(str "imports/" path) bs])))
@@ -175,7 +199,7 @@
   "What `jar-config!` needs to know about a classpath's jars."
   [jars]
   {:closure (dependency-closure jars)
-   :exports (into {} (map (fn [j] [j (exports j)])) jars)})
+   :exports (zipmap jars (map exports jars))})
 
 (defn jar-config!
   "The config dir for analyzing `jar`: its own and its dependencies'

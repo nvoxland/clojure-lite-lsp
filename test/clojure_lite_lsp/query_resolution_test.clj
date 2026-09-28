@@ -29,6 +29,13 @@
                            "src/a.clj" "(ns a (:use [b] [c])) (cfn)"}]
         (is (= (locs proj ["src/c.clj" "cfn ["]) (definition proj "src/a.clj" "cfn)")))))))
 
+(deftest a-require-after-a-use-refers-nothing
+  (with-project [proj {"src/b.clj" "(ns b) (defn f [] 1)"
+                       "src/c.clj" "(ns c) (defn f [] 2)"
+                       "src/a.clj" "(ns a (:use [b]) (:require [c :as cc])) (f)"}]
+    (is (= (locs proj ["src/b.clj" "f ["]) (definition proj "src/a.clj" "f)")))
+    (is (= #{} (references proj "src/c.clj" "f [")))))
+
 (deftest quoted-symbols-of-namespaces-not-required
   (with-project [proj {"src/b.clj" "(ns b) (defn f [] 1)"
                        "src/a.clj" "(ns a) (requiring-resolve 'b/f)"}]

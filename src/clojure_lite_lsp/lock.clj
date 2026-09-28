@@ -9,7 +9,7 @@
    [clojure.java.io :as io])
   (:import
    [java.io File RandomAccessFile]
-   [java.nio.channels FileChannel FileLock OverlappingFileLockException]))
+   [java.nio.channels OverlappingFileLockException]))
 
 (set! *warn-on-reflection* true)
 
@@ -18,9 +18,9 @@
         _ (io/make-parents f)
         raf (RandomAccessFile. ^File f "rw")]
     (try
-      (if-let [l (try (.tryLock (.getChannel raf) 0 Long/MAX_VALUE (boolean shared?))
-                      (catch OverlappingFileLockException _ nil))]
-        {:raf raf :lock l}
+      (if (try (.tryLock (.getChannel raf) 0 Long/MAX_VALUE (boolean shared?))
+               (catch OverlappingFileLockException _ nil))
+        {:raf raf}
         (do (.close raf) nil))
       (catch Throwable t (.close raf) (throw t)))))
 
@@ -36,8 +36,10 @@
   [path]
   (take-lock path true))
 
-(defn release! [{:keys [^RandomAccessFile raf ^FileLock lock]}]
-  (.release lock)
+(defn release!
+  "Let go of a lock taken with `try-lock`, `try-share` or `lock!`."
+  [{:keys [^RandomAccessFile raf]}]
+  ;; closing the file releases its lock
   (.close raf))
 
 (defn held?
@@ -56,13 +58,21 @@
     (do (release! l) false)
     true))
 
+(defn poll
+  "Call `f` every `interval-ms` until it returns something truthy, or
+  `timeout-ms` passes: what it returned, or nil."
+  ([f timeout-ms] (poll f timeout-ms 20))
+  ([f timeout-ms interval-ms]
+   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+     (loop []
+       (or (f)
+           (when (< (System/currentTimeMillis) deadline)
+             (Thread/sleep (long interval-ms))
+             (recur)))))))
+
 (defn lock!
   "Take the lock on `path`, waiting up to `timeout-ms` for it. Throws on
   timeout."
   [path timeout-ms]
-  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
-    (loop []
-      (or (try-lock path)
-          (if (< (System/currentTimeMillis) deadline)
-            (do (Thread/sleep 20) (recur))
-            (throw (ex-info (str "Timed out waiting for lock " path) {:path path})))))))
+  (or (poll #(try-lock path) timeout-ms)
+      (throw (ex-info (str "Timed out waiting for lock " path) {:path path}))))

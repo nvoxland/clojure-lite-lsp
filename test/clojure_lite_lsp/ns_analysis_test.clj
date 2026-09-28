@@ -119,8 +119,10 @@
       (with-open [ix (indexer/indexer {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)})]
         (sync-project! ix root)
         (spit (io/file root "src/app/src.clj") src-fgh)
-        (let [done (future (sync-project! ix root) :idle)]
-          (is (= :idle (deref done 60000 :still-looping))))))))
+        (let [err (java.io.StringWriter.)
+              done (binding [*err* err] (future (sync-project! ix root) :idle))]
+          (is (= :idle (deref done 60000 :still-looping)))
+          (is (str/includes? (str err) "doesn't match what its hooks are told") "and says so"))))))
 
 (deftest questions-from-hooks-that-only-lint-count-too
   ;; a hook that returns the node it was given this time may change it
@@ -153,7 +155,7 @@
 (deftest the-requeue-guard-catches-cycles
   ;; analysis that alternates between two results must stop too
   (let [seen (atom {})]
-    (is (true? (indexer/requeue? seen [1 "a"] [10 ["x"]])))
-    (is (true? (indexer/requeue? seen [1 "a"] [11 ["y"]])))
-    (is (false? (indexer/requeue? seen [1 "a"] [10 ["x"]])) "back to the first: a cycle")
-    (is (true? (indexer/requeue? seen [1 "b"] [10 ["x"]])) "per file")))
+    (is (true? (indexer/first-requeue! seen [1 "a"] [10 ["x"]])))
+    (is (true? (indexer/first-requeue! seen [1 "a"] [11 ["y"]])))
+    (is (false? (indexer/first-requeue! seen [1 "a"] [10 ["x"]])) "back to the first: a cycle")
+    (is (true? (indexer/first-requeue! seen [1 "b"] [10 ["x"]])) "per file")))

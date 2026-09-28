@@ -12,7 +12,10 @@
   (clojure-lite-lsp.sources). A class with no source anywhere has no location:
   decompiling is out of scope."
   (:require
+   [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.db :as db]
+   [clojure-lite-lsp.fingerprint :as fingerprint]
+   [clojure-lite-lsp.process :as process]
    [clojure-lite-lsp.query :as q]
    [clojure-lite-lsp.sources :as sources]
    [clojure.java.io :as io]
@@ -37,27 +40,21 @@
   [text class-name]
   (let [n (simple-name class-name)
         re (re-pattern (str "\\b(?:class|interface|enum|record|@interface)\\s+(" n ")\\b"))]
-    (or (first (keep-indexed (fn [i line]
-                               (let [m (re-matcher re line)]
-                                 (when (.find m)
-                                   [(inc i) (inc (.start m 1)) (inc i) (inc (.end m 1))])))
-                             (str/split-lines text)))
+    (or (some (fn [[i line]]
+                (let [m (re-matcher re line)]
+                  (when (.find m)
+                    [(inc i) (inc (.start m 1)) (inc i) (inc (.end m 1))])))
+              (map-indexed vector (str/split-lines text)))
         [1 1 1 1])))
 
-(def ^:private zip-prefixes (atom {}))
-
-(defn- top-dirs
-  "The top-level directories of zip `path` (src.zip's modules): kept, not
-  its tens of thousands of entry names."
-  [path]
-  (let [f (io/file path)
-        k [(str path) (.lastModified f) (.length f)]]
-    (or (@zip-prefixes k)
-        (let [dirs (with-open [z (JarFile. (str path))]
-                     (into (sorted-set) (keep #(second (re-find #"^([^/]+)/" (.getName ^JarEntry %))))
-                           (enumeration-seq (.entries z))))]
-          (swap! zip-prefixes assoc k dirs)
-          dirs))))
+(def ^:private top-dirs
+  "The top-level directories of the zip at a path (src.zip's modules):
+  remembered, not its tens of thousands of entry names."
+  (fingerprint/memoize-by-file
+   (fn [path]
+     (with-open [z (JarFile. (str path))]
+       (into (sorted-set) (keep #(second (re-find #"^([^/]+)/" (.getName ^JarEntry %))))
+             (enumeration-seq (.entries z)))))))
 
 (defn- entry-ending-with
   "The entry of zip `path` that is `suffix`, or that under a top-level
@@ -82,9 +79,9 @@
   contain the class; `jdk-src`: the JDK's src.zip."
   [{:keys [home source-dirs class-jars jdk-src]} class-name]
   (let [entry (source-entry class-name)
-        path (or (first (filter #(.isFile (io/file ^String %))
-                                (map #(str (io/file % entry)) source-dirs)))
-                 (first (keep #(from-zip home (sources-jar %) entry) class-jars))
+        ;; some, not (first (keep ...)): each try can extract a file
+        path (or (some #(let [f (io/file % entry)] (when (.isFile f) (str f))) source-dirs)
+                 (some #(from-zip home (sources-jar %) entry) class-jars)
                  (from-zip home jdk-src entry))]
     (when path
       {:path path :pos (declaration-pos (slurp path) class-name)})))
@@ -98,21 +95,17 @@
   (->> [java-home-env java-home-prop (when run (some-> (run ["/usr/libexec/java_home"]) str/trim not-empty))]
        (remove nil?)
        (mapcat #(vector (io/file % "lib" "src.zip") (io/file % "src.zip")))
-       (filter #(.isFile ^File %))
-       first
-       (#(some-> ^File % str))))
+       (some #(when (.isFile ^File %) (str %)))))
 
-(defn- run-quietly [cmd]
-  (try
-    (when (.exists (io/file (first cmd)))
-      (let [p (.start (doto (ProcessBuilder. ^java.util.List cmd) (.redirectErrorStream true)))
-            out (slurp (.getInputStream p))]
-        (when (zero? (.waitFor p)) out)))
-    (catch Exception _ nil)))
+(defn- output-of
+  "What `cmd` prints, or nil when it fails."
+  [cmd]
+  (let [{:keys [exit out]} (process/run cmd {:timeout-ms 10000})]
+    (when (zero? exit) out)))
 
 (def ^:private jdk-src-memo (delay (jdk-src-in {:java-home-env (System/getenv "JAVA_HOME")
                                                 :java-home-prop (System/getProperty "java.home")
-                                                :run run-quietly})))
+                                                :run output-of})))
 
 (defn jdk-src
   "The JDK's src.zip on this machine, or nil (a native image has no
@@ -126,10 +119,10 @@
   [c p]
   (let [root (db/query-value c "SELECT root FROM project WHERE id = ?" p)
         memo (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
-    (distinct (concat (->> (str/split (or memo "") (re-pattern File/pathSeparator))
+    (distinct (concat (->> (classpath/parse (or memo ""))
                            (remove #(str/ends-with? % ".jar"))
-                           (map #(if (.isAbsolute (io/file ^String %)) % (str root "/" %))))
-                      (map #(str root "/" %) ["java" "src/main/java" "src/java" "src"])))))
+                           (map #(str (classpath/resolve-file root %))))
+                      (map #(str (io/file root %)) ["java" "src/main/java" "src/java" "src"])))))
 
 (defn class-location
   "The location {:path :pos} of `class-name`'s source for project `p`, or
