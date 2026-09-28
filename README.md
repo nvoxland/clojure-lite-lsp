@@ -21,7 +21,10 @@ refactoring.
 
 ## Install
 
-Build the native binary and put it on your PATH (needs
+Download a binary for macOS or Linux from
+[Releases](https://github.com/nvoxland/clojure-lite-lsp/releases) and put it
+on your PATH ([details](https://nvoxland.github.io/clojure-lite-lsp/getting-started/install/)),
+or build it (needs
 [GraalVM](https://www.graalvm.org/), as `JAVA_HOME` or with `native-image` on
 PATH, and the [Clojure CLI](https://clojure.org/guides/install_clojure)):
 

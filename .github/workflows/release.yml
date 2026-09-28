@@ -1,0 +1,171 @@
+name: Release
+
+# Push a `v<version>` tag matching src/clojure_lite_lsp/version.clj and
+# this builds the native binaries on each platform, smoke-tests them, and
+# publishes them as a GitHub Release with notes from the commits since the
+# previous one. Run it by hand from the Actions tab for a dry run: it
+# builds and tests everything, and publishes nothing.
+#
+# To release:
+# 1. Set version.clj's version to X.Y.Z (no -SNAPSHOT) and commit
+# 2. git tag vX.Y.Z && git push origin main vX.Y.Z
+# 3. Once it's out, set version.clj to the next X.Y.Z-SNAPSHOT and commit
+#    (a daemon of a newer version replaces an older one: development
+#    builds must not look older than the release)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read version.clj, and check the tag against it
+        id: version
+        run: |
+          version=$(grep -o '"[0-9][^"]*"' src/clojure_lite_lsp/version.clj | tr -d '"')
+          echo "version.clj: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME doesn't match version.clj's $version"
+              exit 1
+            fi
+            case "$version" in
+              *-SNAPSHOT) echo "::error::A release can't be a -SNAPSHOT version ($version)"; exit 1 ;;
+            esac
+          fi
+
+  test:
+    name: Tests
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          cli: 1.12.5.1645
+
+      - name: Cache Maven and git deps
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.deps.clj
+          key: clojure-test-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: clojure-test-${{ runner.os }}-
+
+      - run: clojure -M:test
+
+  build:
+    name: Binary (${{ matrix.target }})
+    needs: [version, test]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04: an older glibc, so the binary runs on more
+          # distributions. Portable CPU targets, not the build machine's.
+          - target: linux-x86_64
+            os: ubuntu-22.04
+            march: x86-64-v2
+          - target: linux-aarch64
+            os: ubuntu-22.04-arm
+            march: armv8.1-a
+          # every Apple chip has what the build machine's does
+          - target: macos-aarch64
+            os: macos-latest
+            march: native
+    env:
+      ARCHIVE: clojure-lite-lsp-${{ needs.version.outputs.version }}-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          cli: 1.12.5.1645
+
+      - name: Cache Maven and git deps
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.deps.clj
+          key: clojure-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn') }}
+          restore-keys: clojure-native-${{ runner.os }}-${{ runner.arch }}-
+
+      # a reflective call compiles, then fails at runtime in the native binary
+      - name: Build
+        env:
+          CLOJURE_LITE_LSP_MARCH: ${{ matrix.march }}
+        run: |
+          bin/build-native 2>&1 | tee build.log
+          if grep -q "Reflection warning" build.log; then
+            grep "Reflection warning" build.log
+            exit 1
+          fi
+
+      - name: Smoke test
+        run: bin/smoke-test target/clojure-lite-lsp "${{ needs.version.outputs.version }}"
+
+      - name: Package
+        run: |
+          mkdir -p "dist/$ARCHIVE"
+          cp target/clojure-lite-lsp LICENSE NOTICE README.md "dist/$ARCHIVE/"
+          tar -C dist -czf "dist/$ARCHIVE.tar.gz" "$ARCHIVE"
+          cd dist && shasum -a 256 "$ARCHIVE.tar.gz" > "$ARCHIVE.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: |
+            dist/${{ env.ARCHIVE }}.tar.gz
+            dist/${{ env.ARCHIVE }}.tar.gz.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [version, build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "clojure-lite-lsp $GITHUB_REF_NAME" \
+            --generate-notes
