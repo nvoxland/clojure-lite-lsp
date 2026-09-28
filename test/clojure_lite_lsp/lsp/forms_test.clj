@@ -64,3 +64,14 @@
   (is (= {:params ["s" "n"] :variadic nil} (forms/arglist-params "[^String s n]")))
   (is (= {:params ["s"] :variadic nil} (forms/arglist-params "[^{:tag String} s]")))
   (is (= {:params ["a" "more"] :variadic 1} (forms/arglist-params "[a & ^java.util.List more]"))))
+
+(deftest the-cursor-on-the-function-name
+  (is (= ["greet" 0] (ctx "(gre|et 1)")))
+  (is (= ["greet" 0] (ctx "(greet| 1)"))))
+
+(deftest the-number-of-arguments-in-the-call
+  ;; the arity is chosen by the whole call, not just what's before the cursor
+  (let [text "(f 1 2 3) x"]
+    (is (= 3 (:count (forms/call-at text 5))))
+    (is (= 1 (:arg (forms/call-at text 5)))))
+  (is (= 3 (:count (forms/call-at "(f 1 (g 2) \"a)\"" 3))) "unclosed: to the end, nested forms and strings as one"))

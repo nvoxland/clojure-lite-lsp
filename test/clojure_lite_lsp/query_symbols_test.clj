@@ -60,3 +60,9 @@
     (testing "the items at a position"
       (let [[row col] (f/at proj "src/a.clj" "mid [")]
         (is (= [["a" "mid"]] (map (juxt :ns :name) (q/call-hierarchy-items (:c proj) (:p proj) (f/path proj "src/a.clj") row col))))))))
+
+(deftest short-queries-ignore-case-like-long-ones
+  (with-project [proj {"src/app/core.clj" "(ns app.core)\n(defn Foo [] 1)"}]
+    (let [search #(set (map :name (q/workspace-symbols (:c proj) (:p proj) % {:limit 50})))]
+      (doseq [query ["F" "f" "Fo" "fo" "foo" "FOO"]]
+        (is (contains? (search query) "Foo") query)))))

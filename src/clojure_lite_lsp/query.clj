@@ -524,10 +524,20 @@
 (defn- occurrences-of
   "The elements of unit `u` that are occurrences of `el`: the same local
   (in every language), or the same var, namespace or keyword."
-  [c u {:keys [kind ns name] :as el}]
-  (if (#{:local :local-usage} kind)
+  [c u {:keys [kind ns name alias] :as el}]
+  (cond
+    ;; an alias: itself and the names written through it (str/join)
+    (and (= :ns-alias kind) alias)
+    (map row->element
+         (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                          " WHERE fe.unit_id = ? AND fe.alias = ?")
+                   u (sym-id c alias)))
+
+    (#{:local :local-usage} kind)
     (let [ids (vec (local-ids c u el))]
       (apply local-rows c u (str "fe.local_id IN (" (str/join "," (repeat (count ids) "?")) ")") ids))
+
+    :else
     (when-let [ks (occurrence-kinds kind)]
       (map row->element
            (apply db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
@@ -540,7 +550,9 @@
   position: [{:pos :write?}], :write? for definitions and bindings."
   [c p path row col]
   (when-let [u (file-unit c p path)]
-    (->> (elements-at c p path row col)
+    (->> (let [els (elements-at c p path row col)]
+           ;; a :keys binding is both a local and a keyword: it means the local
+           (or (seq (filter (comp #{:local :local-usage} :kind) els)) els))
          (mapcat #(occurrences-of c u %))
          (map (fn [{:keys [pos kind]}] {:pos pos :write? (contains? write-kinds kind)}))
          distinct
@@ -587,12 +599,22 @@
   [{:kind :ns :name :pos :form}]."
   [c p path]
   (when-let [u (file-unit c p path)]
-    (->> (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
-                          " WHERE fe.unit_id = ? AND fe.kind IN ("
+    (->> (db/query c (str "SELECT " element-columns ", dby.text, d.extra FROM file_element fe " element-joins
+                          " LEFT JOIN definition d ON d.unit_id = fe.unit_id AND d.name_row = fe.name_row
+                                                   AND d.name_col = fe.name_col AND d.kind = fe.kind
+                                                   AND d.name = fe.name
+                            LEFT JOIN sym dby ON dby.id = d.defined_by
+                            WHERE fe.unit_id = ? AND fe.kind IN ("
                           (str/join "," (map kinds/code document-symbol-kinds)) ")
                           ORDER BY fe.name_row, fe.name_col")
                    u)
-         (mapv #(dissoc (row->element %) :unit-id)))))
+         (mapv (fn [row]
+                 (let [[defined-by extra] (drop 15 row)]
+                   (cond-> (dissoc (row->element (take 15 row)) :unit-id)
+                     defined-by (assoc :defined-by defined-by)
+                     extra (assoc :extra (edn/read-string extra))))))
+         distinct
+         vec)))
 
 (def ^:private trigram-min 3)
 
@@ -609,11 +631,19 @@
                       ORDER BY (s.text = ?) DESC, (substr(s.text, 1, ?) = ?) DESC, length(s.text)
                       LIMIT ?"
                    (str "\"" (str/replace query "\"" "\"\"") "\"") query (count query) query limit)
-         (db/query c "SELECT s.id FROM sym s
-                      WHERE s.text >= ? AND s.text < ? AND EXISTS (SELECT 1 FROM name_fts WHERE rowid = s.id)
-                      ORDER BY (s.text = ?) DESC, length(s.text)
-                      LIMIT ?"
-                   query (str query "\uffff") query limit))))
+         ;; ignoring case, as the trigram search does: a range per way of
+         ;; writing the (one or two character) prefix
+         (let [variants (reduce (fn [acc ch]
+                                  (for [prefix acc
+                                        v (distinct [(str/lower-case ch) (str/upper-case ch)])]
+                                    (str prefix v)))
+                                [""] (map str query))]
+           (apply db/query c (str "SELECT s.id FROM sym s
+                                   WHERE (" (str/join " OR " (repeat (count variants) "(s.text >= ? AND s.text < ?)")) ")
+                                   AND EXISTS (SELECT 1 FROM name_fts WHERE rowid = s.id)
+                                   ORDER BY (lower(s.text) = lower(?)) DESC, length(s.text)
+                                   LIMIT ?")
+                  (concat (mapcat (fn [v] [v (str v "\uffff")]) variants) [query limit]))))))
 
 (defn workspace-symbols
   "Definitions project `p` can see whose name matches `query`, the exact
@@ -626,25 +656,29 @@
       ;; driven by the names (definition_name), not by every unit the
       ;; project sees
       (->> (apply db/query c (str "SELECT d.kind, ns.text, nm.text, d.unit_id,
-                                    d.name_row, d.name_col, d.name_end_row, d.name_end_col, pu.ord
+                                    d.name_row, d.name_col, d.name_end_row, d.name_end_col, pu.ord, dby.text, d.extra
                              FROM definition d INDEXED BY definition_name
                              JOIN project_unit pu ON pu.project_id = ? AND pu.unit_id = d.unit_id
                              LEFT JOIN sym ns ON ns.id = d.ns JOIN sym nm ON nm.id = d.name
+                             LEFT JOIN sym dby ON dby.id = d.defined_by
                              WHERE d.name IN (" (str/join "," (repeat (count ids) "?")) ")
                              AND d.kind IN (?, ?, ?)")
                   (concat [p] ids (map kinds/code document-symbol-kinds)))
            (sort-by (fn [[_ _ nm _ _ _ _ _ ord]]
-                      [(if (= nm query) 0 1) (if (str/starts-with? nm query) 0 1) ord (count nm) nm]))
+                      [(if (= (str/lower-case nm) (str/lower-case query)) 0 1)
+                       (if (str/starts-with? (str/lower-case nm) (str/lower-case query)) 0 1) ord (count nm) nm]))
            (take limit)
            ((fn [rows]
               ;; locate them all at once: one lookup per result was the
               ;; slowest part left
               (let [where (units-locations c p (map #(nth % 3) rows))]
-                (vec (for [[kind ns nm u nr nc ner nec] rows
+                (vec (for [[kind ns nm u nr nc ner nec _ defined-by extra] rows
                            :let [loc (first (where u))]
                            :when loc]
-                       {:kind (kinds/kind kind) :ns ns :name nm
-                        :location (assoc loc :pos [nr nc ner nec])})))))))))
+                       (cond-> {:kind (kinds/kind kind) :ns ns :name nm
+                                :location (assoc loc :pos [nr nc ner nec])}
+                         defined-by (assoc :defined-by defined-by)
+                         extra (assoc :extra (edn/read-string extra))))))))))))
 
 ;;;; call hierarchy
 

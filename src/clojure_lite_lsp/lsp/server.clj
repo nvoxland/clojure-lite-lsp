@@ -180,20 +180,37 @@
       (throw (ex-info (str "The code around " name " changed since it was saved: save it, then rename") {})))
     {:changes {(convert/path->uri path) (mapv (fn [r] {:range r :newText new-name}) ranges)}}))
 
-(defn- signature [{:keys [ns name kind arglists doc]} arg]
-  (let [label-name (if (= :ns-def kind) name name)]
+(defn- token-index
+  "Where `token` occurs in `s` from `from` as a whole token (not inside a
+  type hint like the n in ^long)."
+  [^String s ^String token from]
+  (let [delimiter? #(or (nil? %) (Character/isWhitespace (char %)) (#{\[ \] \( \) \{ \}} %))]
+    (loop [from from]
+      (when-let [i (str/index-of s token from)]
+        (if (and (delimiter? (when (pos? i) (.charAt s (dec i))))
+                 (delimiter? (when (< (+ i (count token)) (count s)) (.charAt s (+ i (count token))))))
+          i
+          (recur (inc i)))))))
+
+(defn- signature
+  "The signatures of `info`'s arglists for a call at argument `arg` with
+  `total` arguments (default: through `arg`)."
+  [{:keys [ns name kind arglists doc]} arg & [total]]
+  (let [label-name (if (= :ns-def kind) name name)
+        total (max (or total 0) (inc arg))]
     (for [arglist arglists
           :let [label (str label-name " " arglist)
                 {:keys [params variadic]} (forms/arglist-params arglist)
                 offsets (loop [[t & more] params from (inc (count label-name)) out []]
-                          (if t
-                            (let [i (str/index-of label t from)]
-                              (recur more (+ i (count t)) (conj out [i (+ i (count t))])))
+                          (if-let [i (when t (token-index label t from))]
+                            (recur more (+ i (count t)) (conj out [i (+ i (count t))]))
                             out))]]
       {:label label
        :documentation (when doc {:kind "markdown" :value doc})
        :parameters (mapv (fn [o] {:label o}) offsets)
-       :fits? (or (< arg (count params)) (some? variadic))
+       ;; the whole call's arguments choose the arity
+       :fits? (if variadic (>= total variadic) (= total (count params)))
+       :close? (or (some? variadic) (<= total (count params)))
        ;; past the last parameter: the last one (LSP reads an index out
        ;; of range as the first)
        :active (cond (and variadic (>= arg variadic)) variadic
@@ -203,16 +220,18 @@
   (when-let [path (client-path (:uri textDocument))]
     (when-let [{:keys [p]} (project-of state path)]
       (when-let [text (buffers/text buffers path)]
-        (when-let [{[start end] :head :keys [arg]} (forms/call-at text (buffers/offset text position))]
+        (when-let [{[start end] :head :keys [arg] total :count} (forms/call-at text (buffers/offset text position))]
           (let [c @reader
                 ;; the head where the index knows it, else resolved by name
                 [row col] (buffers/->indexed buffers path (convert/->kondo (buffers/position text start)))
                 infos (or (seq (when row (q/hover c p path row col)))
                           (q/hover-of-elements c p (q/resolve-symbol c p path (subs text start end))))
-                sigs (vec (mapcat #(signature % arg) (filter (comp seq :arglists) infos)))]
+                sigs (vec (mapcat #(signature % arg total) (filter (comp seq :arglists) infos)))]
             (when (seq sigs)
-              (let [active (or (first (keep-indexed #(when (:fits? %2) %1) sigs)) 0)]
-                {:signatures (mapv #(dissoc % :fits? :active) sigs)
+              (let [active (or (first (keep-indexed #(when (:fits? %2) %1) sigs))
+                               (first (keep-indexed #(when (:close? %2) %1) sigs))
+                               0)]
+                {:signatures (mapv #(dissoc % :fits? :close? :active) sigs)
                  :activeSignature active
                  :activeParameter (:active (nth sigs active))}))))))))
 
@@ -223,15 +242,30 @@
                      (when (seq arglists) (str "```clojure\n" (str/join "\n" arglists) "\n```"))
                      doc])))
 
-(def ^:private symbol-kinds {:ns-def 3 :var-def 12 :keyword-def 20})
+(defn- symbol-kind
+  "The LSP SymbolKind of a definition, from what defined it: Namespace 3,
+  Class 5, Interface 11, Function 12, Variable 13, Key 20. A protocol's or
+  record's own fns (methods, constructors) have arities; it doesn't."
+  [{:keys [kind defined-by extra]}]
+  (let [definer (some-> defined-by (str/replace #"^.*/" ""))
+        fn? (or (:fixed-arities extra) (:varargs-min-arity extra) (seq (:arglist-strs extra)))]
+    (case kind
+      :ns-def 3
+      :keyword-def 20
+      (cond
+        (#{"defprotocol" "definterface"} definer) (if fn? 12 11)
+        (#{"defrecord" "deftype"} definer) (if fn? 12 5)
+        (= "defmulti" definer) 11
+        (#{"def" "defonce"} definer) 13
+        :else 12))))
 
 (defn- document-symbols [state path p]
   (let [syms (keep (fn [{:keys [pos form] :as s}]
                      (when-let [sel (buffers/->buffer (:buffers state) path pos)]
                        (assoc s :sel sel :full (or (and form (buffers/->buffer (:buffers state) path form)) sel))))
                    (q/document-symbols @(:reader state) p path))
-        ->sym (fn [{:keys [kind name sel full]}]
-                {:name name :kind (symbol-kinds kind 13)
+        ->sym (fn [{:keys [name sel full] :as s}]
+                {:name name :kind (symbol-kind s)
                  :range (convert/range full) :selectionRange (convert/range sel)})
         [nss defs] ((juxt filter remove) #(= :ns-def (:kind %)) syms)]
     (if (seq nss)
@@ -318,12 +352,12 @@
     ;; library hits are extracted in the background: each would be a jar
     ;; opened and a file written, on every keystroke
     (vec (for [{:keys [p]} @projects
-               {:keys [kind ns name location]} (q/workspace-symbols @reader p (:query params) {:limit 200})
+               {:keys [ns name location] :as sym} (q/workspace-symbols @reader p (:query params) {:limit 200})
                :let [loc (some->> (as-file state location sources/extract-soon!)
                                   (in-buffer state)
                                   (lsp-location state))]
                :when loc]
-           {:name name :kind (symbol-kinds kind 13) :containerName ns :location loc}))
+           {:name name :kind (symbol-kind sym) :containerName ns :location loc}))
 
     "textDocument/prepareCallHierarchy"
     (with-project state params [] (fn [c p path row col]

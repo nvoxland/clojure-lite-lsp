@@ -437,3 +437,42 @@
     (request! "shutdown" nil)
     (notify! "exit" nil)
     (deref (:server client) 10000 :timeout)))
+
+(deftest symbol-kinds-follow-what-defined-them
+  (let [a (str "(ns app.a (:require [clojure.spec.alpha :as s]))\n(defn f [] 1)\n(def v 1)\n(defmacro m [])\n"
+               "(defprotocol P (pm [x]))\n(defrecord R [x])\n(defmulti mm identity)\n(s/def ::k int?)\n")
+        root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" a})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))]
+    (request! "initialize" {:rootUri (convert/path->uri root)})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (let [[ns-sym] (request! "textDocument/documentSymbol" {:textDocument {:uri (uri root "src/app/a.clj")}})
+          kinds (into {} (map (juxt :name :kind)) (:children ns-sym))]
+      (is (= 3 (:kind ns-sym)) "namespace")
+      (is (= {"f" 12 "v" 13 "m" 12 "P" 11 "pm" 12 "R" 5 "mm" 11} (select-keys kinds ["f" "v" "m" "P" "pm" "R" "mm"])))
+      (is (= 20 (kinds "k")) "a spec keyword"))
+    (is (= 13 (:kind (first (filter #(= "v" (:name %)) (request! "workspace/symbol" {:query "v"}))))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))
+
+(deftest signature-parameters-and-arities
+  (testing "parameters are found as whole tokens, past a type hint"
+    (is (= [[9 10]] (map :label (:parameters (first (#'server/signature {:name "f" :arglists ["[^long n]"]} 0)))))))
+  (let [a "(ns app.a)\n(defn bar ([a b] a) ([a b c] a))\n"
+        root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" a})
+        {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))
+        doc {:uri (uri root "src/app/a.clj")}]
+    (request! "initialize" {:rootUri (convert/path->uri root)})
+    (notify! "initialized" {})
+    (wait-indexed! client)
+    (let [typed (str a "(bar 1 2 3)")]
+      (notify! "textDocument/didOpen" {:textDocument (assoc doc :languageId "clojure" :version 1 :text typed)})
+      (testing "the arity is the one the whole call fits, wherever the cursor is"
+        (let [{:keys [signatures activeSignature activeParameter]}
+              (request! "textDocument/signatureHelp" {:textDocument doc :position (pos-of typed "2 3)")})]
+          (is (= "bar [a b c]" (:label (nth signatures activeSignature))))
+          (is (= 1 activeParameter)))))
+    (request! "shutdown" nil)
+    (notify! "exit" nil)
+    (deref (:server client) 10000 :timeout)))

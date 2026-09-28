@@ -57,3 +57,19 @@
         (testing (str "from " from)
           (is (= all (set (map #(vec (take 2 %)) (:positions (q/local-occurrences (:c proj) (:p proj) path row col))))))
           (is (= all (set (map #(vec (take 2 (:pos %))) (q/highlights (:c proj) (:p proj) path row col))))))))))
+
+(deftest highlights-of-a-keys-binding-are-the-locals
+  ;; clj-kondo records both a local and a keyword at a :keys binding: the
+  ;; cursor there means the local, not every :a in the file
+  (with-project [proj {"src/app/k.clj" "(ns app.k)\n(defn f [m] (let [{:keys [a]} m] a))\n(:a {})\n"}]
+    (let [path (f/path proj "src/app/k.clj")
+          [row col] (f/at proj "src/app/k.clj" "a]}")]
+      (is (= #{(f/at proj "src/app/k.clj" "a]}") (f/at proj "src/app/k.clj" "a))")}
+             (set (map #(vec (take 2 (:pos %))) (q/highlights (:c proj) (:p proj) path row col))))))))
+
+(deftest highlights-of-an-alias-are-its-uses
+  (with-project [proj {"src/app/s.clj" "(ns app.s (:require [clojure.string :as str]))\n(str/join [])\n(str/blank? \"\")\n"}]
+    (let [path (f/path proj "src/app/s.clj")
+          [row col] (f/at proj "src/app/s.clj" "str]")]
+      (is (= #{(f/at proj "src/app/s.clj" "str]") (f/at proj "src/app/s.clj" "str/join") (f/at proj "src/app/s.clj" "str/blank")}
+             (set (map #(vec (take 2 (:pos %))) (q/highlights (:c proj) (:p proj) path row col))))))))
