@@ -120,7 +120,7 @@
   connection committed fails at once with SQLITE_BUSY_SNAPSHOT instead,
   and the daemon does exactly that (checks what exists, then writes)
   while clients enqueue."
-  ^Connection [url & {:keys [writes?]}]
+  ^Connection [url {:keys [writes?]}]
   (DriverManager/getConnection ^String url
                                (doto (java.util.Properties.)
                                  (.setProperty "transaction_mode" (if writes? "IMMEDIATE" "DEFERRED")))))
@@ -129,7 +129,7 @@
   "Connect to `url`, run `pragmas`, then `init`; closes the connection
   again if any of that fails."
   ^Connection [url {:keys [writes? pragmas init] :or {init identity}}]
-  (let [c (connect url :writes? writes?)]
+  (let [c (connect url {:writes? writes?})]
     (try
       (run! #(pragma! c %) pragmas)
       (init c)

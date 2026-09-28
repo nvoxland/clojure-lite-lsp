@@ -10,6 +10,8 @@
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.writer :as writer]))
 
+(set! *warn-on-reflection* true)
+
 (defn ensure-project!
   "The id of the project at `root`, creating it if needed."
   [c root]

@@ -5,6 +5,8 @@
   (:require
    [clojure.set :as set]))
 
+(set! *warn-on-reflection* true)
+
 (def ^:private kind-codes
   {:var-def 1
    :ns-def 2

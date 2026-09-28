@@ -8,6 +8,7 @@
   different configs must never overlap."
   (:require
    [clj-kondo.core :as kondo]
+   [clj-kondo.impl.config :as kondo-config]
    [clj-kondo.impl.version :as kondo-version]
    [clojure-lite-lsp.digest :as digest]
    [clojure-lite-lsp.kondo-hooks :as kondo-hooks]
@@ -22,17 +23,57 @@
 
 (set! *warn-on-reflection* true)
 
-(def kondo-version kondo-version/version)
+(def kondo-version
+  "The clj-kondo version analyzing: part of every unit key."
+  kondo-version/version)
 
 (def default-shards
   "How many clj-kondo runs share a batch."
   8)
 
+(def project-analysis-options
+  "clj-kondo's analysis options for project files, and library files
+  someone opened: everything queries use."
+  {:arglists true
+   :locals true
+   :keywords true
+   :protocol-impls true
+   :java-class-definitions true
+   :java-class-usages true
+   :symbols true
+   :var-definitions {:meta [:deprecated]}})
+
+(def dependency-analysis-options
+  "clj-kondo's analysis options for dependencies: definitions, not usages
+  or locals (nobody navigates from inside a library, until they open it)."
+  {:var-usages false
+   :keywords true
+   :arglists true
+   :protocol-impls true
+   :java-class-definitions true
+   :java-member-definitions false
+   :var-definitions {:shallow true :meta [:deprecated]}})
+
+(def kept-linters
+  "clj-kondo's linters for project files: every one off except those whose
+  findings clojure-lite-lsp keeps. :unresolved-namespace is the only record
+  of calls through an unknown namespace (every one: duplicates too);
+  :refer-all and :use mark the namespaces a file refers all of."
+  (-> (update-vals (:linters kondo-config/default-config) (constantly {:level :off}))
+      (assoc :unresolved-namespace {:level :warning :report-duplicates true}
+             :refer-all {:level :warning}
+             :use {:level :warning})))
+
+(defn file-extension
+  "The extension of `filename`, lower case, or nil."
+  [filename]
+  (some-> (re-find #"\.([^./:]+)$" filename) second str/lower-case))
+
 (def ^:private modes
-  {:project {:external? false :skip-lint false :analysis normalize/project-analysis-options}
-   :dependency {:external? true :skip-lint true :analysis normalize/dependency-analysis-options}
+  {:project {:external? false :skip-lint false :analysis project-analysis-options}
+   :dependency {:external? true :skip-lint true :analysis dependency-analysis-options}
    ;; a library file someone opened: everything, as for project files
-   :dep-file {:external? true :skip-lint true :analysis normalize/project-analysis-options}})
+   :dep-file {:external? true :skip-lint true :analysis project-analysis-options}})
 
 (def ^:private options-hashes
   "Per mode, a hash of everything besides content and config that shapes
@@ -51,7 +92,7 @@
                  :config (cond-> {:auto-load-configs false
                                   :output {:canonical-paths true}
                                   :analysis analysis}
-                           (not skip-lint) (assoc :linters normalize/kept-linters))})))
+                           (not skip-lint) (assoc :linters kept-linters))})))
 
 (defn- shard [xs n]
   (let [n (max 1 (min n (count xs)))]
@@ -75,7 +116,7 @@
   extension matters), analyzed in `mode` with `config`."
   [mode config content-hash path]
   {:content-hash content-hash
-   :lang-key (normalize/file-extension path)
+   :lang-key (file-extension path)
    :kondo-version kondo-version
    :config-hash (:hash config)
    :options-hash (options-hashes mode)
@@ -100,7 +141,7 @@
   (let [defs (for [[filename {:keys [elements]}] results
                    e elements
                    :when (= :var-def (:kind e))]
-               (assoc e :ext (normalize/file-extension filename)))]
+               (assoc e :ext (file-extension filename)))]
     (into {} (for [[ns-name ds] (group-by :ns defs)
                    lang (keys nsa/lang->ext)
                    :let [a (nsa/answer lang ds)]

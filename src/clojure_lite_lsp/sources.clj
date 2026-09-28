@@ -20,7 +20,7 @@
 
 (set! *warn-on-reflection* true)
 
-(defn sources-dir
+(defn- sources-dir
   "Where extracted sources live, canonical: the paths handed to editors and
   the ones recognized from them must agree even when the home dir is
   reached through a symlink (macOS's /var -> /private/var)."
@@ -32,7 +32,7 @@
   unchanged."
   (fingerprint/memoize-by-file #(digest/sha256 (io/file %))))
 
-(defn extracted-file
+(defn- extracted-file
   "Where jar location {:entry :jar-hash} is (or will be) extracted, or nil
   when its entry would land outside the sources dir (zip-slip)."
   ^File [home {:keys [entry jar-hash]}]
@@ -84,11 +84,16 @@
       (.submit ^ExecutorService @extractor ^Runnable (fn [] (try (extract! home loc) (catch Exception _ nil)))))
     (str f)))
 
+(defn entry-of
+  "What an extracted file at `path` is, by the layout alone:
+  {:jar-hash-hex :entry}, or nil for a path that isn't laid out as one."
+  [path]
+  (when-let [[_ jar-hash-hex entry] (re-find #"[/\\]sources[/\\]([0-9a-f]{64})[/\\](.+)$" (str path))]
+    {:jar-hash-hex jar-hash-hex :entry (str/replace entry "\\" "/")}))
+
 (defn source-of
   "Where an extracted file came from: {:jar-hash-hex :entry}, or nil for a
-  path that isn't an extracted source."
+  path that isn't an extracted source of home dir `home`."
   [home path]
-  (let [base (str (sources-dir home) File/separator)]
-    (when (and path (str/starts-with? path base))
-      (let [[h entry] (str/split (subs path (count base)) #"/" 2)]
-        (when entry {:jar-hash-hex h :entry entry})))))
+  (when (and path (str/starts-with? path (str (sources-dir home) File/separator)))
+    (entry-of path)))

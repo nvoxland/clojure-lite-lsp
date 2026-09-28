@@ -29,7 +29,7 @@
 
 (set! *warn-on-reflection* true)
 
-(def binary "clojure-lite-lsp")
+(def ^:private binary "clojure-lite-lsp")
 
 (def ^:private author {:name "Nathan Voxland" :email "nathan@voxland.net"})
 

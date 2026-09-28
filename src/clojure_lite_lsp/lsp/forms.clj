@@ -78,57 +78,58 @@
   and maps (each with its form count and a list's head), and where the
   token the scan ends in started. With `close-at`, stops instead when the
   frame opened at that index closes, returning {:closed frame}."
-  [^String text n & [close-at]]
-  (loop [i 0 stack [] token nil]
-    (if (< i n)
-      (let [c (.charAt text i)]
-        (cond
+  ([text n] (scan text n nil))
+  ([^String text n close-at]
+   (loop [i 0 stack [] token nil]
+     (if (< i n)
+       (let [c (.charAt text i)]
+         (cond
           ;; a character literal: \( \space \newline ...
-          (and (= \\ c) (nil? token))
-          (recur (+ i 2) (start-form stack i true) i)
+           (and (= \\ c) (nil? token))
+           (recur (+ i 2) (start-form stack i true) i)
 
-          token
-          (if (or (whitespace? c) (openers c) (closers c) (= \; c) (= \" c))
-            (recur i (end-token stack i) nil)
-            (recur (inc i) stack token))
+           token
+           (if (or (whitespace? c) (openers c) (closers c) (= \; c) (= \" c))
+             (recur i (end-token stack i) nil)
+             (recur (inc i) stack token))
 
-          (whitespace? c) (recur (inc i) stack nil)
+           (whitespace? c) (recur (inc i) stack nil)
 
-          (= \; c) (let [nl (.indexOf text "\n" (int i))]
-                     (recur (if (neg? nl) n nl) stack nil))
+           (= \; c) (let [nl (.indexOf text "\n" (int i))]
+                      (recur (if (neg? nl) n nl) stack nil))
 
-          (= \" c) (let [end (string-end text i n)]
+           (= \" c) (let [end (string-end text i n)]
                      ;; unclosed at the end: in that form
-                     (recur (or end n) (start-form stack i false) (when-not end i)))
+                      (recur (or end n) (start-form stack i false) (when-not end i)))
 
-          (openers c) (recur (inc i) (conj (start-form stack i false) {:open c :forms 0 :at i}) nil)
+           (openers c) (recur (inc i) (conj (start-form stack i false) {:open c :forms 0 :at i}) nil)
 
-          (closers c) (if (and close-at (= close-at (:at (peek stack))))
-                        {:closed (peek stack)}
-                        (recur (inc i) (if (seq stack) (pop stack) stack) nil))
+           (closers c) (if (and close-at (= close-at (:at (peek stack))))
+                         {:closed (peek stack)}
+                         (recur (inc i) (if (seq stack) (pop stack) stack) nil))
 
-          (= \^ c) (recur (inc i) (skip-next stack) nil)
+           (= \^ c) (recur (inc i) (skip-next stack) nil)
 
-          (= \# c) (let [d (when (< (inc i) n) (.charAt text (inc i)))]
-                     (cond
+           (= \# c) (let [d (when (< (inc i) n) (.charAt text (inc i)))]
+                      (cond
                        ;; #_ discards the next form
-                       (= \_ d) (recur (+ i 2) (skip-next stack) nil)
+                        (= \_ d) (recur (+ i 2) (skip-next stack) nil)
                        ;; ##Inf ##NaN: a whole form, prefixing nothing
-                       (= \# d) (recur (token-end text i n) (start-form stack i false) nil)
+                        (= \# d) (recur (token-end text i n) (start-form stack i false) nil)
                        ;; #? #?@ #' #( #{ #"..." #:ns{...} #tag form: one
                        ;; form, whatever follows the dispatch
-                       :else (let [stack (prefix (start-form stack i false))
-                                   after (cond
-                                           (#{\( \{ \"} d) (inc i)
-                                           (= \? d) (if (and (< (+ i 2) n) (= \@ (.charAt text (+ i 2)))) (+ i 3) (+ i 2))
-                                           (= \' d) (+ i 2)
-                                           :else (token-end text (inc i) n))]
-                               (recur after stack nil))))
+                        :else (let [stack (prefix (start-form stack i false))
+                                    after (cond
+                                            (#{\( \{ \"} d) (inc i)
+                                            (= \? d) (if (and (< (+ i 2) n) (= \@ (.charAt text (+ i 2)))) (+ i 3) (+ i 2))
+                                            (= \' d) (+ i 2)
+                                            :else (token-end text (inc i) n))]
+                                (recur after stack nil))))
 
-          (prefixes c) (recur (inc i) (prefix (start-form stack i false)) nil)
+           (prefixes c) (recur (inc i) (prefix (start-form stack i false)) nil)
 
-          :else (recur (inc i) (start-form stack i true) i)))
-      {:stack stack :token token})))
+           :else (recur (inc i) (start-form stack i true) i)))
+       {:stack stack :token token}))))
 
 (defn call-at
   "The call the cursor at `offset` in `text` is in: {:head [start end] (of

@@ -19,6 +19,8 @@
    [clj-kondo.impl.utils :as impl.utils]
    [clojure-lite-lsp.ns-analysis :as nsa]))
 
+(set! *warn-on-reflection* true)
+
 (def ^:dynamic *lookups*
   "While analyzing: {:serve (fn [lang ns-sym]) :record atom}. Hooks asking
   about a namespace are answered by :serve, and [file lang ns digest] is

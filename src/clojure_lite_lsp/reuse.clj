@@ -93,7 +93,7 @@
       (let [deps (ns-deps c u)]
         (when (hold? deps digest-of) deps)))))
 
-(defn unit-for
+(defn unit-for!
   "The unit for `unit-key`: the one with that key, else one analyzed under
   another config that is equally valid under this one (recorded as an alias
   through writer `w`). nil when the file needs analyzing. `digest-of`

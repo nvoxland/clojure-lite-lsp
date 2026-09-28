@@ -15,7 +15,7 @@
 (defonce ^:private shared
   (delay (let [path (tu/temp-db-path)]
            {:db-path path
-            :indexer (indexer/indexer {:db-path path :cache-dir (tu/temp-dir)})})))
+            :indexer (indexer/indexer {:db-path path :home (str (tu/temp-dir))})})))
 
 (defn index!
   "Index a project made of `files` ({relative-path code}, deps.edn added

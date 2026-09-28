@@ -1,5 +1,9 @@
 (ns clojure-lite-lsp.version
-  "The clojure-lite-lsp version. A daemon of another version is stopped and replaced by
-  the first client that notices.")
+  "The clojure-lite-lsp version. An older daemon is stopped and replaced
+  by the first newer client that notices (clojure-lite-lsp.client).")
 
-(def version "0.1.0-SNAPSHOT")
+(set! *warn-on-reflection* true)
+
+(def version
+  "This build's version."
+  "0.1.0-SNAPSHOT")

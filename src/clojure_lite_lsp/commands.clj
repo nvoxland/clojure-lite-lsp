@@ -63,10 +63,10 @@
   "A location from the query layer as a result, {:path :line :column
   :end-line :end-column}, or nil when it has no file: a jar entry is
   extracted, a Java class found in its sources."
-  [{:keys [c p home]} {:keys [entry java-class pos] :as loc}]
+  [{:keys [c p home]} {:keys [entry java-class] :as loc}]
   (let [{:keys [path pos]} (cond
                              java-class (java/class-location c home p java-class)
-                             entry (when-let [f (sources/extract! home loc)] {:path f :pos pos})
+                             entry (when-let [f (sources/extract! home loc)] {:path f :pos (:pos loc)})
                              :else loc)
         [line col end-line end-col] pos]
     (when (and path line)
@@ -128,6 +128,10 @@
   (str (at ctx r) ": " (source-line ctx path line)))
 
 (def commands
+  "The query commands: {:name :usage :doc :run :line}, `:run` giving a
+  command's results for its argument, `:line` one result as text. The CLI's
+  help and dispatch, the MCP tools and the agents' instructions all come
+  from this table."
   [{:name "definition"
     :usage target-usage
     :doc "Where a var or namespace is defined."
@@ -198,16 +202,17 @@
 (defn run
   "Run query command `args` ([name arg]) in `ctx` ({:c :p :root :home
   :cwd}): {:results [...] :total n}, at most `limit` results."
-  [ctx [cmd arg] & [{:keys [limit]}]]
-  (let [{:keys [usage] run-command :run} (or (by-name cmd)
-                                             (throw (ex-info (str "Unknown query command: " cmd ". Commands: "
-                                                                  (str/join ", " (map :name commands)))
-                                                             {:command cmd :usage true})))]
-    (when (str/blank? arg)
-      (throw (ex-info (str "Usage: query " cmd " " usage) {:command cmd :usage true})))
-    (let [{:keys [results] :as r} (run-command ctx arg)]
-      (cond-> (assoc r :total (count results))
-        limit (update :results #(vec (take limit %)))))))
+  ([ctx args] (run ctx args {}))
+  ([ctx [cmd arg] {:keys [limit]}]
+   (let [{:keys [usage] run-command :run} (or (by-name cmd)
+                                              (throw (ex-info (str "Unknown query command: " cmd ". Commands: "
+                                                                   (str/join ", " (map :name commands)))
+                                                              {:command cmd :usage true})))]
+     (when (str/blank? arg)
+       (throw (ex-info (str "Usage: query " cmd " " usage) {:command cmd :usage true})))
+     (let [{:keys [results] :as r} (run-command ctx arg)]
+       (cond-> (assoc r :total (count results))
+         limit (update :results #(vec (take limit %))))))))
 
 (defn format-text
   "The results of command `cmd` as text, one result a line."
@@ -218,11 +223,6 @@
       (str (str/join "\n" (map #((:line (by-name cmd)) ctx %) results))
            (when (pos? more) (str "\n... " more " more (--limit to see them)")))
       "No results.")))
-
-(defn text
-  "Run query command `args` and give its results as text."
-  [ctx [cmd :as args] & [opts]]
-  (format-text ctx cmd (run ctx args opts)))
 
 (defn help
   "What `query` can do."

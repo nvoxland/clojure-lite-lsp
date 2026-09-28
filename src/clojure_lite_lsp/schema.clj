@@ -2,11 +2,14 @@
   "The index schema. The index is a cache of analysis, so a schema change
   bumps `version` and the index is rebuilt rather than migrated.")
 
+(set! *warn-on-reflection* true)
+
 (def version
   "Bump on any change to the DDL below or to the meaning of stored values."
   7)
 
 (def ddl
+  "The statements that create the index, in order."
   ["CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"
 
    "CREATE TABLE sym (id INTEGER PRIMARY KEY, text TEXT NOT NULL UNIQUE)"

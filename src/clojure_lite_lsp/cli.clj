@@ -41,27 +41,28 @@
   indexed-file-count} :pending {root count still queued}}: past
   `deadline-ms`, it returns before they're done. `opts` are
   clojure-lite-lsp.client/ensure-daemon!'s."
-  [opts dirs progress & [{:keys [deadline-ms]}]]
-  (doseq [d dirs]
-    (when-not (.isDirectory (io/file d))
-      (throw (ex-info (str "Not a directory: " d) {:dir d}))))
-  (client/ensure-daemon! opts)
-  (with-open [c (db/open-client (:db (home/paths (:home opts))))]
-    (let [projects (into {} (for [d dirs
-                                  :let [root (.getCanonicalPath (io/file d))]]
-                              [root (snapshot/ensure-project! c root)]))]
-      (doseq [p (vals projects)] (queue/enqueue! c p :sync "" 1))
-      (loop [deadline (when deadline-ms (+ (System/currentTimeMillis) deadline-ms))]
-        (let [pending (update-vals projects #(queue/pending-count c %))]
-          (progress pending)
-          (if (or (every? zero? (vals pending))
-                  (and deadline (> (System/currentTimeMillis) deadline)))
-            {:files (update-vals projects #(db/query-value c "SELECT count(*) FROM project_file
+  ([opts dirs progress] (index! opts dirs progress {}))
+  ([opts dirs progress {:keys [deadline-ms]}]
+   (doseq [d dirs]
+     (when-not (.isDirectory (io/file d))
+       (throw (ex-info (str "Not a directory: " d) {:dir d}))))
+   (client/ensure-daemon! opts)
+   (with-open [c (db/open-client (:db (home/paths (:home opts))))]
+     (let [projects (into {} (for [d dirs
+                                   :let [root (.getCanonicalPath (io/file d))]]
+                               [root (snapshot/ensure-project! c root)]))]
+       (doseq [p (vals projects)] (queue/enqueue! c p :sync "" 1))
+       (loop [deadline (when deadline-ms (+ (System/currentTimeMillis) deadline-ms))]
+         (let [pending (update-vals projects #(queue/pending-count c %))]
+           (progress pending)
+           (if (or (every? zero? (vals pending))
+                   (and deadline (> (System/currentTimeMillis) deadline)))
+             {:files (update-vals projects #(db/query-value c "SELECT count(*) FROM project_file
                                                               WHERE project_id = ? AND unit_id IS NOT NULL" %))
-             :pending (into {} (filter (comp pos? val)) pending)}
-            (do (Thread/sleep (long poll-ms))
-                (client/ensure-daemon-alive! opts)
-                (recur deadline))))))))
+              :pending (into {} (filter (comp pos? val)) pending)}
+             (do (Thread/sleep (long poll-ms))
+                 (client/ensure-daemon-alive! opts)
+                 (recur deadline)))))))))
 
 (defn gc!
   "Have the daemon collect garbage now (between batches, should it be
@@ -96,7 +97,7 @@
 
 ;;;; query
 
-(defn project-root
+(defn- project-root
   "The project `dir` is in: the nearest directory, `dir` or above, with a
   build file, or nil."
   [dir]

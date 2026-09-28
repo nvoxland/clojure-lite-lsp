@@ -6,6 +6,8 @@
    [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.db :as db]))
 
+(set! *warn-on-reflection* true)
+
 (defn- project-data [c [p root last-seen]]
   (let [jar-ids (mapv first (db/query c "SELECT jar_id FROM project_jar WHERE project_id = ? AND jar_id IS NOT NULL" p))]
     {:id p :root root :last-seen last-seen

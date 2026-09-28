@@ -9,6 +9,7 @@
   that open those, `zipfile:///x.jar::entry`."
   (:refer-clojure :exclude [range])
   (:require
+   [clojure.java.io :as io]
    [clojure.string :as str])
   (:import
    [java.io File]
@@ -33,7 +34,7 @@
   [{:keys [path entry]} {:keys [dependency-scheme]}]
   (cond
     (nil? entry) (path->uri path)
-    (= "zipfile" dependency-scheme) (str "zipfile://" (uri->path (path->uri path)) "::" entry)
+    (= "zipfile" dependency-scheme) (str "zipfile://" (.getAbsolutePath (io/file path)) "::" entry)
     :else (str "jar:" (path->uri path) "!/" entry)))
 
 (defn position

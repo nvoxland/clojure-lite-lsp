@@ -5,6 +5,8 @@
    [clojure-lite-lsp.schema :as schema]
    [clojure.java.io :as io]))
 
+(set! *warn-on-reflection* true)
+
 (defn dir
   "The home dir: $CLOJURE_LITE_LSP_HOME, else ~/.cache/clojure-lite-lsp."
   []

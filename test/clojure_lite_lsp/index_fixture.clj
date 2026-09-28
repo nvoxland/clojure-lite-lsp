@@ -27,10 +27,10 @@
                  :cache false
                  :skip-lint external?
                  :config {:output {:canonical-paths true}
-                          :linters normalize/kept-linters
+                          :linters analyze/kept-linters
                           :analysis (if external?
-                                      normalize/dependency-analysis-options
-                                      normalize/project-analysis-options)}})))
+                                      analyze/dependency-analysis-options
+                                      analyze/project-analysis-options)}})))
 
 (defn analyzed
   "The normalized elements of `code` analyzed as `filename`."
@@ -73,7 +73,7 @@
 (defn temp-indexer
   "An indexer on a fresh index, with `opts` (clojure-lite-lsp.indexer/indexer's)."
   ^java.io.Closeable [& {:as opts}]
-  (indexer/indexer (merge {:db-path (tu/temp-db-path) :cache-dir (tu/temp-dir)} opts)))
+  (indexer/indexer (merge {:db-path (tu/temp-db-path) :home (str (tu/temp-dir))} opts)))
 
 (defn sync-project!
   "Index the project at `root` until the queue is empty: its id."

@@ -60,7 +60,8 @@
 
 (defn poll
   "Call `f` every `interval-ms` until it returns something truthy, or
-  `timeout-ms` passes: what it returned, or nil."
+  `timeout-ms` passes: what it returned, or nil. For waiting on a lock, or
+  on anything else another process does."
   ([f timeout-ms] (poll f timeout-ms 20))
   ([f timeout-ms interval-ms]
    (let [deadline (+ (System/currentTimeMillis) timeout-ms)]

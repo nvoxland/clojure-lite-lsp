@@ -74,7 +74,7 @@
             (is (true? (get-in r [:result :isError])))
             (is (str/includes? (get-in r [:result :content 0 :text]) "boom")))))
       (testing "a call doesn't wait past its deadline for indexing: it answers, and says so"
-        (with-redefs [cli/index! (fn [_ dirs _ & [{:keys [deadline-ms]}]]
+        (with-redefs [cli/index! (fn [_ dirs _ {:keys [deadline-ms]}]
                                    (is deadline-ms "the call gives indexing a deadline")
                                    {:files {} :pending {(first dirs) 7}})]
           (let [[r] (session o root [(tool-call 1 "definition" {:target "app.a/greet"})])]

@@ -55,6 +55,9 @@
         (run! #(.delete ^File %) legacy)))))
 
 (def defaults
+  "The daemon's timing, in ms: how often it looks for work, how long idle
+  before it collects garbage and before it exits, how often it says it's
+  alive, and how long it waits after the machine failed."
   {:poll-ms 150
    :gc-after-idle-ms (* 30 1000)
    :idle-exit-ms (* 10 60 1000)
@@ -107,7 +110,7 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-(defn- tick
+(defn- tick!
   "One turn of the work loop: [:done result] or [:next state]."
   [{:keys [c w] :as ix} {:keys [poll-ms gc-after-idle-ms idle-exit-ms heartbeat-ms retry-ms version]}
    {:keys [last-work collected? seen-version last-beat] :as state}]
@@ -150,14 +153,14 @@
             (do (Thread/sleep (long poll-ms))
                 [:next (assoc state :seen-version dv)])))))))
 
-(defn- work-loop
+(defn- work-loop!
   "Run until asked to stop or idle long enough. Returns :stopped or :idle.
   A failure (the database busy for too long, a full disk, an analysis out
   of memory on one huge file) is logged and the loop goes on after a
   pause: the daemon's work is only ever queued."
   [ix opts]
   (loop [state {:last-work (now-ms) :collected? true :seen-version nil :last-beat 0}]
-    (let [[k v] (try (tick ix opts state)
+    (let [[k v] (try (tick! ix opts state)
                      (catch InterruptedException e (throw e))
                      ;; Throwable, not Exception: errors too (above)
                      (catch Throwable e
@@ -185,10 +188,10 @@
     (if-let [held (take-daemon-lock daemon-lock)]
       (try
         (remove-unused-older-indexes! home)
-        (with-open [^Closeable ix (indexer/indexer {:db-path db :cache-dir (io/file home)})]
+        (with-open [^Closeable ix (indexer/indexer {:db-path db :home home})]
           (register! (:c ix) version)
           (try
-            (work-loop ix (assoc opts :version version))
+            (work-loop! ix (assoc opts :version version))
             (finally
               (unregister! (:c ix)))))
         (finally

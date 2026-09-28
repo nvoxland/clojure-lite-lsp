@@ -7,8 +7,11 @@
   (:require
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.kinds :as kinds]
+   [clojure-lite-lsp.sources :as sources]
    [clojure.edn :as edn]
    [clojure.string :as str]))
+
+(set! *warn-on-reflection* true)
 
 ;;;; positions: [row col] and [row col end-row end-col], compared as vectors
 
@@ -29,6 +32,8 @@
 (def ^:private element-columns
   "fe.unit_id, fe.kind, fe.lang, fe.name_row, fe.name_col, fe.name_end_row, fe.name_end_col,
    ns.text, nm.text, al.text, fe.local_id, fe.form_row, fe.form_col, fe.form_end_row, fe.form_end_col")
+
+(def ^:private element-column-count 15)
 
 (def ^:private element-joins
   "LEFT JOIN sym ns ON ns.id = fe.ns LEFT JOIN sym nm ON nm.id = fe.name LEFT JOIN sym al ON al.id = fe.alias")
@@ -62,12 +67,12 @@
   [c p path]
   (or (db/query-value c "SELECT unit_id FROM project_file WHERE project_id = ? AND path = ?" p path)
       (db/query-value c "SELECT unit_id FROM dep_file WHERE path = ?" path)
-      (when-let [[_ jar-hex entry] (re-find #"[/\\]sources[/\\]([0-9a-f]{64})[/\\](.+)$" (str path))]
+      (when-let [{:keys [jar-hash-hex entry]} (sources/entry-of path)]
         (db/query-value c "SELECT je.unit_id FROM jar j
                            JOIN project_jar pj ON pj.jar_id = j.id AND pj.project_id = ?
                            JOIN jar_entry je ON je.jar_id = j.id AND je.entry_path = ?
                            WHERE hex(j.jar_hash) = upper(?) LIMIT 1"
-                        p (str/replace entry "\\" "/") jar-hex))))
+                        p entry jar-hash-hex))))
 
 (defn- contains-pos?
   "Is [row col] in the element's name? `end?` counts the position just
@@ -478,20 +483,21 @@
   locating units afterwards for clojure.core/let's 25k usages on Metabase.
   That is complete because only files have usages: dependencies are
   analyzed without them."
-  [c p ns name kinds & {:keys [project-only? langs]}]
-  (->> (apply db/query c (str "SELECT pf.path, u.name_row, u.name_col, u.name_end_row, u.name_end_col,
+  ([c p ns name kinds] (usage-rows c p ns name kinds {}))
+  ([c p ns name kinds {:keys [project-only? langs]}]
+   (->> (apply db/query c (str "SELECT pf.path, u.name_row, u.name_col, u.name_end_row, u.name_end_col,
                                       u.from_ns, u.from_var, u.flags
                                FROM usage u
                                JOIN project_file pf ON pf.project_id = ? AND pf.unit_id = u.unit_id
                                WHERE u.to_ns = ? AND u.name = ? AND u.kind IN (" (db/placeholders kinds) ")"
-                              (when project-only? " AND pf.ord = 0")
-                              (when (seq langs) " AND (u.lang & ?) != 0"))
-              p (sym-id c ns) (sym-id c name)
-              (concat (map kinds/code kinds)
-                      (when (seq langs) [(kinds/langs->bits langs)])))
-       (mapv (fn [[path nr nc ner nec from-ns from-var flags]]
-               {:path path :pos [nr nc ner nec] :from-ns-id from-ns :from-var-id from-var
-                :flag-bits flags}))))
+                               (when project-only? " AND pf.ord = 0")
+                               (when (seq langs) " AND (u.lang & ?) != 0"))
+               p (sym-id c ns) (sym-id c name)
+               (concat (map kinds/code kinds)
+                       (when (seq langs) [(kinds/langs->bits langs)])))
+        (mapv (fn [[path nr nc ner nec from-ns from-var flags]]
+                {:path path :pos [nr nc ner nec] :from-ns-id from-ns :from-var-id from-var
+                 :flag-bits flags})))))
 
 (defn- generated-names
   "The names a definition also defines: a defrecord's and deftype's
@@ -546,7 +552,7 @@
               (concat
                (cond->> (for [[n nm] names
                               g (generated-names (assoc target :name nm))
-                              usage (usage-rows c p n g [:var-usage :symbol-usage] :langs (usage-langs target))]
+                              usage (usage-rows c p n g [:var-usage :symbol-usage]  {:langs (usage-langs target)})]
                           usage)
                  ;; a call from within the definition is part of it: it
                  ;; counts only with the declaration
@@ -566,7 +572,7 @@
                            (when include-declaration? [el]))
 
     (:keyword-usage :keyword-def)
-    (concat (usage-rows c p ns name [:keyword-usage] :project-only? true)
+    (concat (usage-rows c p ns name [:keyword-usage]  {:project-only? true})
             (when include-declaration? (definitions c p :keyword-def ns name)))
 
     (:local :local-usage)
@@ -586,7 +592,7 @@
           ;; a namespace defined in one language only is what the other's
           ;; code means by it too (cljs :require-macros of a clj namespace)
           undefined-in (remove (set (mapcat :lang defs)) [:clj :cljs])]
-      (concat (usage-rows c p target target [:ns-usage :ns-alias] :langs (into (set (:lang el)) undefined-in))
+      (concat (usage-rows c p target target [:ns-usage :ns-alias]  {:langs (into (set (:lang el)) undefined-in)})
               (when include-declaration? (in-lang el defs))))
 
     []))
@@ -681,11 +687,12 @@
   [c p path]
   (when-let [u (file-unit c p path)]
     (into []
-          (comp (map (fn [[u kind lang nr nc ner nec ns nm al local-id fr fc fer fec defined-by extra]]
-                       (cond-> (-> (row->element [u kind lang nr nc ner nec ns nm al local-id fr fc fer fec])
-                                   (dissoc :unit-id)
-                                   (read-extra extra))
-                         defined-by (assoc :defined-by defined-by))))
+          (comp (map (fn [row]
+                       (let [[element-cols [defined-by extra]] (split-at element-column-count row)]
+                         (cond-> (-> (row->element element-cols)
+                                     (dissoc :unit-id)
+                                     (read-extra extra))
+                           defined-by (assoc :defined-by defined-by)))))
                 (distinct))
           (apply db/query c (str "SELECT " element-columns ", dby.text, d.extra FROM file_element fe " element-joins
                                  " LEFT JOIN definition d ON d.unit_id = fe.unit_id AND d.name_row = fe.name_row

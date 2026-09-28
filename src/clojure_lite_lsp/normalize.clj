@@ -11,42 +11,14 @@
   plus, by kind: :alias :from-ns :from-var :local-id :impl-ns :flags
   :defined-by :defined-by-lint-as :doc :extra."
   (:require
-   [clj-kondo.impl.config :as kondo-config]
    [clojure.string :as str]))
+
+(set! *warn-on-reflection* true)
 
 (def version
   "Bump when normalization changes what it produces: it is part of every
   unit key, so all analysis is redone."
   8)
-
-(def project-analysis-options
-  {:arglists true
-   :locals true
-   :keywords true
-   :protocol-impls true
-   :java-class-definitions true
-   :java-class-usages true
-   :symbols true
-   :var-definitions {:meta [:deprecated]}})
-
-(def dependency-analysis-options
-  {:var-usages false
-   :keywords true
-   :arglists true
-   :protocol-impls true
-   :java-class-definitions true
-   :java-member-definitions false
-   :var-definitions {:shallow true :meta [:deprecated]}})
-
-(def kept-linters
-  "clj-kondo's linters for project files: every one off except those whose
-  findings clojure-lite-lsp keeps. :unresolved-namespace is the only record
-  of calls through an unknown namespace (every one: duplicates too);
-  :refer-all and :use mark the namespaces a file refers all of."
-  (-> (update-vals (:linters kondo-config/default-config) (constantly {:level :off}))
-      (assoc :unresolved-namespace {:level :warning :report-duplicates true}
-             :refer-all {:level :warning}
-             :use {:level :warning})))
 
 (defn- sname [x] (some-> x str))
 
@@ -258,7 +230,3 @@
                    [filename (cond-> els (str/ends-with? filename ".cljc") merge-langs)])))
           (group-by :filename (concat from-analysis from-findings (refs analysis))))))
 
-(defn file-extension
-  "The extension of `filename`, lower case, or nil."
-  [filename]
-  (some-> (re-find #"\.([^./:]+)$" filename) second str/lower-case))

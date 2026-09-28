@@ -58,7 +58,11 @@
   "The ref every unit whose hooks asked carries, to find them."
   "nsa")
 
-(defn dep-ref [lang ns-sym d] (str "nsa:" (name lang) ":" ns-sym "=" d))
+(defn dep-ref
+  "The ref recording that a hook asked about `ns-sym` for `lang` and was
+  told what digests to `d`."
+  [lang ns-sym d]
+  (str "nsa:" (name lang) ":" ns-sym "=" d))
 
 (defn parse-ref
   "[lang ns-sym digest] of a dependency ref, nil for any other."

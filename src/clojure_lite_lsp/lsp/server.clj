@@ -390,6 +390,8 @@
 (defn- initialize! [{:keys [opts projects client-c reader] :as state} params]
   (let [{:keys [db]} (home/paths (:home opts))]
     (client/ensure-daemon! opts)
+    ;; a second initialize: its connections replace the first's
+    (doseq [conn [client-c reader]] (some-> ^Connection @conn .close))
     (reset! client-c (db/open-client db))
     (reset! reader (db/open-reader db))
     (swap! (:opts-atom state) merge (select-keys (:initializationOptions params) [:dependency-scheme :waitForIndex])

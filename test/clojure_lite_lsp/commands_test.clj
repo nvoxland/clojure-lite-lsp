@@ -16,7 +16,13 @@
 
 (defn run [proj & args] (commands/run (ctx proj) args))
 
-(defn text [proj & args] (commands/text (ctx proj) args))
+(defn- text-of
+  "Run query command `args` in `ctx`, its results as text."
+  ([ctx args] (text-of ctx args {}))
+  ([ctx [cmd :as args] opts]
+   (commands/format-text ctx cmd (commands/run ctx args opts))))
+
+(defn text [proj & args] (text-of (ctx proj) args))
 
 (defn lines [s] (str/split-lines s))
 
@@ -78,7 +84,7 @@
   (with-project [proj files]
     (let [from-sub (assoc (ctx proj) :cwd (qf/path proj "src/app"))]
       (is (= ["src/app/a.clj:2:7: (defn greet"]
-             (lines (commands/text from-sub ["definition" "src/app/b.clj:2:18"])))))))
+             (lines (text-of from-sub ["definition" "src/app/b.clj:2:18"])))))))
 
 (deftest positions-inside-library-sources
   ;; a definition in a jar comes back as its extracted source; a position
@@ -96,7 +102,7 @@
 
 (deftest results-are-limited
   (with-project [proj files]
-    (let [t (commands/text (ctx proj) ["references" "app.a/greet"] {:limit 1})]
+    (let [t (text-of (ctx proj) ["references" "app.a/greet"] {:limit 1})]
       (is (= 2 (count (lines t))))
       (is (str/includes? (last (lines t)) "2 more")))
     (let [{:keys [results total]} (commands/run (ctx proj) ["references" "app.a/greet"] {:limit 1})]

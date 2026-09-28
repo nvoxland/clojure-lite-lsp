@@ -8,7 +8,9 @@
   (:require
    [clojure-lite-lsp.db :as db]))
 
-(def default-batch-sizes
+(set! *warn-on-reflection* true)
+
+(def ^:private default-batch-sizes
   "How many requests of a kind one batch takes."
   {:file 100 :delete 1000 :jar 8 :sync 1 :dep-file 20})
 

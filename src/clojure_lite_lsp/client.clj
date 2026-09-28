@@ -54,7 +54,7 @@
         pad #(into % (repeat (- width (count %)) 0))]
     (neg? (compare [(pad na) qa] [(pad nb) qb]))))
 
-(defn daemon-command
+(defn- daemon-command
   "How to start a daemon: this same native binary, or on the JVM (dev) this
   same classpath."
   []

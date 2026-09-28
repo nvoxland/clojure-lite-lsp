@@ -61,8 +61,14 @@
     {:to-base (into {} (map (fn [[i j]] [j i])) pairs)
      :to-current (into {} pairs)}))
 
-(defn current->base [m line] (get (:to-base m) line))
-(defn base->current [m line] (get (:to-current m) line))
+(defn current->base
+  "The base line that buffer `line` is, by line map `m`, or nil."
+  [m line]
+  (get (:to-base m) line))
+(defn base->current
+  "The buffer line that base `line` is, by line map `m`, or nil."
+  [m line]
+  (get (:to-current m) line))
 
 ;;;; open documents
 
@@ -147,7 +153,10 @@
   (update-open! buffers path (fn [{:keys [saved current] :as e}]
                                (if saved (entry saved current) e))))
 
-(defn close! [buffers path] (swap! buffers dissoc path))
+(defn close!
+  "Stop tracking the document at `path`."
+  [buffers path]
+  (swap! buffers dissoc path))
 
 (defn text
   "The text of `path` as the editor has it: its open buffer, else the file."

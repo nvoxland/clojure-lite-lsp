@@ -19,7 +19,11 @@
    [clojure.java.io :as io]
    [clojure.string :as str]))
 
-(def default-project-max-age-ms (* 1000 60 60 24 30))
+(set! *warn-on-reflection* true)
+
+(def default-project-max-age-ms
+  "How long a project goes unseen before it's dropped: 30 days."
+  (* 30 24 60 60 1000))
 
 (def ^:private units-per-tx 500)
 

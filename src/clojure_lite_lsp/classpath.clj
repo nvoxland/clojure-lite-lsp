@@ -18,7 +18,9 @@
 
 (set! *warn-on-reflection* true)
 
-(def default-config {:aliases [:dev :test] :extra-source-paths []})
+(def default-config
+  "`.clojure-lite-lsp.edn`'s settings when it doesn't set them."
+  {:aliases [:dev :test] :extra-source-paths []})
 
 (def build-files
   "Files whose content determines the classpath."
@@ -58,7 +60,7 @@
       build-tool (conj build-tool)
       (.isFile (file root "bb.edn")) (conj ["bb" "-e" "(println (babashka.classpath/get-classpath))"]))))
 
-(defn run-command
+(defn- run-command
   "Run `cmd` in `dir`: what it prints. Throws when it fails."
   [cmd dir]
   (let [{:keys [exit out err]} (process/run cmd {:dir dir :timeout-ms (* 5 60 1000)})]

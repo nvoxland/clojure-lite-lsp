@@ -45,7 +45,7 @@
 
 (set! *warn-on-reflection* true)
 
-(defrecord Indexer [c w reader cache-dir shards contexts batch-sizes in-flight reuser requeued]
+(defrecord Indexer [c w reader home shards contexts batch-sizes in-flight reuser requeued]
   Closeable
   (close [_]
     (when (realized? reader) (.close ^Connection @reader))
@@ -53,20 +53,20 @@
 
 (defn indexer
   "An indexer writing to the index at `db-path`, keeping clj-kondo configs
-  under `cache-dir`."
-  [{:keys [db-path cache-dir shards batch-sizes] :or {shards analyze/default-shards}}]
+  (and extracted sources) under home dir `home`."
+  [{:keys [db-path home shards batch-sizes] :or {shards analyze/default-shards}}]
   (let [c (db/open-writer db-path)
-        cache-dir (or cache-dir (home/dir))]
+        home (or home (home/dir))]
     (map->Indexer {:c c :w (writer/writer c)
                    ;; for analysis, which runs beside the loop thread's writes
                    :reader (delay (db/open-reader db-path))
-                   :cache-dir cache-dir
+                   :home home
                    :shards shards
                    :batch-sizes batch-sizes
                    :contexts (atom {})
                    ;; the batch being analyzed: {:batch :job}
                    :in-flight (atom nil)
-                   :reuser (reuse/reuser cache-dir)
+                   :reuser (reuse/reuser home)
                    ;; {[project path] [unit answers]}: see recheck-dependents!
                    :requeued (atom {})})))
 
@@ -82,17 +82,17 @@
 
 (defn- root-of [c p] (db/query-value c "SELECT root FROM project WHERE id = ?" p))
 
-(defn- compute-context [{:keys [c cache-dir]} p]
+(defn- compute-context [{:keys [c home]} p]
   (let [root (root-of c p)
         entries (classpath/memoized! c p root)
         by-kind (group-by :kind entries)
         jars (mapv :path (:jar by-kind))]
     {:root root
      :source-dirs (mapv :path (:source-dir by-kind))
-     :external-dirs (mapv (fn [{:keys [path ord]}] {:path path :ord ord :config (kc/dir-config! cache-dir path)})
+     :external-dirs (mapv (fn [{:keys [path ord]}] {:path path :ord ord :config (kc/dir-config! home path)})
                           (:external-dir by-kind))
      :jars (mapv (juxt :ord :path) (:jar by-kind))
-     :project-config (kc/project-config! cache-dir root entries)
+     :project-config (kc/project-config! home root entries)
      :jar-context (kc/jar-context jars)}))
 
 (defn- context
@@ -118,7 +118,7 @@
         ;; for (an editor opened it), as the project's own
         (when (under? root path) own))))
 
-(defn- file-unit-key [{:keys [c]} {:keys [mode config]} path]
+(defn- file-unit-key! [{:keys [c]} {:keys [mode config]} path]
   (when-let [h (fingerprint/content-hash! c path)]
     (analyze/unit-key mode config h path)))
 
@@ -137,12 +137,12 @@
   (memoize (fn [lang ns-sym]
              (nsa/digest (kondo-hooks/answer (partial nsa/index-answer c p) lang ns-sym)))))
 
-(defn- existing-unit
+(defn- existing-unit!
   "The unit for a file's key: analyzed under this config, or under another
   whose differences don't touch what the file references (clojure-lite-lsp.reuse), and
   whose hooks' answers `digest-of` finds still hold."
   [{:keys [w reuser]} unit-key digest-of]
-  (when unit-key (reuse/unit-for reuser w unit-key digest-of)))
+  (when unit-key (reuse/unit-for! reuser w unit-key digest-of)))
 
 (def ^:private requeues-remembered
   "How many (unit, answers) pairs of a file the requeue guard remembers."
@@ -197,9 +197,9 @@
 
 (defn- link-jars!
   "Link project `p`'s jars that are already indexed; queue the rest."
-  [{:keys [c w cache-dir]} p {:keys [jars jar-context]}]
+  [{:keys [c w home]} p {:keys [jars jar-context]}]
   (let [linked (vec (for [[ord path] jars
-                          :let [config (kc/jar-config! cache-dir jar-context path)
+                          :let [config (kc/jar-config! home jar-context path)
                                 h (fingerprint/content-hash! c path)]]
                       [ord path (snapshot/jar-id c (analyze/jar-key h config))]))]
     (snapshot/set-project-jars! w p linked)
@@ -224,7 +224,7 @@
   (let [{:keys [project-config] :as ctx} (context ix p)
         current (snapshot/file-paths c p)
         wanted (wanted-files ctx current)
-        unit-of (fn [digest-of path] (existing-unit ix (file-unit-key ix (wanted path) path) digest-of))
+        unit-of (fn [digest-of path] (existing-unit! ix (file-unit-key! ix (wanted path) path) digest-of))
         link! (fn [path u]
                 (let [{:keys [ord external?]} (wanted path)]
                   (when-not (= (current path) {:unit-id u :external? external? :ord ord})
@@ -271,7 +271,7 @@
         groups (vec (for [[[mode config] group] (group-by (juxt :mode :config) (filter :mode placed))]
                       {:mode mode :config config :group group
                        :known (into {} (map (fn [{:keys [path] :as placement}]
-                                              [path (existing-unit ix (file-unit-key ix placement path) digest-of)]))
+                                              [path (existing-unit! ix (file-unit-key! ix placement path) digest-of)]))
                                     group)}))
         serve (serve-fn ix p)]
     {:analyze (fn []
@@ -315,14 +315,14 @@
   "Analyze jars (those of `batch` not indexed yet) and link them into
   project `p`. Returns a job: {:analyze (fn [], the clj-kondo work) :write
   (fn [analysis])}."
-  [{:keys [c w cache-dir shards] :as ix} p batch]
+  [{:keys [c w home shards] :as ix} p batch]
   (let [{:keys [jars jar-context]} (context ix p)
         ord-of (into {} (map (fn [[ord path]] [path ord])) jars)
         todo (vec (for [{:keys [path]} batch
                         :let [ord (ord-of path)]
                         ;; a jar no longer on the classpath: nothing to do
                         :when ord
-                        :let [config (kc/jar-config! cache-dir jar-context path)
+                        :let [config (kc/jar-config! home jar-context path)
                               h (fingerprint/content-hash! c path)]]
                     {:path path :ord ord :config config :hash h
                      :jar-id (snapshot/jar-id c (analyze/jar-key h config))}))]
@@ -339,15 +339,15 @@
                 (recheck-dependents! ix p)))}))
 
 (defn- index-dep-files!
-  [{:keys [c w cache-dir shards] :as ix} p paths]
+  [{:keys [c w home shards] :as ix} p paths]
   (let [{:keys [jar-context]} (context ix p)]
     (doseq [path paths
-            :let [jar-hash (some-> (sources/source-of cache-dir path) :jar-hash-hex digest/unhex)
+            :let [jar-hash (some-> (sources/source-of home path) :jar-hash-hex digest/unhex)
                   jar-path (when jar-hash
                              (db/query-value c "SELECT pj.path FROM project_jar pj JOIN jar j ON j.id = pj.jar_id
                                                 WHERE pj.project_id = ? AND j.jar_hash = ?" p jar-hash))]
             :when (and jar-path (.isFile (io/file path)))]
-      (let [config (kc/jar-config! cache-dir jar-context jar-path)
+      (let [config (kc/jar-config! home jar-context jar-path)
             [{:keys [unit-key elements]}] (analyze/analyze-files [path] {:config config :mode :dep-file :shards shards})]
         ;; changed while analyzed (re-extracted): next time it's opened
         (when unit-key

@@ -104,7 +104,7 @@
   [jar]
   (:coords (pom-info jar)))
 
-(defn maven-deps
+(defn- maven-deps
   "The [group artifact]s a jar's pom declares, except test dependencies."
   [jar]
   (:deps (pom-info jar)))
@@ -206,8 +206,8 @@
 (defn jar-config!
   "The config dir for analyzing `jar`: its own and its dependencies'
   exports. Returns {:dir :hash}."
-  [cache-dir {:keys [closure] :as ctx} jar]
-  (materialize! cache-dir (imports (map (:exports ctx) (cons jar (sort (closure jar)))))))
+  [cache-dir {:keys [closure exports]} jar]
+  (materialize! cache-dir (imports (map exports (cons jar (sort (closure jar)))))))
 
 (defn dir-config!
   "The config dir for an external source dir (e.g. a git dep): its own

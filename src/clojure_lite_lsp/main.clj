@@ -114,7 +114,9 @@
       (print-err (ex-message e))
       (if (:usage (ex-data e)) 2 1))))
 
-(defn -main [& [cmd & args]]
+(defn -main
+  "Run command `cmd` with `args`, and exit with its code."
+  [& [cmd & args]]
   (let [code (try
                (run-command cmd args)
                (catch Throwable t
