@@ -6,15 +6,15 @@
 
 | Request | |
 |---|---|
-| `textDocument/definition`, `declaration` | Vars, namespaces, keywords (`re-frame`-style registrations), locals, Java classes (to their `.java` source when available) |
-| `textDocument/references` | Uses of vars, namespaces, keywords, locals and Java classes |
+| `textDocument/definition` | Vars, namespaces, keywords (`re-frame`-style registrations), locals, Java classes (to their `.java` source when available) |
+| `textDocument/declaration` | Where the file brings a var (or an `::al/kw` keyword) in: the alias it's written through, its `:refer` entry, or its namespace's require. Otherwise the definition |
+| `textDocument/references` | Uses of vars, namespaces, keywords, locals and Java classes. On an alias (`:as al`), the names written through it in its file |
 | `textDocument/implementation` | Protocol and protocol-method implementations, multimethod methods |
 | `textDocument/hover` | Arglists and docstring |
 | `textDocument/documentSymbol` | The file's namespaces and definitions |
 | `workspace/symbol` | Definitions by name, exact matches first |
 | `textDocument/prepareCallHierarchy`, `callHierarchy/incomingCalls`, `outgoingCalls` | Callers and callees |
 | `textDocument/documentHighlight` | The occurrences of what's under the cursor in the file: definitions and bindings as writes, uses as reads |
-| `textDocument/prepareRename`, `rename` | Locals only: every place the local is written, all in one file (both languages of a `.cljc` file). Anything else is refused, so editors offer rename only on locals; so is a local whose code changed since the last save. |
 | `textDocument/signatureHelp` | The arglists of the call being typed, with the current argument. A call the index hasn't seen yet is resolved by name: through the file's aliases, its own namespace, then `clojure.core` |
 
 Documents sync incrementally; `didSave` and `workspace/didChangeWatchedFiles`
@@ -28,10 +28,9 @@ namespace) is referenced from the ClojureScript files that require it.
 
 ## Not supported
 
-Diagnostics, completion, formatting, code actions, renaming vars and
-namespaces, and semantic tokens. Apart from renaming locals, clojure-lite-lsp
-doesn't edit code: edits across files, made from an index, could be wrong
-whenever the index is behind.
+Diagnostics, completion, formatting, code actions, rename and semantic
+tokens. clojure-lite-lsp only reads code, and doesn't advertise these, so
+editors leave them to other tools (or don't offer them).
 
 ## Initialization options
 

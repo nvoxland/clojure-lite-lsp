@@ -1,6 +1,6 @@
 (ns clojure-lite-lsp.query-editing-test
   "What the editor asks while you work in a file: the occurrences of what's
-  under the cursor, and the places a local's rename touches."
+  under the cursor."
   (:require
    [clojure.test :refer [deftest is testing]]
    [clojure-lite-lsp.query :as q]
@@ -35,27 +35,15 @@
       (is (= #{[(at proj ":k 1" 0) :read] [(at proj ":k m" 0) :read]}
              (highlights proj ":k m" 0))))))
 
-(deftest a-locals-occurrences-are-what-its-rename-touches
-  (with-project [proj files]
-    (let [[row col] (at proj "x) (greet" 0)
-          {:keys [name positions]} (q/local-occurrences (:c proj) (:p proj) (f/path proj "src/app/a.clj") row col)]
-      (is (= "x" name))
-      (is (= #{(at proj "x]" 0) (at proj "x) (greet" 0) (at proj "x))" 0)}
-             (set (map #(vec (take 2 %)) positions)))))
-    (testing "anything but a local: nil (renaming it would touch other files)"
-      (let [[row col] (at proj "greet x" 0)]
-        (is (nil? (q/local-occurrences (:c proj) (:p proj) (f/path proj "src/app/a.clj") row col)))))))
-
 (deftest a-cljc-local-is-one-local-in-both-languages
   ;; clj-kondo analyzes a .cljc file once per language, giving the same
-  ;; local an id in each: a rename must take the uses in both branches
+  ;; local an id in each: its highlights are the uses in both branches
   (with-project [proj {"src/app/c.cljc" "(ns app.c)\n(defn f [x] #?(:clj (inc x) :cljs (dec x)))\n"}]
     (let [path (f/path proj "src/app/c.cljc")
           all #{(f/at proj "src/app/c.cljc" "x]") (f/at proj "src/app/c.cljc" "x) :cljs") (f/at proj "src/app/c.cljc" "x)))")}]
       (doseq [from ["x]" "x) :cljs" "x)))"]
               :let [[row col] (f/at proj "src/app/c.cljc" from)]]
         (testing (str "from " from)
-          (is (= all (set (map #(vec (take 2 %)) (:positions (q/local-occurrences (:c proj) (:p proj) path row col))))))
           (is (= all (set (map #(vec (take 2 (:pos %))) (q/highlights (:c proj) (:p proj) path row col))))))))))
 
 (deftest highlights-of-a-keys-binding-are-the-locals

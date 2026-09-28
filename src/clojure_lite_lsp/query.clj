@@ -159,7 +159,7 @@
   [el candidates]
   (or (seq (filter #(same-lang? el %) candidates)) candidates))
 
-(declare var-definitions)
+(declare var-definitions occurrences-of)
 
 (def ^:private refer-all-bit (kinds/flags->bits #{:refer-all}))
 
@@ -195,16 +195,16 @@
   "The definitions a var reference (usage or quoted symbol) resolves to."
   ([c p el] (var-definitions c p el 5))
   ([c p {:keys [ns name alias lang] :as el} depth]
-  (let [defs (or (seq (without-declares (definitions c p :var-def ns name)))
-                 (referred-all-definitions c p el))
-        matching (or (seq (filter #(same-lang? el %) defs))
+   (let [defs (or (seq (without-declares (definitions c p :var-def ns name)))
+                  (referred-all-definitions c p el))
+         matching (or (seq (filter #(same-lang? el %) defs))
                      ;; cljs only reaches clj definitions that are macros
                      ;; (:require-macros)
-                     (when (:cljs lang) (seq (filter #(and (:macro (:flags %)) (:clj (:lang %))) defs)))
+                      (when (:cljs lang) (seq (filter #(and (:macro (:flags %)) (:clj (:lang %))) defs)))
                      ;; clj falls back to a cljs definition
-                     (when (:clj lang) (seq defs)))]
-    (or (seq (follow-imports c p el (best matching) depth))
-        (when alias (best (in-lang el (definitions c p :ns-def nil ns))))))))
+                      (when (:clj lang) (seq defs)))]
+     (or (seq (follow-imports c p el (best matching) depth))
+         (when alias (best (in-lang el (definitions c p :ns-def nil ns))))))))
 
 (def ^:private record-definers
   #{"clojure.core/defrecord" "clojure.core/deftype" "cljs.core/defrecord" "cljs.core/deftype"})
@@ -279,6 +279,49 @@
   locations."
   [c p path row col]
   (definition-of-elements c p (elements-at c p path row col)))
+
+(defn- unit-elements [c u kinds]
+  (map row->element
+       (apply db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
+                              " WHERE fe.unit_id = ? AND fe.kind IN (" (str/join "," (repeat (count kinds) "?")) ")"
+                              " ORDER BY fe.name_row, fe.name_col")
+              u (map kinds/code kinds))))
+
+(defn- before? [[r c] [r2 c2]] (or (< r r2) (and (= r r2) (<= c c2))))
+
+(defn- inside? [{[fr fc fer fec] :form} {[r c] :pos}]
+  (and fr (before? [fr fc] [r c]) (before? [r c] [fer fec])))
+
+(defn- declaration-of
+  "Where the file of unit `u` brings var usage `el` in (or a keyword
+  written through an alias): the alias it's written through, its :refer entry, or its namespace's require. nil when
+  it isn't brought in by a require (the file's own vars, the require
+  itself)."
+  [c u {:keys [kind ns name alias] [r col _ end-col] :pos :as el}]
+  (when (or (#{:var-usage :symbol-usage} kind) (and (= :keyword-usage kind) alias))
+    (let [;; the file's ns form in force here: the last one before it
+          ns-form (last (filter #(and (same-lang? el %) (:form %) (before? (take 2 (:form %)) (:pos el)))
+                                (unit-elements c u [:ns-def])))
+          in-ns-form #(and ns-form (same-lang? el %) (inside? ns-form %) (not= (:pos %) (:pos el)))]
+      (when (and ns-form (not (inside? ns-form el)))
+        (first
+         (cond
+           alias (filter #(and (in-ns-form %) (= alias (:alias %))) (unit-elements c u [:ns-alias]))
+           ;; written without its namespace: referred
+           (= (- end-col col) (count name))
+           (concat (filter #(and (in-ns-form %) (= [ns name] [(:ns %) (:name %)])) (unit-elements c u [:var-usage]))
+                   (filter #(and (in-ns-form %) (= ns (:ns %))) (unit-elements c u [:ns-usage])))
+           :else (filter #(and (in-ns-form %) (= ns (:ns %))) (unit-elements c u [:ns-usage]))))))))
+
+(defn declaration
+  "Go to declaration from a position in project `p`'s file at `path`:
+  where the file brings the name in (clojure-lite-lsp.query/declaration-of),
+  else its definition."
+  [c p path row col]
+  (let [els (elements-at c p path row col)
+        u (file-unit c p path)]
+    (or (seq (located c p (keep #(declaration-of c u %) els)))
+        (definition-of-elements c p els))))
 
 ;;;; references
 
@@ -394,7 +437,11 @@
 
     :java-class-usage (usage-rows c p nil name [:java-class-usage])
 
-    (:ns-def :ns-usage :ns-alias)
+    ;; an alias is the file's: the names written through it there
+    :ns-alias (->> (occurrences-of c unit-id el)
+                   (remove #(and (not include-declaration?) (= :ns-alias (:kind %)))))
+
+    (:ns-def :ns-usage)
     (let [target (if (= :ns-def kind) name ns)
           defs (definitions c p :ns-def nil target)
           ;; a namespace defined in one language only is what the other's
@@ -558,19 +605,6 @@
          distinct
          vec)))
 
-(defn local-occurrences
-  "When a local is at the position: {:name :positions :scope}, every place
-  its name is written (binding and uses), all in this file, and the scope
-  it's bound in. nil otherwise: renaming anything else would touch other
-  files."
-  [c p path row col]
-  (when-let [u (file-unit c p path)]
-    (when-let [el (first (filter (comp #{:local :local-usage} :kind) (elements-at c p path row col)))]
-      (let [occurrences (occurrences-of c u el)]
-        {:name (:name el)
-         :positions (vec (distinct (map :pos occurrences)))
-         :scope (some #(when (= :local (:kind %)) (:form %)) occurrences)}))))
-
 (defn resolve-symbol
   "The var definitions a symbol written as `text` (\"alias/name\",
   \"ns/name\" or \"name\") can mean in project `p`'s file at `path`, for
@@ -580,7 +614,7 @@
   [c p path text]
   (when-let [u (file-unit c p path)]
     (let [els (map row->element (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
-                                                  " WHERE fe.unit_id = ? AND fe.kind IN (?, ?)")
+                                                 " WHERE fe.unit_id = ? AND fe.kind IN (?, ?)")
                                           u (kinds/code :ns-alias) (kinds/code :ns-def)))
           [qualifier name] (if-let [[_ q n] (re-matches #"([^/]+)/(.+)" text)] [q n] [nil text])
           own (some #(when (= :ns-def (:kind %)) (:name %)) els)
@@ -759,8 +793,8 @@
        (mapcat (fn [{:keys [unit-id pos defined-by]}]
                  (let [[{:keys [form]}] (->> (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
                                                               " WHERE fe.unit_id = ? AND fe.name_row = ? AND fe.name_col = ? AND fe.kind = ?")
-                                                         unit-id (first pos) (second pos) (kinds/code :var-def))
-                                              (map row->element))]
+                                                       unit-id (first pos) (second pos) (kinds/code :var-def))
+                                             (map row->element))]
                    (when form
                      (->> (db/query c (str "SELECT " element-columns " FROM file_element fe " element-joins
                                            " WHERE fe.unit_id = ? AND fe.kind = ? AND fe.name_row BETWEEN ? AND ?")

@@ -9,7 +9,8 @@ build file, and the clj-kondo configuration from its `.clj-kondo` directory.
 |---|---|
 | `deps.edn` | `clojure -Spath`, with the `:dev` and `:test` aliases the project defines |
 | `project.clj` | `lein with-profile +dev,+test classpath` |
-| `bb.edn` | `bb`'s classpath |
+| `bb.edn` | `bb`'s classpath; beside `deps.edn` or `project.clj`, added to theirs |
+| none | `src` and `test`, where they exist |
 
 The classpath is recomputed only when a build file changes: the project's,
 those of its `:local/root` dependencies, or your `~/.clojure/deps.edn` (or
@@ -31,7 +32,8 @@ At the project root:
  :extra-source-paths ["dev"]}   ; more directories to index as the project's own
 ```
 
-A project without a build file can use `:extra-source-paths` alone.
+A folder without a build file indexes its `src` and `test`; `:extra-source-paths`
+adds others.
 
 ## clj-kondo configuration
 

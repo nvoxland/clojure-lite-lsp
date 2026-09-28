@@ -156,47 +156,6 @@
                  {:range (convert/range bp) :kind (if write? 3 2)}))
              (q/highlights c p path row col))))
 
-(defn- at-cursor
-  "Of `positions`, the one containing [row col]."
-  [positions row col]
-  (first (filter (fn [[r c _ ec]] (and (= r row) (<= c col ec))) positions)))
-
-(defn- scope-unchanged?
-  "Is the scope a local is bound in unchanged since the save? Otherwise a
-  use typed since would be missed by a rename from the index."
-  [buffers path [start _ end]]
-  (or (nil? start) (buffers/unchanged? buffers path start end)))
-
-(defn- prepare-rename [{:keys [buffers]} c p path row col]
-  ;; only locals: a var's rename would edit other files from the index
-  (when-let [{:keys [name positions scope]} (q/local-occurrences c p path row col)]
-    (when (scope-unchanged? buffers path scope)
-      (when-let [bp (some->> (at-cursor positions row col) (buffers/->buffer buffers path))]
-        {:range (convert/range bp) :placeholder name}))))
-
-(def ^:private symbol-name-re
-  "What a local can be renamed to: a plain symbol."
-  #"[^\s\d,;\\\"'`~@^()\[\]{}#:/][^\s,;\\\"'`~@^()\[\]{}/]*")
-
-(defn- rename [{:keys [buffers]} c p path row col new-name]
-  (when-not (and new-name (re-matches symbol-name-re new-name))
-    (throw (ex-info (str "Not a valid local name: " new-name) {})))
-  (let [{:keys [name positions scope]} (or (q/local-occurrences c p path row col)
-                                           (throw (ex-info "Only locals can be renamed" {})))
-        _ (when-not (scope-unchanged? buffers path scope)
-            (throw (ex-info (str "Save the file first: the code where " name " is bound changed since the last save") {})))
-        text (buffers/text buffers path)
-        ranges (for [pos positions]
-                 (let [bp (buffers/->buffer buffers path pos)
-                       r (some-> bp convert/range)
-                       start (some->> r :start (buffers/offset text))
-                       end (some->> r :end (buffers/offset text))]
-                   ;; what's there now must still be the name
-                   (when (and r (= name (subs text start end))) r)))]
-    (when (some nil? ranges)
-      (throw (ex-info (str "The code around " name " changed since it was saved: save it, then rename") {})))
-    {:changes {(convert/path->uri path) (mapv (fn [r] {:range r :newText new-name}) ranges)}}))
-
 (defn- token-index
   "Where `token` occurs in `s` from `from` as a whole token (not inside a
   type hint like the n in ^long)."
@@ -333,7 +292,7 @@
     (with-project state params [] #(lsp-locations state %2 (q/definition %1 %2 %3 %4 %5)))
 
     "textDocument/declaration"
-    (with-project state params [] #(lsp-locations state %2 (q/definition %1 %2 %3 %4 %5)))
+    (with-project state params [] #(lsp-locations state %2 (q/declaration %1 %2 %3 %4 %5)))
 
     "textDocument/implementation"
     (with-project state params [] #(lsp-locations state %2 (q/implementations %1 %2 %3 %4 %5)))
@@ -345,12 +304,6 @@
 
     "textDocument/documentHighlight"
     (with-project state params [] (fn [c p path row col] (highlights state c p path row col)))
-
-    "textDocument/prepareRename"
-    (with-project state params nil (fn [c p path row col] (prepare-rename state c p path row col)))
-
-    "textDocument/rename"
-    (with-project state params nil (fn [c p path row col] (rename state c p path row col (:newName params))))
 
     "textDocument/signatureHelp"
     (signature-help state params)
@@ -437,8 +390,6 @@
                     :workspaceSymbolProvider true
                     :callHierarchyProvider true
                     :documentHighlightProvider true
-                    ;; locals only (prepareRename refuses anything else)
-                    :renameProvider {:prepareProvider true}
                     :signatureHelpProvider {:triggerCharacters ["(" " "]}}
      :serverInfo {:name "clojure-lite-lsp" :version (:version opts)}}))
 

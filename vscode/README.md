@@ -71,5 +71,4 @@ the language server**.
 - `npm test`: unit tests of how the server is found and launched.
 - `npm run test:e2e`: end to end, in a real VS Code (downloaded into
   `.vscode-test/`, with its own profile and a throwaway index): opens a small
-  project and checks definition, hover, highlights, signature help and
-  rename. Needs `clojure-lite-lsp` and the Clojure CLI on PATH.
+  project and checks definition, hover, highlights and signature help. Needs `clojure-lite-lsp` and the Clojure CLI on PATH.

@@ -161,18 +161,6 @@
           (vec (interleave (map inc rows) (take-nth 2 (rest pos)))))))
     pos))
 
-(defn unchanged?
-  "Are rows `start`..`end` (1-based) of the indexed version of `path` the
-  same in its buffer, with nothing inserted among them?"
-  [store path start end]
-  (if-let [{m :map :keys [base current]} (@store path)]
-    (or (= base current)
-        (let [to (:to-current @m)
-              first-row (get to (dec start))]
-          (and first-row
-               (every? #(= (+ first-row (- % (dec start))) (get to %)) (range (dec start) end)))))
-    true))
-
 (defn ->indexed
   "A position ([row col] or [row col end-row end-col], 1-based) in the
   buffer at `path` as a position in the indexed version, or nil."

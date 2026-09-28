@@ -17,7 +17,7 @@
 (def version
   "Bump when normalization changes what it produces: it is part of every
   unit key, so all analysis is redone."
-  7)
+  8)
 
 (def project-analysis-options
   {:arglists true
@@ -115,8 +115,10 @@
                               :pos [(:alias-row e) (:alias-col e) (:alias-end-row e) (:alias-end-col e)])))))
 
 (defn- keyword-element [external? e]
-  (let [el (assoc (base (if (:reg e) :keyword-def :keyword-usage) e)
-                  :ns (sname (:ns e)) :name (sname (:name e)))]
+  (let [el (cond-> (assoc (base (if (:reg e) :keyword-def :keyword-usage) e)
+                          :ns (sname (:ns e)) :name (sname (:name e)))
+             ;; ::al/k: a use of the alias
+             (:alias e) (assoc :alias (sname (:alias e))))]
     (cond
       (:reg e) [(assoc el :defined-by (sname (:reg e)))]
       external? []

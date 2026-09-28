@@ -23,22 +23,45 @@
   (is (= {:aliases [:local] :extra-source-paths ["scripts"]}
          (classpath/project-config (project! {".clojure-lite-lsp.edn" "{:aliases [:local] :extra-source-paths [\"scripts\"]}"})))))
 
+(def bb-command ["bb" "-e" "(println (babashka.classpath/get-classpath))"])
+
 (deftest commands-per-build-tool
-  (testing "deps.edn wins, with only the configured aliases it defines"
-    (is (= ["clojure" "-Spath" "-A:dev"]
-           (classpath/command (project! {"deps.edn" "{:aliases {:dev {} :other {}}}" "bb.edn" "{}"})
-                              {:aliases [:dev :test]}))))
+  (testing "deps.edn, with only the configured aliases it defines"
+    (is (= [["clojure" "-Spath" "-A:dev"]]
+           (classpath/commands (project! {"deps.edn" "{:aliases {:dev {} :other {}}}"})
+                               {:aliases [:dev :test]}))))
   (testing "no matching aliases"
-    (is (= ["clojure" "-Spath"]
-           (classpath/command (project! {"deps.edn" "{}"}) {:aliases [:dev]}))))
+    (is (= [["clojure" "-Spath"]]
+           (classpath/commands (project! {"deps.edn" "{}"}) {:aliases [:dev]}))))
   (testing "Leiningen"
-    (is (= ["lein" "with-profile" "+dev,+test" "classpath"]
-           (classpath/command (project! {"project.clj" "(defproject x \"1\")"}) {:aliases [:dev :test]}))))
+    (is (= [["lein" "with-profile" "+dev,+test" "classpath"]]
+           (classpath/commands (project! {"project.clj" "(defproject x \"1\")"}) {:aliases [:dev :test]}))))
   (testing "babashka"
-    (is (= ["bb" "-e" "(println (babashka.classpath/get-classpath))"]
-           (classpath/command (project! {"bb.edn" "{}"}) {:aliases []}))))
+    (is (= [bb-command] (classpath/commands (project! {"bb.edn" "{}"}) {:aliases []}))))
+  (testing "babashka's tasks beside a build tool: both"
+    (is (= [["clojure" "-Spath"] bb-command]
+           (classpath/commands (project! {"deps.edn" "{}" "bb.edn" "{}"}) {:aliases []}))))
   (testing "no build file"
-    (is (nil? (classpath/command (project! {}) {:aliases []})))))
+    (is (= [] (classpath/commands (project! {}) {:aliases []})))))
+
+(deftest deps-edn-and-bb-edn-together
+  (with-open [c (db/open-writer (tu/temp-db-path))]
+    (let [root (project! {"deps.edn" "{}" "bb.edn" "{}" "src" :dir "bb" :dir})
+          run (fn [cmd _dir] (if (= "bb" (first cmd)) "bb" "src"))
+          entries (classpath/memoized! c (snapshot/ensure-project! c root) root {:run run})]
+      (is (= #{(str root "/src") (str root "/bb")}
+             (set (map :path (filter #(= :source-dir (:kind %)) entries))))))))
+
+(deftest a-folder-without-a-build-file
+  ;; its src and test, as far as they exist
+  (with-open [c (db/open-writer (tu/temp-db-path))]
+    (let [root (project! {"src" :dir "test" :dir "other" :dir})
+          p (snapshot/ensure-project! c root)
+          entries (classpath/memoized! c p root {:run (fn [& _] (throw (ex-info "no build tool to run" {})))})]
+      (is (= #{(str root "/src") (str root "/test")} (set (map :path entries))))
+      (is (nil? (classpath/error c p)))
+      (let [only-src (project! {"src" :dir})]
+        (is (= [(str only-src "/src")] (map :path (classpath/compute only-src))))))))
 
 (deftest classifies-entries
   (let [root (project! {"src/a.clj" "" "dev" :dir "scripts" :dir})

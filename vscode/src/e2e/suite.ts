@@ -43,15 +43,5 @@ export async function run(): Promise<void> {
   const help = await vscode.commands.executeCommand<vscode.SignatureHelp>(
     "vscode.executeSignatureHelpProvider", b.uri, b.lineAt(b.lineCount - 1).range.end);
   assert.equal(help.signatures[0].label, "greet [who]");
-
-  // renaming a local: every use, in this file
-  const a = await vscode.workspace.openTextDocument(path.join(root, "src", "app", "a.clj"));
-  const who = new vscode.Position(5, a.lineAt(5).text.indexOf("who"));
-  const edit = await vscode.commands.executeCommand<vscode.WorkspaceEdit>(
-    "vscode.executeDocumentRenameProvider", a.uri, who, "person");
-  assert.equal(edit.get(a.uri).length, 2);
-  await assert.rejects(
-    Promise.resolve(vscode.commands.executeCommand("vscode.executeDocumentRenameProvider", b.uri, call, "hi")),
-    "a var isn't renamed");
-  console.log("e2e: definition, hover, highlights, signature help and rename answered");
+  console.log("e2e: definition, hover, highlights and signature help answered");
 }

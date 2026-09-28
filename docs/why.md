@@ -32,8 +32,8 @@ after ten idle minutes.
 
 clojure-lite-lsp navigates: definitions, references, implementations, docs,
 outlines, symbol search and call hierarchy, plus occurrence highlighting and
-argument hints while you type. Apart from renaming locals it doesn't edit code
-(no diagnostics, formatting, completion or project-wide refactoring), so it has
+argument hints while you type. It doesn't edit code (no diagnostics,
+formatting, completion, renaming or refactoring), so it has
 none of that work to keep up with.
 
 ## Agents are first-class

@@ -33,24 +33,25 @@
   (let [f (file root ".clojure-lite-lsp.edn")]
     (merge default-config (when (.isFile f) (read-edn f)))))
 
-(defn command
-  "The command that prints the classpath of the project at `root`, or nil
-  when it has no build file clojure-lite-lsp knows."
+(defn commands
+  "The commands whose printed classpaths, joined, are the classpath of the
+  project at `root`: its build tool's (deps.edn, else project.clj), and
+  babashka's when it has a bb.edn too. Empty when it has no build file
+  clojure-lite-lsp knows."
   [root {:keys [aliases]}]
-  (cond
-    (.isFile (file root "deps.edn"))
-    (let [defined (set (keys (:aliases (read-edn (file root "deps.edn")))))
-          use (filter defined aliases)]
-      (cond-> ["clojure" "-Spath"]
-        (seq use) (conj (str "-A" (str/join use)))))
+  (let [build-tool (cond
+                     (.isFile (file root "deps.edn"))
+                     (let [defined (set (keys (:aliases (read-edn (file root "deps.edn")))))
+                           use (filter defined aliases)]
+                       (cond-> ["clojure" "-Spath"]
+                         (seq use) (conj (str "-A" (str/join use)))))
 
-    (.isFile (file root "project.clj"))
-    (if (seq aliases)
-      ["lein" "with-profile" (str/join "," (map #(str "+" (name %)) aliases)) "classpath"]
-      ["lein" "classpath"])
-
-    (.isFile (file root "bb.edn"))
-    ["bb" "-e" "(println (babashka.classpath/get-classpath))"]))
+                     (.isFile (file root "project.clj"))
+                     (if (seq aliases)
+                       ["lein" "with-profile" (str/join "," (map #(str "+" (name %)) aliases)) "classpath"]
+                       ["lein" "classpath"]))]
+    (cond-> (if build-tool [build-tool] [])
+      (.isFile (file root "bb.edn")) (conj ["bb" "-e" "(println (babashka.classpath/get-classpath))"]))))
 
 (defn run-command
   "Run `cmd` in `dir` and return its stdout. Stdin is closed: clojure-lite-lsp lsp's own
@@ -101,12 +102,21 @@
 (defn- parse [classpath-str]
   (remove str/blank? (str/split (str/trim classpath-str) (re-pattern File/pathSeparator))))
 
+(declare fallback-paths)
+
+(defn- run-all
+  "The classpath the `cmds` print, joined; with none (no build file), the
+  folder's src and test."
+  [root cmds run]
+  (if (seq cmds)
+    (str/join File/pathSeparator (map #(str/trim (run % root)) cmds))
+    (str/join File/pathSeparator (fallback-paths root))))
+
 (defn compute
   "Compute the classpath of the project at `root` from scratch."
   [root & [{:keys [run] :or {run run-command}}]]
-  (let [cfg (project-config root)
-        cmd (command root cfg)]
-    (classify root (when cmd (parse (run cmd root))) cfg)))
+  (let [cfg (project-config root)]
+    (classify root (parse (run-all root (commands root cfg) run)) cfg)))
 
 (defn- user-build-files
   "Build files outside the project that shape its classpath."
@@ -132,12 +142,12 @@
 (defn- spec-hash
   "A hash of everything the classpath is computed from: the project's
   build files, its :local/root deps' (transitively), and the user's."
-  ^bytes [root cmd]
+  ^bytes [root cmds]
   (let [md (MessageDigest/getInstance "SHA-256")
         add! (fn [label ^File f]
                (.update md (.getBytes (str label "\u0000") "UTF-8"))
                (when (.isFile f) (.update md (.getBytes (slurp f) "UTF-8"))))]
-    (.update md (.getBytes (pr-str cmd) "UTF-8"))
+    (.update md (.getBytes (pr-str cmds) "UTF-8"))
     (loop [todo [(.getCanonicalPath (io/file root))] seen #{}]
       (when-let [[dir & more] (seq todo)]
         (if (seen dir)
@@ -173,10 +183,10 @@
   [c p root & [{:keys [run] :or {run run-command}}]]
   (let [cfg (project-config root)]
     (try
-      (let [cmd (command root cfg)
-            h (spec-hash root cmd)
+      (let [cmds (commands root cfg)
+            h (spec-hash root cmds)
             raw (or (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ? AND spec_hash = ?" p h)
-                    (let [raw (if cmd (run cmd root) "")]
+                    (let [raw (run-all root cmds run)]
                       (db/with-tx c
                         (db/execute! c "DELETE FROM classpath_memo WHERE project_id = ?" p)
                         (db/execute! c "INSERT INTO classpath_memo (project_id, spec_hash, classpath) VALUES (?, ?, ?)"

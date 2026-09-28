@@ -76,7 +76,9 @@
     (testing "initialize advertises the reading features"
       (let [caps (:capabilities (request! "initialize" {:rootUri (convert/path->uri root) :capabilities {}}))]
         (is (every? caps [:definitionProvider :referencesProvider :hoverProvider :implementationProvider
-                          :documentSymbolProvider :workspaceSymbolProvider :callHierarchyProvider]))))
+                          :documentSymbolProvider :workspaceSymbolProvider :callHierarchyProvider]))
+        (testing "and nothing that edits: editors don't offer rename"
+          (is (not-any? caps [:renameProvider :codeActionProvider :documentFormattingProvider])))))
     (notify! "initialized" {})
     (wait-indexed! client)
     (notify! "textDocument/didOpen" {:textDocument {:uri (uri root "src/app/b.clj") :languageId "clojure" :version 1 :text b}})
@@ -373,23 +375,9 @@
              (set (map (juxt (comp :start :range) :kind)
                        (request! "textDocument/documentHighlight" (at root "src/app/a.clj" "greet x"))))))
       (is (= 3 (count (request! "textDocument/documentHighlight" (at root "src/app/a.clj" "who who"))))))
-    (testing "rename: locals only"
-      (is (= "who" (:placeholder (request! "textDocument/prepareRename" (at root "src/app/a.clj" "who who")))))
-      (is (nil? (request! "textDocument/prepareRename" (at root "src/app/a.clj" "greet x"))))
-      (let [edits (get-in (request! "textDocument/rename" (assoc (at root "src/app/a.clj" "who who") :newName "person"))
-                          [:changes (keyword (:uri doc))])]
-        (is (= 3 (count edits)))
-        (is (every? #(= "person" (:newText %)) edits)))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"name"
-                            (request! "textDocument/rename" (assoc (at root "src/app/a.clj" "who who") :newName "not valid")))))
-    (testing "rename refuses when the local's scope changed since the save: an unsaved use would be missed"
-      (let [edited (str/replace a "  [who]\n" "  [who]\n  (println who)\n")]
-        (notify! "textDocument/didChange" {:textDocument (assoc doc :version 2) :contentChanges [{:text edited}]})
-        (let [pos {:textDocument doc :position (pos-of edited "who who")}]
-          (is (nil? (request! "textDocument/prepareRename" pos)))
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"[Ss]ave"
-                                (request! "textDocument/rename" (assoc pos :newName "person")))))
-        (notify! "textDocument/didChange" {:textDocument (assoc doc :version 3) :contentChanges [{:text a}]})))
+    (testing "rename is unsupported"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported"
+                            (request! "textDocument/rename" (assoc (at root "src/app/a.clj" "who who") :newName "person")))))
     (testing "signature help while typing a new call"
       (let [typed (str a "(greet ")]
         (notify! "textDocument/didChange" {:textDocument (assoc doc :version 2) :contentChanges [{:text typed}]})

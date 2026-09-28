@@ -64,6 +64,17 @@
     (is (= (locs proj ["src/b.clj" "a :as"] ["src/b.clj" "al]"] ["src/c.clj" "a]"])
            (references proj "src/a.clj" "a)")))))
 
+(deftest alias-references
+  ;; an alias is the file's: its uses there, not the namespace's references
+  (with-project [proj {"src/a.clj" "(ns a) (defn f [] 1) (defn g [] 2)"
+                       "src/b.clj" "(ns b (:require [a :as al]))\n(al/f) (al/g) ::al/k"
+                       "src/c.clj" "(ns c (:require [a :as al]))\n(al/f)"}]
+    (is (= (locs proj ["src/b.clj" "al/f"] ["src/b.clj" "al/g"] ["src/b.clj" "::al/k"])
+           (references proj "src/b.clj" "al]")))
+    (testing "with the declaration: the alias too"
+      (is (= (locs proj ["src/b.clj" "al]"] ["src/b.clj" "al/f"] ["src/b.clj" "al/g"] ["src/b.clj" "::al/k"])
+             (references proj "src/b.clj" "al]" :include-declaration? true))))))
+
 (deftest protocol-implementations
   (with-project [proj {"src/a.clj" "(ns a)\n(defprotocol P (m [this]))\n(defrecord R [] P (m [this] 1))\n(extend-protocol P String (m [s] 2))\n(m (->R))"}]
     (let [impls (locs proj ["src/a.clj" "m [this] 1"] ["src/a.clj" "m [s]"])]

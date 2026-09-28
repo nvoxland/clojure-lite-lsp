@@ -4,8 +4,7 @@ A low-memory, read-only Clojure language server, for editors and coding agents.
 
 - **Navigation**: definitions, references, implementations, hover docs, file
   outlines, symbol search and call hierarchy (callers and callees).
-- **While you type**: occurrence highlighting, argument hints, and renaming
-  locals.
+- **While you type**: occurrence highlighting and argument hints.
 - **One shared index**: analysis comes from
   [clj-kondo](https://github.com/clj-kondo/clj-kondo) and is stored in one
   SQLite index for every project on the machine. A library is analyzed once;
@@ -14,8 +13,8 @@ A low-memory, read-only Clojure language server, for editors and coding agents.
 - **Light**: each editor's server process is about 20 MB, and indexing
   happens in a shared background process that exits when idle.
 
-Apart from renaming locals, it doesn't edit code: no diagnostics, formatting,
-completion or project-wide refactoring.
+It doesn't edit code: no diagnostics, formatting, completion, renaming or
+refactoring.
 
 **Documentation: <https://nvoxland.github.io/clojure-lite-lsp/>** (sources in
 [`docs/`](docs/); preview with `poetry install --with docs && poetry run mkdocs serve`).
@@ -84,8 +83,9 @@ clojure-lite-lsp stop                                 # stop the indexer
 
 ## Configuration
 
-A project's classpath comes from `deps.edn` (aliases `:dev` and `:test`),
-`project.clj` or `bb.edn`. A `.clojure-lite-lsp.edn` at the project root can
+A project's classpath comes from `deps.edn` (aliases `:dev` and `:test`) or
+`project.clj`, plus `bb.edn`'s; a folder with none indexes its `src` and
+`test`. A `.clojure-lite-lsp.edn` at the project root can
 change that:
 
 ```clojure
