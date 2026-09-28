@@ -14,7 +14,7 @@
     (is (= #{"other/lib/config.edn"} (set (keys (kc/exports d)))))
     (is (= {} (kc/exports (jar! {"a.clj" "(ns a)"}))))))
 
-(deftest maven-dependencies
+(deftest maven-dependencies-come-from-poms
   (let [a (maven-jar! "acme" "a" [["acme" "b"]] {})
         b (maven-jar! "acme" "b" [["acme" "c"] ["not" "on-classpath"]] {})
         c (maven-jar! "acme" "c" [] {})
@@ -50,7 +50,7 @@
       (is (.exists (io/file root ".clj-kondo/.cache/v1/clj/a.transit.json")))
       (is (not (.exists (io/file root ".clj-kondo/imports")))))))
 
-(deftest project-without-kondo-config
+(deftest a-project-without-a-kondo-config-has-one
   (let [{:keys [dir]} (kc/project-config! (tu/temp-dir) (project! {}) [])]
     (is (= #{} (files-in dir)))))
 

@@ -14,7 +14,7 @@
 
 (defn of-kind [kind els] (filterv #(= kind (:kind %)) els))
 
-(deftest var-definitions
+(deftest var-definitions-keep-what-queries-show
   (let [[f m p] (of-kind :var-def (elements "(ns a)
 (defn f \"Docs.\" [x] x)
 (defmacro m [& body] `(do ~@body))
@@ -49,7 +49,7 @@
       (is (= [{:kind :ns-alias :name "clojure.string" :alias "str" :pos [1 37 1 40]}]
              (map #(select-keys % [:kind :name :alias :pos]) (of-kind :ns-alias els)))))))
 
-(deftest var-usages
+(deftest var-usages-keep-where-they-point
   (let [[join-alias join-fq] (of-kind :var-usage (elements "(ns a (:require [clojure.string :as str]))
 (defn f [] (str/join [1]) (clojure.string/join [2]))" "a.clj"))]
     (is (= {:kind :var-usage :ns "clojure.string" :name "join" :alias "str"
@@ -62,7 +62,7 @@
   (let [els (elements "(ns a) (defmulti mm identity) (defmethod mm :x [_] 1)" "a.clj")]
     (is (= [#{:defmethod}] (map :flags (filter #(= "mm" (:name %)) (of-kind :var-usage els)))))))
 
-(deftest keywords
+(deftest registered-keywords-are-definitions-the-rest-usages
   (let [code "(ns a (:require [re-frame.core :as rf]))
 (rf/reg-event-db ::save (fn [db _] db))
 (defn f [m] (::save m) (:other m))"]
@@ -77,7 +77,7 @@
         (is (= 1 (count (of-kind :keyword-def els))))
         (is (empty? (of-kind :keyword-usage els)))))))
 
-(deftest locals
+(deftest local-usages-point-at-their-local
   (let [els (elements "(ns a) (defn f [x] (let [y x] y))" "a.clj")
         [x y] (of-kind :local els)
         usages (of-kind :local-usage els)]
@@ -95,7 +95,7 @@
     ;; refs are a record of the file, not located elements
     (is (every? :pos (remove #(= :ref (:kind %)) els)))))
 
-(deftest protocol-impls
+(deftest protocol-impls-name-their-method
   (let [els (elements "(ns a) (defprotocol P (m [this])) (defrecord R [] P (m [this] 1))" "a.clj")]
     (is (= [{:kind :protocol-impl :ns "a" :name "m" :impl-ns "a"}]
            (map #(select-keys % [:kind :ns :name :impl-ns]) (of-kind :protocol-impl els))))))

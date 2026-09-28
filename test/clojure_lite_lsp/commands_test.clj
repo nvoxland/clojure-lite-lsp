@@ -3,7 +3,7 @@
   answered as data and as grep-like text."
   (:require
    [clojure-lite-lsp.commands :as commands]
-   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
+   [clojure-lite-lsp.query-fixture :as qf :refer [with-project]]
    [clojure-lite-lsp.test-util :as tu]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]))
@@ -25,9 +25,9 @@
     (is (= ["src/app/a.clj:2:7: (defn greet"] (lines (text proj "definition" "app.a/greet"))))
     (is (= ["src/app/a.clj:1:5: (ns app.a)"] (lines (text proj "definition" "app.a"))) "a namespace")
     (testing "a position (file:line:col, 1-based) means what's there"
-      (is (= ["src/app/a.clj:2:7: (defn greet"] (lines (text proj "definition" (str (f/path proj "src/app/b.clj") ":2:18"))))))
+      (is (= ["src/app/a.clj:2:7: (defn greet"] (lines (text proj "definition" (str (qf/path proj "src/app/b.clj") ":2:18"))))))
     (testing "as data"
-      (is (= [{:path (f/path proj "src/app/a.clj") :line 2 :column 7 :end-line 2 :end-column 12}]
+      (is (= [{:path (qf/path proj "src/app/a.clj") :line 2 :column 7 :end-line 2 :end-column 12}]
              (map #(select-keys % [:path :line :column :end-line :end-column]) (:results (run proj "definition" "app.a/greet"))))))))
 
 (deftest references-list-every-use
@@ -48,7 +48,7 @@
   (with-project [proj files]
     (is (some #{"src/app/a.clj:2:7: app.a/greet"} (lines (text proj "symbols" "gree"))))
     (is (= ["src/app/a.clj:1:5: ns app.a" "src/app/a.clj:2:7: app.a/greet" "src/app/a.clj:6:7: app.a/twice"]
-           (lines (text proj "outline" (f/path proj "src/app/a.clj")))))))
+           (lines (text proj "outline" (qf/path proj "src/app/a.clj")))))))
 
 (deftest callers-and-callees
   (with-project [proj files]
@@ -76,7 +76,7 @@
   ;; results are relative to the project root: fed back from a
   ;; subdirectory, they must still find the file
   (with-project [proj files]
-    (let [from-sub (assoc (ctx proj) :cwd (f/path proj "src/app"))]
+    (let [from-sub (assoc (ctx proj) :cwd (qf/path proj "src/app"))]
       (is (= ["src/app/a.clj:2:7: (defn greet"]
              (lines (commands/text from-sub ["definition" "src/app/b.clj:2:18"])))))))
 

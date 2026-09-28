@@ -9,6 +9,8 @@
    [clojure-lite-lsp.version :as version]
    [clojure.java.io :as io])
   (:import
+   [clojure.lang IBlockingDeref IDeref IPending]
+   [java.io Closeable]
    [java.sql SQLException]))
 
 (defn home
@@ -32,22 +34,33 @@
     (try (some? (db/query-value c "SELECT version FROM daemon WHERE id = 1"))
          (catch SQLException _ false))))
 
+(defn stop!
+  "Ask home `h`'s daemon to stop, and wait for the daemons `ds` (derefable):
+  whether they all ended."
+  [h ds]
+  (with-open [c (client-db h)] (client/request-stop! c))
+  (every? #(not= ::timeout (deref % 30000 ::timeout)) ds))
+
 (defn start!
-  "Run a daemon for home `h` in a future, returning it once the daemon is up
-  (as clients do through ensure-daemon!: the daemon creates the schema)."
+  "Run a daemon for home `h` in this process, returning once it is up (as
+  clients do through ensure-daemon!: the daemon creates the schema). The
+  handle derefs to how it ended, and stops it when closed (`with-open`)."
   [h opts]
   (.mkdirs (io/file (:dir (home/paths h))))
   (let [d (future (daemon/serve! (merge fast {:home h} opts)))]
     (when-not (tu/eventually #(or (realized? d) (registered? h)))
       (throw (ex-info "The daemon didn't start" {:home h})))
-    d))
-
-(defn stop!
-  "Ask home `h`'s daemon to stop, and wait for the daemon futures `ds`:
-  whether they all ended."
-  [h ds]
-  (with-open [c (client-db h)] (client/request-stop! c))
-  (every? #(not= ::timeout (deref % 30000 ::timeout)) ds))
+    (reify
+      IDeref
+      (deref [_] @d)
+      IBlockingDeref
+      (deref [_ ms timeout-value] (deref d ms timeout-value))
+      IPending
+      (isRealized [_] (realized? d))
+      Closeable
+      (close [_]
+        (when-not (stop! h [d])
+          (throw (ex-info "The daemon didn't end" {:home h})))))))
 
 (defn in-process-opts
   "Client options (clojure-lite-lsp.client/ensure-daemon!'s) for home `h`

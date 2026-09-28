@@ -3,61 +3,61 @@
   under the cursor."
   (:require
    [clojure-lite-lsp.query :as q]
-   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
+   [clojure-lite-lsp.query-fixture :as qf :refer [with-project]]
    [clojure.test :refer [deftest is testing]]))
 
-(def files
-  {"src/app/a.clj" (str "(ns app.a)\n"
-                        "(defn greet [who]\n"
-                        "  (str who who))\n"
-                        "(defn twice [x] (greet x) (greet x))\n"
-                        "(def m {:k 1})\n"
-                        "(:k m)\n")
-   "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/greet 1)\n"})
+(defn- highlights
+  "The occurrences highlighted from the `n`th (default 0th) `needle` in
+  `file`: {[row col] :write or :read}."
+  [proj file needle & {:keys [n] :or {n 0}}]
+  (let [[row col] (qf/at proj file needle n)]
+    (into {}
+          (map (fn [{:keys [pos write?]}] [(subvec pos 0 2) (if write? :write :read)]))
+          (q/highlights (:c proj) (:p proj) (qf/path proj file) row col))))
 
-(defn at [proj needle n] (f/at proj "src/app/a.clj" needle n))
-
-(defn highlights [proj needle n]
-  (let [[row col] (at proj needle n)]
-    (set (map (fn [{:keys [pos write?]}] [(vec (take 2 pos)) (if write? :write :read)])
-              (q/highlights (:c proj) (:p proj) (f/path proj "src/app/a.clj") row col)))))
+(defn- starts
+  "Where each of `needles` first occurs in `file`."
+  [proj file & needles]
+  (set (map #(qf/at proj file %) needles)))
 
 (deftest highlights-are-the-files-own-occurrences
-  (with-project [proj files]
-    (testing "a var: its definition and uses in this file, not other files'"
-      (is (= #{[(at proj "greet [" 0) :write] [(at proj "greet x" 0) :read] [(at proj "greet x" 1) :read]}
-             (highlights proj "greet x" 0)
-             (highlights proj "greet [" 0))))
-    (testing "a local: its binding and uses"
-      (is (= #{[(at proj "who]" 0) :write] [(at proj "who who" 0) :read] [(at proj "who))" 0) :read]}
-             (highlights proj "who who" 0))))
-    (testing "a keyword"
-      (is (= #{[(at proj ":k 1" 0) :read] [(at proj ":k m" 0) :read]}
-             (highlights proj ":k m" 0))))))
+  (with-project [proj {"src/app/a.clj" (str "(ns app.a)\n"
+                                            "(defn greet [who]\n"
+                                            "  (str who who))\n"
+                                            "(defn twice [x] (greet x) (greet x))\n"
+                                            "(def m {:k 1})\n"
+                                            "(:k m)\n")
+                       "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/greet 1)\n"}]
+    (let [at #(qf/at proj "src/app/a.clj" %1 %2)
+          highlights #(highlights proj "src/app/a.clj" %)]
+      (testing "a var: its definition and uses in this file, not other files'"
+        (is (= {(at "greet [" 0) :write (at "greet x" 0) :read (at "greet x" 1) :read}
+               (highlights "greet x")
+               (highlights "greet ["))))
+      (testing "a local: its binding and uses"
+        (is (= {(at "who]" 0) :write (at "who who" 0) :read (at "who))" 0) :read}
+               (highlights "who who"))))
+      (testing "a keyword"
+        (is (= {(at ":k 1" 0) :read (at ":k m" 0) :read}
+               (highlights ":k m")))))))
 
 (deftest a-cljc-local-is-one-local-in-both-languages
   ;; clj-kondo analyzes a .cljc file once per language, giving the same
   ;; local an id in each: its highlights are the uses in both branches
   (with-project [proj {"src/app/c.cljc" "(ns app.c)\n(defn f [x] #?(:clj (inc x) :cljs (dec x)))\n"}]
-    (let [path (f/path proj "src/app/c.cljc")
-          all #{(f/at proj "src/app/c.cljc" "x]") (f/at proj "src/app/c.cljc" "x) :cljs") (f/at proj "src/app/c.cljc" "x)))")}]
-      (doseq [from ["x]" "x) :cljs" "x)))"]
-              :let [[row col] (f/at proj "src/app/c.cljc" from)]]
-        (testing (str "from " from)
-          (is (= all (set (map #(vec (take 2 (:pos %))) (q/highlights (:c proj) (:p proj) path row col))))))))))
+    (doseq [from ["x]" "x) :cljs" "x)))"]]
+      (testing (str "from " from)
+        (is (= (starts proj "src/app/c.cljc" "x]" "x) :cljs" "x)))")
+               (set (keys (highlights proj "src/app/c.cljc" from)))))))))
 
 (deftest highlights-of-a-keys-binding-are-the-locals
   ;; clj-kondo records both a local and a keyword at a :keys binding: the
   ;; cursor there means the local, not every :a in the file
   (with-project [proj {"src/app/k.clj" "(ns app.k)\n(defn f [m] (let [{:keys [a]} m] a))\n(:a {})\n"}]
-    (let [path (f/path proj "src/app/k.clj")
-          [row col] (f/at proj "src/app/k.clj" "a]}")]
-      (is (= #{(f/at proj "src/app/k.clj" "a]}") (f/at proj "src/app/k.clj" "a))")}
-             (set (map #(vec (take 2 (:pos %))) (q/highlights (:c proj) (:p proj) path row col))))))))
+    (is (= (starts proj "src/app/k.clj" "a]}" "a))")
+           (set (keys (highlights proj "src/app/k.clj" "a]}")))))))
 
 (deftest highlights-of-an-alias-are-its-uses
   (with-project [proj {"src/app/s.clj" "(ns app.s (:require [clojure.string :as str]))\n(str/join [])\n(str/blank? \"\")\n"}]
-    (let [path (f/path proj "src/app/s.clj")
-          [row col] (f/at proj "src/app/s.clj" "str]")]
-      (is (= #{(f/at proj "src/app/s.clj" "str]") (f/at proj "src/app/s.clj" "str/join") (f/at proj "src/app/s.clj" "str/blank")}
-             (set (map #(vec (take 2 (:pos %))) (q/highlights (:c proj) (:p proj) path row col))))))))
+    (is (= (starts proj "src/app/s.clj" "str]" "str/join" "str/blank")
+           (set (keys (highlights proj "src/app/s.clj" "str]")))))))

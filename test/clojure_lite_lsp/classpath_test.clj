@@ -15,7 +15,7 @@
 
 (def bb-command ["bb" "-e" "(println (babashka.classpath/get-classpath))"])
 
-(deftest commands-per-build-tool
+(deftest a-command-per-build-tool
   (testing "deps.edn, with only the configured aliases it defines"
     (is (= [["clojure" "-Spath" "-A:dev"]]
            (classpath/commands (project! {"deps.edn" "{:aliases {:dev {} :other {}}}"})
@@ -34,7 +34,7 @@
   (testing "no build file"
     (is (= [] (classpath/commands (project! {}) {:aliases []})))))
 
-(deftest deps-edn-and-bb-edn-together
+(deftest deps-edn-and-bb-edn-both-give-source-dirs
   (with-open [c (db/open-writer (tu/temp-db-path))]
     (let [root (project! {"deps.edn" "{}" "bb.edn" "{}" "src" :dir "bb" :dir})
           run (fn [cmd _dir] (if (= "bb" (first cmd)) "bb" "src"))

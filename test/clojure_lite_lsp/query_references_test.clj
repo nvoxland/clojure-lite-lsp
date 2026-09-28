@@ -1,28 +1,10 @@
 (ns clojure-lite-lsp.query-references-test
   (:require
    [clojure-lite-lsp.query :as q]
-   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
+   [clojure-lite-lsp.query-fixture :as qf :refer [implementations locs references with-project]]
    [clojure.test :refer [deftest is testing]]))
 
-(defn references
-  "Find references from the `n`th occurrence of `needle` in `file`, as a
-  set of [file [row col]]."
-  [proj file needle & {:keys [n include-declaration?]}]
-  (let [[row col] (f/at proj file needle (or n 0))]
-    (set (map #(f/rel proj %)
-              (q/references (:c proj) (:p proj) (f/path proj file) row col
-                            {:include-declaration? include-declaration?})))))
-
-(defn implementations [proj file needle]
-  (let [[row col] (f/at proj file needle)]
-    (set (map #(f/rel proj %) (q/implementations (:c proj) (:p proj) (f/path proj file) row col)))))
-
-(defn locs
-  "[file needle n] triples to a set of [file [row col]]."
-  [proj & specs]
-  (set (for [[file needle n] specs] [file (f/at proj file needle (or n 0))])))
-
-(deftest var-references
+(deftest every-way-of-reaching-a-var-is-a-reference
   (with-project [proj {"src/a.clj" "(ns a)\n(defn f [] 1)\n(defn g [] (f))"
                        "src/b.clj" "(ns b (:require [a :as al] [a :refer [f]]))\n(al/f) (f) (a/f) 'a/f"}]
     ;; a usage's position is the whole symbol as written: al/f starts at "al"
@@ -32,7 +14,7 @@
         (is (= usages (references proj "src/a.clj" "f [")))
         (is (= usages (references proj "src/b.clj" "al/f"))))
       (testing "with the declaration"
-        (is (= (conj usages ["src/a.clj" (f/at proj "src/a.clj" "f [")])
+        (is (= (conj usages ["src/a.clj" (qf/at proj "src/a.clj" "f [")])
                (references proj "src/b.clj" "al/f" :include-declaration? true)))))))
 
 (deftest recursion-counts-only-with-the-declaration
@@ -46,25 +28,25 @@
     (is (every? (references proj "src/a.clj" "R [")
                 (locs proj ["src/a.clj" "->R"] ["src/a.clj" "map->R"])))))
 
-(deftest keyword-references
+(deftest a-keywords-uses-are-its-references
   (with-project [proj {"src/a.clj" "(ns a (:require [re-frame.core :as rf]))\n(rf/reg-event-db ::save identity)\n(::save {})"
                        "src/b.clj" "(ns b (:require [a]))\n(:a/save {}) (:other {})"}]
     (is (= (locs proj ["src/a.clj" "::save" 1] ["src/b.clj" ":a/save"])
            (references proj "src/b.clj" ":a/save")))))
 
-(deftest local-references
+(deftest a-locals-uses-are-its-references
   (with-project [proj {"src/a.clj" "(ns a)\n(defn f [x] (let [x2 x] (+ x x2)))"}]
     (is (= (locs proj ["src/a.clj" "x]" 1] ["src/a.clj" "x x2"])
            (references proj "src/a.clj" "x]")))))
 
-(deftest namespace-references
+(deftest a-namespaces-requires-are-its-references
   (with-project [proj {"src/a.clj" "(ns a)"
                        "src/b.clj" "(ns b (:require [a :as al]))"
                        "src/c.clj" "(ns c (:require [a]))"}]
     (is (= (locs proj ["src/b.clj" "a :as"] ["src/b.clj" "al]"] ["src/c.clj" "a]"])
            (references proj "src/a.clj" "a)")))))
 
-(deftest alias-references
+(deftest an-aliases-uses-are-in-its-file
   ;; an alias is the file's: its uses there, not the namespace's references
   (with-project [proj {"src/a.clj" "(ns a) (defn f [] 1) (defn g [] 2)"
                        "src/b.clj" "(ns b (:require [a :as al]))\n(al/f) (al/g) ::al/k"
@@ -75,14 +57,14 @@
       (is (= (locs proj ["src/b.clj" "al]"] ["src/b.clj" "al/f"] ["src/b.clj" "al/g"] ["src/b.clj" "::al/k"])
              (references proj "src/b.clj" "al]" :include-declaration? true))))))
 
-(deftest protocol-implementations
+(deftest a-protocols-implementations
   (with-project [proj {"src/a.clj" "(ns a)\n(defprotocol P (m [this]))\n(defrecord R [] P (m [this] 1))\n(extend-protocol P String (m [s] 2))\n(m (->R))"}]
     (let [impls (locs proj ["src/a.clj" "m [this] 1"] ["src/a.clj" "m [s]"])]
       (is (= impls (implementations proj "src/a.clj" "m [this]")))
       (testing "from a call"
         (is (= impls (implementations proj "src/a.clj" "m (->R")))))))
 
-(deftest multimethod-implementations
+(deftest a-multimethods-methods-are-its-implementations
   (with-project [proj {"src/a.clj" "(ns a)\n(defmulti mm :type)\n(defmethod mm :x [_] 1)\n(defmethod mm :y [_] 2)\n(mm {})"}]
     (is (= (locs proj ["src/a.clj" "mm :x"] ["src/a.clj" "mm :y"])
            (implementations proj "src/a.clj" "mm :type")))))

@@ -22,7 +22,7 @@
                  :out out :opts o :cwd cwd})
     (mapv #(json/parse-string % true) (str/split-lines (.toString out "UTF-8")))))
 
-(deftest tools-for-agents
+(deftest the-query-commands-are-tools
   (with-in-process-daemons [o _ _]
     (let [root (build-free-project! {"src/app/a.clj" "(ns app.a)\n(defn greet [who] who)\n"
                                      "src/app/b.clj" "(ns app.b (:require [app.a :as a]))\n(a/greet 1)\n"})
@@ -51,7 +51,7 @@
 (defn- tool-call [id name arguments]
   {:jsonrpc "2.0" :id id :method "tools/call" :params {:name name :arguments arguments}})
 
-(deftest protocol-details
+(deftest the-protocols-other-requests
   (with-in-process-daemons [o _ _]
     (let [root (build-free-project! {"src/app/a.clj" "(ns app.a)\n(defn greet [who] who)\n(greet 1) (greet 2)\n"})
           [ping unknown batch limited]

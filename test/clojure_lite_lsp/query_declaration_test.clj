@@ -2,20 +2,14 @@
   "Go to declaration: where the file brings a name in (its require), where
   go to definition goes to where it's defined."
   (:require
-   [clojure-lite-lsp.query :as q]
-   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
-   [clojure-lite-lsp.query-references-test :refer [locs]]
+   [clojure-lite-lsp.query-fixture :as qf :refer [declaration locs with-project]]
    [clojure.test :refer [deftest is testing]]))
-
-(defn declaration [proj file needle & [n]]
-  (let [[row col] (f/at proj file needle (or n 0))]
-    (set (map #(f/rel proj %) (q/declaration (:c proj) (:p proj) (f/path proj file) row col)))))
 
 (def files
   {"src/a.clj" "(ns a) (defn f [] 1) (defn g [] 2)"
    "src/b.clj" "(ns b (:require [a :as al] [a :refer [f]]))\n(al/f) (f) (a/g) (defn h [] (h)) ::al/k"})
 
-(deftest declarations
+(deftest a-declaration-is-where-the-file-brings-a-name-in
   (with-project [proj files]
     (testing "through an alias: the alias"
       (is (= (locs proj ["src/b.clj" "al]"]) (declaration proj "src/b.clj" "al/f"))))

@@ -2,9 +2,7 @@
   "A namespace with a .clj and a .cljs file: answers keep to the language
   asked about."
   (:require
-   [clojure-lite-lsp.query :as q]
-   [clojure-lite-lsp.query-fixture :as f :refer [with-project]]
-   [clojure-lite-lsp.query-references-test :refer [references locs]]
+   [clojure-lite-lsp.query-fixture :as qf :refer [definition locs references with-project]]
    [clojure.test :refer [deftest is testing]]))
 
 (def files
@@ -14,10 +12,6 @@
    "src/app/b.cljs" "(ns app.b (:require [app.util :as u]))\n(u/fmt 2)"
    "src/app/m.clj" "(ns app.m)\n(defmacro mac [x] x)"
    "src/app/c.cljs" "(ns app.c (:require-macros [app.m :as m]))\n(m/mac 1)"})
-
-(defn definition [proj file needle & [offset]]
-  (let [[row col] (f/at proj file needle)]
-    (set (map #(f/rel proj %) (q/definition (:c proj) (:p proj) (f/path proj file) row (+ col (or offset 0)))))))
 
 (deftest references-keep-to-their-language
   (with-project [proj files]
@@ -38,13 +32,13 @@
   ;; editors put the cursor between characters: right after the name is
   ;; still on it
   (with-project [proj files]
-    (is (= (locs proj ["src/app/util.clj" "fmt ["]) (definition proj "src/app/a.clj" "u/fmt" (count "u/fmt"))))))
+    (is (= (locs proj ["src/app/util.clj" "fmt ["]) (definition proj "src/app/a.clj" "u/fmt" :offset (count "u/fmt"))))))
 
 (deftest namespace-references-cross-languages-only-where-the-namespace-doesnt
   (with-project [proj files]
     (testing "a clj-only macro namespace: cljs files requiring its macros use it"
       (is (contains? (references proj "src/app/m.clj" "app.m")
-                     ["src/app/c.cljs" (f/at proj "src/app/c.cljs" "app.m")])))
+                     ["src/app/c.cljs" (qf/at proj "src/app/c.cljs" "app.m")])))
     (testing "a namespace with a file per language: each keeps its own"
       (is (= #{"src/app/a.clj"} (set (map first (references proj "src/app/util.clj" "app.util")))))
       (is (= #{"src/app/b.cljs"} (set (map first (references proj "src/app/util.cljs" "app.util"))))))))

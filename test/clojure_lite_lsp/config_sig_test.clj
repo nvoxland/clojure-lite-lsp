@@ -24,7 +24,7 @@
 
 (defn with-config [f] (update base-config "config.edn" #(pr-str (f (read-string %)))))
 
-(deftest identical-configs
+(deftest identical-configs-differ-in-nothing
   (is (= {:global-same? true :custom-changed #{} :changed #{}} (diff base-config base-config))))
 
 (deftest a-lint-as-change-is-that-symbol
@@ -119,7 +119,7 @@
     (is (= #{"acme/one" "acme/two"}
            (:changed (diff (cfg "(ns hooks.util)") (cfg "(ns hooks.util) (defn h [])")))))))
 
-(deftest the-one-linter-analysis-uses-counts
+(deftest unresolved-namespace-settings-change-the-signature
   ;; csl keeps :unresolved-namespace findings: its settings change results
   (is (false? (:global-same? (diff base-config
                                    (with-config #(assoc-in % [:linters :unresolved-namespace :exclude] '[foo])))))))

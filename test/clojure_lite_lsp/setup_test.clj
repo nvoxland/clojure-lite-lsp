@@ -141,7 +141,7 @@
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Not a directory"
                         (setup/setup! {:agent "codex" :dir "/no/such/dir" :home (str (tu/temp-dir))}))))
 
-(deftest setup-arguments
+(deftest setup-parses-its-arguments
   (is (= {:agents ["claude" "codex"] :dir "x" :index? false}
          (setup/parse-args ["--agent" "claude,codex" "x" "--no-index"])))
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown option" (setup/parse-args ["--agent" "claude" "--no-sync"])))

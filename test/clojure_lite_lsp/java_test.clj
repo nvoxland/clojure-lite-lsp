@@ -7,7 +7,7 @@
 
 (def widget "package acme;\n\n/** A widget. */\npublic class Widget {\n  public static class Part {}\n}\n")
 
-(deftest project-java-sources
+(deftest a-projects-own-java-sources
   (let [root (project! {"java/acme/Widget.java" widget})]
     (is (= [(str root "/java/acme/Widget.java") [4 14]]
            ((juxt :path (comp vec (partial take 2) :pos))
@@ -28,7 +28,7 @@
       (is (= widget (slurp path)))
       (is (= [4 14] (vec (take 2 pos)))))))
 
-(deftest jdk-sources
+(deftest the-jdks-own-classes-in-src-zip
   (let [src-zip (jar! {"java.base/java/io/File.java" "package java.io;\n\npublic class File {}\n"})
         {:keys [path pos]} (java/source-location {:home (str (tu/temp-dir)) :jdk-src src-zip} "java.io.File")]
     (is (.endsWith ^String path "/java.base/java/io/File.java"))

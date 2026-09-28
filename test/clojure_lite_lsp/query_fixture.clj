@@ -5,6 +5,7 @@
   (:require
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.indexer :as indexer]
+   [clojure-lite-lsp.query :as q]
    [clojure-lite-lsp.queue :as queue]
    [clojure-lite-lsp.snapshot :as snapshot]
    [clojure-lite-lsp.test-util :as tu :refer [project!]]
@@ -21,7 +22,7 @@
   unless given). Returns {:root :p :c}, :c a read-only connection."
   [files]
   (let [{:keys [db-path indexer]} @shared
-        root (project! (merge {"deps.edn" "{:paths [\"src\"]}"} files))
+        root (project! (merge tu/src-deps files))
         p (snapshot/ensure-project! (:c indexer) root)]
     (queue/enqueue! (:c indexer) p :sync "" 1)
     (indexer/run-until-idle! indexer)
@@ -55,3 +56,26 @@
   [{:keys [root]} {:keys [path entry pos]}]
   (when path
     [(if entry entry (subs path (inc (count root)))) (vec (take 2 pos))]))
+
+(defn locs
+  "Where the `n`th (default 0th) occurrence of each `needle` starts, from
+  [file needle n] specs: a set of [file [row col]], as `ask` answers."
+  [proj & specs]
+  (set (for [[file needle n] specs] [file (at proj file needle (or n 0))])))
+
+(defn ask
+  "Run (query c p path row col & args) at the `n`th (default 0th)
+  occurrence of `needle` in `file`, `offset` columns into it: the
+  locations it answers, as a set of [file [row col]]."
+  [proj query file needle & {:keys [n offset args] :or {n 0 offset 0}}]
+  (let [[row col] (at proj file needle n)]
+    (set (map #(rel proj %) (apply query (:c proj) (:p proj) (path proj file) row (+ col offset) args)))))
+
+(defn definition [proj file needle & {:as opts}] (ask proj q/definition file needle opts))
+(defn declaration [proj file needle & {:as opts}] (ask proj q/declaration file needle opts))
+(defn implementations [proj file needle & {:as opts}] (ask proj q/implementations file needle opts))
+
+(defn references
+  "`ask` for references; `include-declaration?` as LSP's."
+  [proj file needle & {:keys [include-declaration?] :as opts}]
+  (ask proj q/references file needle (assoc opts :args [{:include-declaration? include-declaration?}])))

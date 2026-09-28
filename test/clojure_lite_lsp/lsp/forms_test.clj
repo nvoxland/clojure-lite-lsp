@@ -42,12 +42,12 @@
     (is (nil? (ctx "((f) |")) "a head that isn't a symbol")
     (is (nil? (ctx "(f x) |")) "after the call")))
 
-(deftest arglist-parameters
+(deftest arglist-parameters-by-name
   (is (= {:params ["a" "b" "more"] :variadic 2} (forms/arglist-params "[a b & more]")))
   (is (= {:params ["{:keys [a b]}" "c"] :variadic nil} (forms/arglist-params "[{:keys [a b]} c]")))
   (is (= {:params [] :variadic nil} (forms/arglist-params "[]"))))
 
-(deftest dispatch-forms
+(deftest a-dispatch-form-is-one-form
   (is (= ["f" 1] (ctx "(f #_(g 1) x |")) "a discarded form isn't an argument")
   (is (= ["f" 1] (ctx "(f #_ #_ a b x |")) "nor are two")
   (is (= ["f" 1] (ctx "(f #?(:clj a :cljs b) |")) "a reader conditional is one")
