@@ -1,10 +1,13 @@
 (ns clojure-lite-lsp.cli
-  "Commands for humans: `clojure-lite-lsp index <dir>...` indexes projects and waits
+  "The commands besides the servers: `index` indexes projects and waits
   until they are done (e.g. from a hook that creates a worktree, so an
-  editor opened on it finds its index ready), and `clojure-lite-lsp gc` collects
-  garbage now. Both go through the daemon, the index's only writer."
+  editor opened on it finds its index ready), `gc` collects garbage now,
+  `stop` stops the indexer, and `query` answers the query commands
+  (clojure-lite-lsp.commands). All go through the daemon, the index's only
+  writer."
   (:require
    [cheshire.core :as json]
+   [clojure-lite-lsp.classpath :as classpath]
    [clojure-lite-lsp.client :as client]
    [clojure-lite-lsp.commands :as commands]
    [clojure-lite-lsp.db :as db]
@@ -15,14 +18,26 @@
    [clojure-lite-lsp.snapshot :as snapshot]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
-   [clojure.string :as str]))
+   [clojure.string :as str])
+  (:import
+   [java.io File]))
 
 (set! *warn-on-reflection* true)
 
 (def ^:private poll-ms 200)
 
-(defn- keep-daemon!
-  "Start a daemon again should it have gone (it crashed, or was replaced)."
+(def ^:private gc-timeout-ms
+  "How long `gc!` waits for the daemon to collect."
+  (* 30 60 1000))
+
+(def ^:private stop-timeout-ms
+  "How long `stop!` waits for the daemon to finish its batch."
+  60000)
+
+(defn- revive-daemon!
+  "Start a daemon again should it have gone while waiting on it (it
+  crashed, or was replaced): a lock probe first, which is cheaper than
+  `client/ensure-daemon!`'s database check."
   [opts]
   (when-not (lock/held? (:daemon-lock (home/paths (:home opts))))
     (client/ensure-daemon! opts)))
@@ -52,7 +67,7 @@
                                                               WHERE project_id = ? AND unit_id IS NOT NULL" %))
              :pending (into {} (filter (comp pos? val)) pending)}
             (do (Thread/sleep (long poll-ms))
-                (keep-daemon! opts)
+                (revive-daemon! opts)
                 (recur deadline))))))))
 
 (defn gc!
@@ -62,15 +77,16 @@
   [opts]
   (client/ensure-daemon! opts)
   (with-open [c (db/open-client (:db (home/paths (:home opts))))]
-    (let [request (str (random-uuid))]
+    (let [request (str (random-uuid))
+          answered #(db/query-value c "SELECT value FROM meta WHERE key = ?" (schema/gc-result-key request))]
       (db/execute! c "INSERT INTO meta (key, value) VALUES (?, '')" (schema/gc-request-key request))
-      (loop []
-        (if-let [result (db/query-value c "SELECT value FROM meta WHERE key = ?" (schema/gc-result-key request))]
-          (do (db/execute! c "DELETE FROM meta WHERE key = ?" (schema/gc-result-key request))
-              (edn/read-string result))
-          (do (Thread/sleep (long poll-ms))
-              (keep-daemon! opts)
-              (recur)))))))
+      (if-let [result (lock/poll (fn []
+                                   (or (answered)
+                                       (do (revive-daemon! opts) nil)))
+                                 gc-timeout-ms poll-ms)]
+        (do (db/execute! c "DELETE FROM meta WHERE key = ?" (schema/gc-result-key request))
+            (edn/read-string result))
+        (throw (ex-info "The indexer didn't collect garbage within 30 minutes" {}))))))
 
 (defn stop!
   "Stop the indexer, once it finishes its batch: :stopped, or
@@ -79,25 +95,23 @@
   (let [{:keys [db daemon-lock]} (home/paths home)]
     (if-not (lock/held? daemon-lock)
       :not-running
-      (with-open [c (db/open-client db)]
-        (client/request-stop! c)
-        (loop [n 0]
-          (cond (not (lock/held? daemon-lock)) :stopped
-                (< n 3000) (do (Thread/sleep 20) (recur (inc n)))
-                :else (throw (ex-info "The indexer didn't stop within a minute" {}))))))))
+      (do (with-open [c (db/open-client db)]
+            (client/request-stop! c))
+          (if (lock/poll #(not (lock/held? daemon-lock)) stop-timeout-ms)
+            :stopped
+            (throw (ex-info "The indexer didn't stop within a minute" {})))))))
 
 ;;;; query
-
-(def ^:private project-markers ["deps.edn" "project.clj" "bb.edn" ".clojure-lite-lsp.edn"])
 
 (defn project-root
   "The project `dir` is in: the nearest directory, `dir` or above, with a
   build file, or nil."
   [dir]
-  (let [start (.getCanonicalFile (io/file dir))]
-    (some-> ^java.io.File (first (filter (fn [^java.io.File d] (some #(.isFile (io/file d ^String %)) project-markers))
-                                         (take-while some? (iterate #(.getParentFile ^java.io.File %) start))))
-            .getPath)))
+  (->> (iterate #(.getParentFile ^File %) (.getCanonicalFile (io/file dir)))
+       (take-while some?)
+       (some (fn [^File d]
+               (when (some #(.isFile (io/file d ^String %)) classpath/build-files)
+                 (.getPath d))))))
 
 (defn- parse-query-args
   "{:args [command argument] :json? :sync? :project :limit}."
@@ -114,6 +128,22 @@
       (str/starts-with? a "--") (throw (ex-info (str "Unknown option: " a) {:usage true}))
       :else (recur more (update acc :args conj a)))))
 
+(defn- fail!
+  "Stop `query!` with `message` (exit 1)."
+  [message]
+  (throw (ex-info message {})))
+
+(defn- query-root
+  "The project a query is about: `project`, else the one `cwd` is in."
+  [cwd project]
+  (if project
+    (if (.isDirectory (io/file project))
+      (or (project-root project) (.getCanonicalPath (io/file project)))
+      (fail! (str "Not a directory: " project)))
+    (or (project-root cwd)
+        (fail! (str "Not in a Clojure project: no " (str/join ", " classpath/build-files)
+                    " in " cwd " or above (--project <dir> names one)")))))
+
 (defn query!
   "Run `clojure-lite-lsp query` with `args`, in directory `cwd`: {:exit
   :out}. The project is brought up to date first (unless --no-sync), so
@@ -127,29 +157,22 @@
           [cmd] args]
       (if (or (nil? cmd) (#{"help" "--help" "-h"} cmd))
         {:exit 0 :out (commands/help)}
-        (let [root (if project
-                     (do (when-not (.isDirectory (io/file project))
-                           (throw (ex-info (str "Not a directory: " project) {})))
-                         (or (project-root project) (.getCanonicalPath (io/file project))))
-                     (project-root cwd))]
-          (if-not root
-            {:exit 1 :out (str "Not in a Clojure project: no deps.edn, project.clj, bb.edn or "
-                               ".clojure-lite-lsp.edn in " cwd " or above (--project <dir> names one)")}
-            (let [{:keys [pending]} (when sync? (index! opts [root] (fn [_]) {:deadline-ms deadline-ms}))
-                  {:keys [db]} (home/paths (:home opts))
-                  note (when (seq pending)
-                         (str "(clojure-lite-lsp is still indexing " root ": " (reduce + (vals pending))
-                              " to go; answers may be incomplete)\n"))]
-              (if-not (.isFile (io/file db))
-                {:exit 1 :out (str "No index yet: run clojure-lite-lsp index " root)}
-                (with-open [c (db/open-reader db)]
-                  (if-let [p (db/query-value c "SELECT id FROM project WHERE root = ?" root)]
-                    (let [ctx {:c c :p p :root root :home (:home opts) :cwd (.getCanonicalPath (io/file cwd))}
-                          result (commands/run ctx args {:limit limit})]
-                      {:exit 0 :out (if json?
-                                      (json/generate-string (cond-> result note (assoc :note (str/trim note))))
-                                      (str note (commands/format-text ctx cmd result)))})
-                    {:exit 1 :out (str root " isn't indexed yet: run clojure-lite-lsp index " root)}))))))))
+        (let [root (query-root cwd project)
+              {:keys [pending]} (when sync? (index! opts [root] (constantly nil) {:deadline-ms deadline-ms}))
+              {:keys [db]} (home/paths (:home opts))
+              note (when (seq pending)
+                     (str "(clojure-lite-lsp is still indexing " root ": " (reduce + (vals pending))
+                          " to go; answers may be incomplete)"))]
+          (when-not (.isFile (io/file db))
+            (fail! (str "No index yet: run clojure-lite-lsp index " root)))
+          (with-open [c (db/open-reader db)]
+            (let [p (or (db/query-value c "SELECT id FROM project WHERE root = ?" root)
+                        (fail! (str root " isn't indexed yet: run clojure-lite-lsp index " root)))
+                  ctx {:c c :p p :root root :home (:home opts) :cwd (.getCanonicalPath (io/file cwd))}
+                  result (commands/run ctx args {:limit limit})]
+              {:exit 0 :out (if json?
+                              (json/generate-string (cond-> result note (assoc :note note)))
+                              (str (some-> note (str "\n")) (commands/format-text ctx cmd result)))})))))
     (catch clojure.lang.ExceptionInfo e
       (if (:usage (ex-data e))
         {:exit 2 :out (str (ex-message e) "\n\n" (commands/help))}

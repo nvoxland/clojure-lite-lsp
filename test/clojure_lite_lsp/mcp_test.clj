@@ -19,7 +19,7 @@
   [o cwd messages]
   (let [out (ByteArrayOutputStream.)]
     (mcp/serve! {:in (ByteArrayInputStream. (.getBytes (str (str/join "\n" (map json/generate-string messages)) "\n") "UTF-8"))
-               :out out :opts o :cwd cwd})
+                 :out out :opts o :cwd cwd})
     (mapv #(json/parse-string % true) (str/split-lines (.toString out "UTF-8")))))
 
 (deftest tools-for-agents
@@ -74,8 +74,8 @@
             (is (clojure.string/includes? (get-in r [:result :content 0 :text]) "boom")))))
       (testing "a call doesn't wait past its deadline for indexing: it answers, and says so"
         (with-redefs [cli/index! (fn [_ dirs _ & [{:keys [deadline-ms]}]]
-                                                    (is deadline-ms)
-                                                    {:files {} :pending {(first dirs) 7}})]
+                                   (is deadline-ms)
+                                   {:files {} :pending {(first dirs) 7}})]
           (let [[r] (session o root [{:jsonrpc "2.0" :id 1 :method "tools/call" :params {:name "definition" :arguments {:target "app.a/greet"}}}])]
             (is (clojure.string/includes? (get-in r [:result :content 0 :text]) "still indexing")))))
       (finally (stop! h daemons)))))

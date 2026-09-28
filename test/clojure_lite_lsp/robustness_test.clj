@@ -36,9 +36,9 @@
         most (atom 0)
         real @#'hooks/hook-fn*]
     (with-redefs [hooks/hook-fn* (fn [& args]
-                                                  (swap! most max (swap! active inc))
-                                                  (try (Thread/sleep 20) (apply real args)
-                                                       (finally (swap! active dec))))]
+                                   (swap! most max (swap! active inc))
+                                   (try (Thread/sleep 20) (apply real args)
+                                        (finally (swap! active dec))))]
       (reset! @#'kondo-hooks/hooks-config nil)
       (analyze/analyze-files (vec (for [i (range 16)] (str root "/src/app/f" i ".clj")))
                              {:config cfg :mode :project :shards 8}))
@@ -57,8 +57,8 @@
         lookups (atom 0)
         real @#'hooks/hook-fn*]
     (with-redefs [hooks/hook-fn* (fn [ctx config ns-sym var-sym & more]
-                                                  (when (= 'named (symbol (name var-sym))) (swap! lookups inc))
-                                                  (apply real ctx config ns-sym var-sym more))]
+                                   (when (= 'named (symbol (name var-sym))) (swap! lookups inc))
+                                   (apply real ctx config ns-sym var-sym more))]
       (reset! @#'kondo-hooks/hooks-config nil)
       (let [res (analyze/analyze-files (vec (for [i (range 16)] (str root "/src/app/f" i ".clj")))
                                        {:config cfg :mode :project :shards 8})]

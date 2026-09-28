@@ -185,22 +185,22 @@
   ([c p root] (memoized! c p root {}))
   ([c p root {:keys [run] :or {run run-command}}]
    (let [cfg (project-config root)]
-    (try
-      (let [cmds (commands root cfg)
-            h (spec-hash root cmds)
-            raw (or (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ? AND spec_hash = ?" p h)
-                    (let [raw (run-all root cmds run)]
-                      (db/with-tx c
-                        (db/execute! c "DELETE FROM classpath_memo WHERE project_id = ?" p)
-                        (db/execute! c "INSERT INTO classpath_memo (project_id, spec_hash, classpath) VALUES (?, ?, ?)"
-                                     p h raw))
-                      raw))]
-        (db/execute! c "DELETE FROM meta WHERE key = ?" (error-key p))
-        (classify root (parse raw) cfg))
-      (catch Exception e
-        (log/warn "classpath of" root "failed:" (ex-message e))
-        (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)" (error-key p) (str (ex-message e)))
+     (try
+       (let [cmds (commands root cfg)
+             h (spec-hash root cmds)
+             raw (or (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ? AND spec_hash = ?" p h)
+                     (let [raw (run-all root cmds run)]
+                       (db/with-tx c
+                         (db/execute! c "DELETE FROM classpath_memo WHERE project_id = ?" p)
+                         (db/execute! c "INSERT INTO classpath_memo (project_id, spec_hash, classpath) VALUES (?, ?, ?)"
+                                      p h raw))
+                       raw))]
+         (db/execute! c "DELETE FROM meta WHERE key = ?" (error-key p))
+         (classify root (parse raw) cfg))
+       (catch Exception e
+         (log/warn "classpath of" root "failed:" (ex-message e))
+         (db/execute! c "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)" (error-key p) (str (ex-message e)))
         ;; the last one that worked, else the usual source dirs
-        (if-let [last-good (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
-          (classify root (parse last-good) cfg)
-          (classify root (map #(str (io/file root %)) (fallback-paths root)) cfg)))))))
+         (if-let [last-good (db/query-value c "SELECT classpath FROM classpath_memo WHERE project_id = ?" p)]
+           (classify root (parse last-good) cfg)
+           (classify root (map #(str (io/file root %)) (fallback-paths root)) cfg)))))))

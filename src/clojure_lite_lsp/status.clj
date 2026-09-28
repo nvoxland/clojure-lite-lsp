@@ -24,13 +24,13 @@
   daemon holds its lock (its row outlives a crash)."
   ([c] (data c {:daemon-alive? true}))
   ([c {:keys [daemon-alive?]}]
-  (let [[pid version heartbeat] (first (db/query c "SELECT pid, version, heartbeat_at FROM daemon WHERE id = 1"))]
-    {:daemon (when (and pid daemon-alive?) {:pid pid :version version
-                        :heartbeat-age-s (quot (- (System/currentTimeMillis) heartbeat) 1000)})
-     :index {:units (db/query-value c "SELECT count(*) FROM unit")
-             :jars (db/query-value c "SELECT count(*) FROM jar")
-             :opened-library-files (db/query-value c "SELECT count(*) FROM dep_file")}
-     :projects (mapv #(project-data c %) (db/query c "SELECT id, root, last_seen FROM project ORDER BY root"))})))
+   (let [[pid version heartbeat] (first (db/query c "SELECT pid, version, heartbeat_at FROM daemon WHERE id = 1"))]
+     {:daemon (when (and pid daemon-alive?) {:pid pid :version version
+                                             :heartbeat-age-s (quot (- (System/currentTimeMillis) heartbeat) 1000)})
+      :index {:units (db/query-value c "SELECT count(*) FROM unit")
+              :jars (db/query-value c "SELECT count(*) FROM jar")
+              :opened-library-files (db/query-value c "SELECT count(*) FROM dep_file")}
+      :projects (mapv #(project-data c %) (db/query c "SELECT id, root, last_seen FROM project ORDER BY root"))})))
 
 (defn print!
   "Print status `data` for people. `file-mb` is the index's size on disk."

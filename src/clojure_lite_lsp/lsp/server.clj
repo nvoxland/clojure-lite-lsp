@@ -13,6 +13,7 @@
    [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.java :as java]
    [clojure-lite-lsp.lock :as lock]
+   [clojure-lite-lsp.log :as log]
    [clojure-lite-lsp.lsp.buffers :as buffers]
    [clojure-lite-lsp.lsp.convert :as convert]
    [clojure-lite-lsp.lsp.forms :as forms]
@@ -25,7 +26,9 @@
    [clojure.java.io :as io]
    [clojure.string :as str])
   (:import
-   [java.io File]))
+   [java.io File]
+   [java.sql Connection]
+   [java.util Arrays]))
 
 (set! *warn-on-reflection* true)
 
@@ -34,10 +37,17 @@
   Editors send paths as the project was opened, possibly through symlinks;
   the index has canonical ones."
   [uri]
-  (some-> ^String (convert/uri->path uri) (File.) (.getCanonicalPath)))
+  (some-> (convert/uri->path uri) (File.) (.getCanonicalPath)))
 
-(defn- log [& xs]
-  (binding [*out* *err*] (apply println "clojure-lite-lsp:" xs)))
+(defn- notify!
+  "Send the client a notification."
+  [{:keys [send!]} method params]
+  (send! {:jsonrpc "2.0" :method method :params params}))
+
+(defn- request!
+  "Send the client a request (its response is ignored)."
+  [{:keys [send!]} id method params]
+  (send! {:jsonrpc "2.0" :id id :method method :params params}))
 
 ;;;; projects and work
 
@@ -49,11 +59,12 @@
   (if-let [{:keys [jar-hash-hex]} (sources/source-of (:home opts) path)]
     (let [ps (set (map first (db/query @reader "SELECT pj.project_id FROM project_jar pj JOIN jar j ON j.id = pj.jar_id
                                                 WHERE j.jar_hash = ?" (digest/unhex jar-hash-hex))))]
-      (first (filter #(ps (:p %)) @projects)))
-    (->> (when path @projects)
-         (filter #(or (= (:root %) path) (str/starts-with? path (str (:root %) File/separator))))
-         (sort-by (comp - count :root))
-         first)))
+      (some #(when (ps (:p %)) %) @projects))
+    (when path
+      (->> @projects
+           (filter #(or (= (:root %) path) (str/starts-with? path (str (:root %) File/separator))))
+           (sort-by (comp - count :root))
+           first))))
 
 (defn- dep-file? [{:keys [opts]} path] (some? (sources/source-of (:home opts) path)))
 
@@ -64,33 +75,32 @@
   (queue/enqueue! @client-c p kind path priority)
   (client/ensure-daemon! opts))
 
-(def ^:private build-files #{"deps.edn" "project.clj" "bb.edn" ".clojure-lite-lsp.edn"})
+(def ^:private build-files (set classpath/build-files))
 
 (defn- build-file?
   "Does a change to `path` change project `root`'s classpath or clj-kondo
   config (hooks included)?"
   [root path]
-  (or (and (build-files (.getName (io/file path)))
-           (= (str (io/file root (.getName (io/file path)))) path))
-      (str/starts-with? path (str root File/separator ".clj-kondo" File/separator))))
+  (let [f (io/file path)]
+    (or (and (build-files (.getName f)) (= root (.getParent f)))
+        (str/starts-with? path (str (io/file root ".clj-kondo") File/separator)))))
 
 (defn- projects-with
-  "The projects `path` is part of: its own (by root), and any other that
-  has it (a :local/root dependency's file)."
-  [{:keys [reader] :as state} path]
-  (let [own (project-of state path)]
-    (distinct (concat (some-> own :p vector)
-                      (map first (db/query @reader "SELECT DISTINCT project_id FROM project_file WHERE path = ?" path))))))
+  "The projects `path` is part of: `own` (its project by root, or nil), and
+  any other that has it (a :local/root dependency's file)."
+  [{:keys [reader]} own path]
+  (distinct (concat (some-> own :p vector)
+                    (map first (db/query @reader "SELECT DISTINCT project_id FROM project_file WHERE path = ?" path)))))
 
 (defn- file-changed! [{:keys [buffers] :as state} path deleted?]
   ;; an open document's file rewritten outside the editor
   (when (and (not deleted?) (contains? @buffers path) (.isFile (io/file path)))
     (buffers/changed-on-disk! buffers path (slurp path)))
-  (when-let [{:keys [p root]} (project-of state path)]
-    (when (build-file? root path)
-      (enqueue! state p :sync "" 1)))
-  (doseq [p (projects-with state path)]
-    (enqueue! state p (if deleted? :delete :file) path 1)))
+  (let [{:keys [p root] :as own} (project-of state path)]
+    (when (and own (build-file? root path))
+      (enqueue! state p :sync "" 1))
+    (doseq [p (projects-with state own path)]
+      (enqueue! state p (if deleted? :delete :file) path 1))))
 
 ;;;; positions and results
 
@@ -105,7 +115,7 @@
   "A result location with its position mapped into the open buffer of its
   file, or nil when that position was edited away."
   [{:keys [buffers]} {:keys [path entry pos] :as loc}]
-  (if (or entry (nil? pos) (not (every? some? pos)))
+  (if (or entry (nil? pos) (not-every? some? pos))
     loc
     (some->> (buffers/->buffer buffers path pos) (assoc loc :pos))))
 
@@ -120,8 +130,14 @@
        (assoc (dissoc loc :entry :jar-hash) :path path))
      loc)))
 
-(defn- lsp-location [{:keys [opts] :as state} loc]
-  (some-> (as-file state loc) (convert/location opts)))
+(defn- lsp-location
+  "Location `loc` as an LSP Location: extracted from its jar (`extract`,
+  as `as-file`), and mapped into its open buffer. nil when either can't be
+  done."
+  ([state loc] (lsp-location state loc sources/extract!))
+  ([{:keys [opts] :as state} loc extract]
+   (when-let [loc (some->> (as-file state loc extract) (in-buffer state))]
+     (convert/location loc opts))))
 
 (defn- resolve-java
   "A {:java-class} result as the location of its source, or nil."
@@ -131,15 +147,11 @@
     loc))
 
 (defn- lsp-locations [state p locs]
-  (->> locs
-       (keep #(resolve-java state p %))
-       (keep #(as-file state %))
-       (keep #(in-buffer state %))
-       (keep #(lsp-location state %))
-       vec))
+  (into [] (keep #(some->> (resolve-java state p %) (lsp-location state))) locs))
 
 (defn- with-project
-  "Call (f c p path row col) for a text-position request, or return `none`."
+  "Call (f c p path row col) for a text-position request, `c` the reader
+  connection, or return `none`."
   [state params none f]
   (if-let [[path row col] (text-position state params)]
     (if-let [{:keys [p]} (project-of state path)]
@@ -147,14 +159,22 @@
       none)
     none))
 
+(defn- locations-at
+  "The LSP locations of what (query c p path row col & args) finds for a
+  text-position request."
+  [state params query & args]
+  (with-project state params []
+    (fn [c p path row col] (lsp-locations state p (apply query c p path row col args)))))
+
 ;;;; requests
 
 (defn- highlights [{:keys [buffers]} c p path row col]
-  (vec (keep (fn [{:keys [pos write?]}]
-               (when-let [bp (buffers/->buffer buffers path pos)]
-                 ;; DocumentHighlightKind: 2 read, 3 write
-                 {:range (convert/range bp) :kind (if write? 3 2)}))
-             (q/highlights c p path row col))))
+  (into []
+        (keep (fn [{:keys [pos write?]}]
+                (when-let [bp (buffers/->buffer buffers path pos)]
+                  ;; DocumentHighlightKind: 2 read, 3 write
+                  {:range (convert/range bp) :kind (if write? 3 2)})))
+        (q/highlights c p path row col)))
 
 (defn- token-index
   "Where `token` occurs in `s` from `from` as a whole token (not inside a
@@ -170,14 +190,13 @@
 
 (defn- signature
   "The signatures of `info`'s arglists for a call at argument `arg` with
-  `total` arguments (default: through `arg`)."
-  [{:keys [ns name kind arglists doc]} arg & [total]]
-  (let [label-name (if (= :ns-def kind) name name)
-        total (max (or total 0) (inc arg))]
+  `total` arguments."
+  [{:keys [name arglists doc]} arg total]
+  (let [total (max total (inc arg))]
     (for [arglist arglists
-          :let [label (str label-name " " arglist)
+          :let [label (str name " " arglist)
                 {:keys [params variadic]} (forms/arglist-params arglist)
-                offsets (loop [[t & more] params from (inc (count label-name)) out []]
+                offsets (loop [[t & more] params from (inc (count name)) out []]
                           (if-let [i (when t (token-index label t from))]
                             (recur more (+ i (count t)) (conj out [i (+ i (count t))]))
                             out))]]
@@ -189,27 +208,36 @@
        :close? (or (some? variadic) (<= total (count params)))
        ;; past the last parameter: the last one (LSP reads an index out
        ;; of range as the first)
-       :active (cond (and variadic (>= arg variadic)) variadic
-                     :else (min arg (max 0 (dec (count params)))))})))
+       :active (if (and variadic (>= arg variadic))
+                 variadic
+                 (min arg (max 0 (dec (count params)))))})))
 
-(defn- signature-help [{:keys [buffers reader] :as state} {:keys [textDocument position]}]
+(defn- index-where [pred coll] (first (keep-indexed #(when (pred %2) %1) coll)))
+
+(defn- call-infos
+  "What the call around the cursor calls, as hover infos, with the
+  argument the cursor is at and the call's argument count, or nil."
+  [{:keys [buffers reader]} p path text position]
+  (when-let [{[start end] :head :keys [arg] total :count} (forms/call-at text (buffers/offset text position))]
+    (let [c @reader
+          ;; the head where the index knows it, else resolved by name
+          [row col] (buffers/->indexed buffers path (convert/->kondo (buffers/position text start)))]
+      {:infos (or (seq (when row (q/hover c p path row col)))
+                  (q/hover-of-elements c p (q/resolve-symbol c p path (subs text start end))))
+       :arg arg
+       :total total})))
+
+(defn- signature-help [{:keys [buffers] :as state} {:keys [textDocument position]}]
   (when-let [path (client-path (:uri textDocument))]
     (when-let [{:keys [p]} (project-of state path)]
       (when-let [text (buffers/text buffers path)]
-        (when-let [{[start end] :head :keys [arg] total :count} (forms/call-at text (buffers/offset text position))]
-          (let [c @reader
-                ;; the head where the index knows it, else resolved by name
-                [row col] (buffers/->indexed buffers path (convert/->kondo (buffers/position text start)))
-                infos (or (seq (when row (q/hover c p path row col)))
-                          (q/hover-of-elements c p (q/resolve-symbol c p path (subs text start end))))
-                sigs (vec (mapcat #(signature % arg total) (filter (comp seq :arglists) infos)))]
-            (when (seq sigs)
-              (let [active (or (first (keep-indexed #(when (:fits? %2) %1) sigs))
-                               (first (keep-indexed #(when (:close? %2) %1) sigs))
-                               0)]
-                {:signatures (mapv #(dissoc % :fits? :close? :active) sigs)
-                 :activeSignature active
-                 :activeParameter (:active (nth sigs active))}))))))))
+        (let [{:keys [infos arg total]} (call-infos state p path text position)
+              sigs (into [] (comp (filter (comp seq :arglists)) (mapcat #(signature % arg total))) infos)]
+          (when (seq sigs)
+            (let [active (or (index-where :fits? sigs) (index-where :close? sigs) 0)]
+              {:signatures (mapv #(dissoc % :fits? :close? :active) sigs)
+               :activeSignature active
+               :activeParameter (:active (nth sigs active))})))))))
 
 (defn- hover-markdown [{:keys [kind ns name doc arglists]}]
   (str/join "\n\n"
@@ -224,22 +252,22 @@
   record's own fns (methods, constructors) have arities; it doesn't."
   [{:keys [kind defined-by extra]}]
   (let [definer (some-> defined-by (str/replace #"^.*/" ""))
-        fn? (or (:fixed-arities extra) (:varargs-min-arity extra) (seq (:arglist-strs extra)))]
+        callable? (or (:fixed-arities extra) (:varargs-min-arity extra) (seq (:arglist-strs extra)))]
     (case kind
       :ns-def 3
       :keyword-def 20
-      (cond
-        (#{"defprotocol" "definterface"} definer) (if fn? 12 11)
-        (#{"defrecord" "deftype"} definer) (if fn? 12 5)
-        (= "defmulti" definer) 11
-        (#{"def" "defonce"} definer) 13
-        :else 12))))
+      (case definer
+        ("defprotocol" "definterface") (if callable? 12 11)
+        ("defrecord" "deftype") (if callable? 12 5)
+        "defmulti" 11
+        ("def" "defonce") 13
+        12))))
 
-(defn- document-symbols [state path p]
+(defn- document-symbols [{:keys [buffers reader]} p path]
   (let [syms (keep (fn [{:keys [pos form] :as s}]
-                     (when-let [sel (buffers/->buffer (:buffers state) path pos)]
-                       (assoc s :sel sel :full (or (and form (buffers/->buffer (:buffers state) path form)) sel))))
-                   (q/document-symbols @(:reader state) p path))
+                     (when-let [sel (buffers/->buffer buffers path pos)]
+                       (assoc s :sel sel :full (or (some->> form (buffers/->buffer buffers path)) sel))))
+                   (q/document-symbols @reader p path))
         ->sym (fn [{:keys [name sel full] :as s}]
                 {:name name :kind (symbol-kind s)
                  :range (convert/range full) :selectionRange (convert/range sel)})
@@ -248,14 +276,28 @@
       (into [(assoc (->sym (first nss)) :children (mapv ->sym defs))] (map ->sym (rest nss)))
       (mapv ->sym defs))))
 
-(defn- call-item [state {:keys [ns name locations]}]
-  (when-let [loc (some #(in-buffer state %) locations)]
-    (let [{:keys [uri range]} (lsp-location state loc)]
-      {:name (or name ns) :kind (if name 12 3) :detail ns :uri uri
-       :range range :selectionRange range :data {:ns ns :name name}})))
+(defn- call-item
+  "A call hierarchy item for a function (or, :name nil, a namespace's top
+  level)."
+  [state {:keys [ns name locations]}]
+  (when-let [{:keys [uri range]} (some #(lsp-location state %) locations)]
+    {:name (or name ns) :kind (if name 12 3) :detail ns :uri uri
+     :range range :selectionRange range :data {:ns ns :name name}}))
 
-(defn- ranges-in [state p calls]
-  (mapv :range (lsp-locations state p calls)))
+(defn- calls
+  "The call hierarchy calls of the request's item: `query` is
+  q/incoming-calls or q/outgoing-calls, `other` the key of each call's
+  other end in its results (:caller, :callee), `as` the LSP key for it
+  (:from, :to)."
+  [{:keys [reader] :as state} params query other as]
+  (let [{:keys [ns name]} (get-in params [:item :data])]
+    (if-let [{:keys [p]} (project-of state (client-path (get-in params [:item :uri])))]
+      (into []
+            (keep (fn [{call-sites :calls who other}]
+                    (when-let [item (call-item state who)]
+                      {as item :fromRanges (mapv :range (lsp-locations state p call-sites))})))
+            (query @reader p ns name))
+      [])))
 
 (defn- catch-up-buffers!
   "Documents whose file's text the index now has: that text is the base.
@@ -264,13 +306,16 @@
   [{:keys [buffers reader]}]
   (doseq [[path h] (buffers/awaiting buffers)
           :let [indexed (db/query-value @reader "SELECT content_hash FROM fingerprint WHERE path = ?" path)]
-          :when (and indexed (java.util.Arrays/equals ^bytes indexed ^bytes h)
+          :when (and indexed (Arrays/equals ^bytes indexed ^bytes h)
                      (nil? (db/query-value @reader "SELECT 1 FROM pending WHERE kind = 'file' AND path = ?" path)))]
     (buffers/indexed! buffers path)))
 
 (def ^:private index-wait-ms
   "How long a request waits for the index (waitForIndex) at most."
   120000)
+
+(defn- pending-total [c projects]
+  (reduce + (map #(queue/pending-count c (:p %)) projects)))
 
 (defn- await-index!
   "Wait until the projects have nothing queued: for clients that asked to
@@ -279,34 +324,33 @@
   [{:keys [reader projects]}]
   (let [deadline (+ (System/currentTimeMillis) index-wait-ms)]
     (loop []
-      (when (and (some #(pos? (queue/pending-count @reader (:p %))) @projects)
+      (when (and (pos? (pending-total @reader @projects))
                  (< (System/currentTimeMillis) deadline))
         (Thread/sleep 100)
         (recur)))))
+
+(defn- workspace-symbols
+  "Symbol search over every project, library hits extracted in the
+  background: each would be a jar opened and a file written, on every
+  keystroke."
+  [{:keys [projects reader] :as state} query]
+  (vec (for [{:keys [p]} @projects
+             {:keys [ns name location] :as sym} (q/workspace-symbols @reader p query {:limit 200})
+             :let [loc (lsp-location state location sources/extract-soon!)]
+             :when loc]
+         {:name name :kind (symbol-kind sym) :containerName ns :location loc})))
 
 (defn- handle-request [{:keys [opts reader projects] :as state} {:keys [method params]}]
   (when (:waitForIndex opts) (await-index! state))
   (catch-up-buffers! state)
   (case method
-    "textDocument/definition"
-    (with-project state params [] #(lsp-locations state %2 (q/definition %1 %2 %3 %4 %5)))
-
-    "textDocument/declaration"
-    (with-project state params [] #(lsp-locations state %2 (q/declaration %1 %2 %3 %4 %5)))
-
-    "textDocument/implementation"
-    (with-project state params [] #(lsp-locations state %2 (q/implementations %1 %2 %3 %4 %5)))
-
-    "textDocument/references"
-    (with-project state params []
-      #(lsp-locations state %2 (q/references %1 %2 %3 %4 %5
-                                          {:include-declaration? (get-in params [:context :includeDeclaration])})))
-
-    "textDocument/documentHighlight"
-    (with-project state params [] (fn [c p path row col] (highlights state c p path row col)))
-
-    "textDocument/signatureHelp"
-    (signature-help state params)
+    "textDocument/definition" (locations-at state params q/definition)
+    "textDocument/declaration" (locations-at state params q/declaration)
+    "textDocument/implementation" (locations-at state params q/implementations)
+    "textDocument/references" (locations-at state params q/references
+                                            {:include-declaration? (get-in params [:context :includeDeclaration])})
+    "textDocument/documentHighlight" (with-project state params [] (partial highlights state))
+    "textDocument/signatureHelp" (signature-help state params)
 
     "textDocument/hover"
     (with-project state params nil
@@ -316,46 +360,18 @@
 
     "textDocument/documentSymbol"
     (let [path (client-path (get-in params [:textDocument :uri]))]
-      (if-let [{:keys [p]} (project-of state path)] (document-symbols state path p) []))
+      (if-let [{:keys [p]} (project-of state path)] (document-symbols state p path) []))
 
-    "workspace/symbol"
-    ;; library hits are extracted in the background: each would be a jar
-    ;; opened and a file written, on every keystroke
-    (vec (for [{:keys [p]} @projects
-               {:keys [ns name location] :as sym} (q/workspace-symbols @reader p (:query params) {:limit 200})
-               :let [loc (some->> (as-file state location sources/extract-soon!)
-                                  (in-buffer state)
-                                  (lsp-location state))]
-               :when loc]
-           {:name name :kind (symbol-kind sym) :containerName ns :location loc}))
+    "workspace/symbol" (workspace-symbols state (:query params))
 
     "textDocument/prepareCallHierarchy"
     (with-project state params [] (fn [c p path row col]
-                                    (vec (keep #(call-item state %) (q/call-hierarchy-items c p path row col)))))
+                                    (into [] (keep #(call-item state %)) (q/call-hierarchy-items c p path row col))))
 
-    "callHierarchy/incomingCalls"
-    (let [{:keys [ns name]} (get-in params [:item :data])
-          path (client-path (get-in params [:item :uri]))]
-      (if-let [{:keys [p]} (project-of state path)]
-        (vec (keep (fn [{:keys [caller calls]}]
-                     (when-let [item (call-item state caller)]
-                       {:from item :fromRanges (ranges-in state p calls)}))
-                   (q/incoming-calls @reader p ns name)))
-        []))
+    "callHierarchy/incomingCalls" (calls state params q/incoming-calls :caller :from)
+    "callHierarchy/outgoingCalls" (calls state params q/outgoing-calls :callee :to)
 
-    "callHierarchy/outgoingCalls"
-    (let [{:keys [ns name]} (get-in params [:item :data])
-          path (client-path (get-in params [:item :uri]))]
-      (if-let [{:keys [p]} (project-of state path)]
-        (vec (keep (fn [{:keys [callee calls]}]
-                     (when-let [item (call-item state callee)]
-                       {:to item :fromRanges (ranges-in state p calls)}))
-                   (q/outgoing-calls @reader p ns name)))
-        []))
-
-    "clojure-lite-lsp/status"
-    {:pending (reduce + (map #(queue/pending-count @(:client-c state) (:p %)) @projects))
-     :projects (mapv :root @projects)}
+    "clojure-lite-lsp/status" {:pending (pending-total @reader @projects) :projects (mapv :root @projects)}
 
     "shutdown" nil
 
@@ -367,7 +383,8 @@
   (->> (cond (seq workspaceFolders) (map (comp convert/uri->path :uri) workspaceFolders)
              rootUri [(convert/uri->path rootUri)]
              rootPath [rootPath])
-       (map #(.getCanonicalPath (io/file ^String %)))
+       ;; a root that isn't a file: URI has no path
+       (keep #(some-> % io/file .getCanonicalPath))
        distinct))
 
 (defn- initialize! [{:keys [opts projects client-c reader] :as state} params]
@@ -393,21 +410,18 @@
                     :signatureHelpProvider {:triggerCharacters ["(" " "]}}
      :serverInfo {:name "clojure-lite-lsp" :version (:version opts)}}))
 
-(defn- watch-files! [{:keys [send!]}]
-  (send! {:jsonrpc "2.0" :id "clojure-lite-lsp-watch" :method "client/registerCapability"
-          :params {:registrations
-                   [{:id "clojure-lite-lsp-watched-files" :method "workspace/didChangeWatchedFiles"
-                     :registerOptions {:watchers [{:globPattern "**/*.{clj,cljs,cljc,cljd,edn,bb}"}
-                                                  {:globPattern "**/project.clj"}]}}]}}))
-
-(defn- pending-total [c projects]
-  (reduce + (map #(queue/pending-count c (:p %)) projects)))
+(defn- watch-files! [state]
+  (request! state "clojure-lite-lsp-watch" "client/registerCapability"
+            {:registrations
+             [{:id "clojure-lite-lsp-watched-files" :method "workspace/didChangeWatchedFiles"
+               :registerOptions {:watchers [{:globPattern "**/*.{clj,cljs,cljc,cljd,edn,bb}"}
+                                            {:globPattern "**/project.clj"}]}}]}))
 
 (defn- warn-of-classpath-errors!
   "While the server runs: tell the user, once per error, when a project's
   classpath couldn't be computed (a broken build file, the build tool not
   on the editor's PATH): src/ and test/ are indexed meanwhile."
-  [{:keys [send! projects running? opts]}]
+  [{:keys [projects running? opts] :as state}]
   (future
     (try
       (with-open [c (db/open-reader (:db (home/paths (:home opts))))]
@@ -417,19 +431,20 @@
             (recur (reduce (fn [told {:keys [p root]}]
                              (let [e (classpath/error c p)]
                                (when (and e (not= e (told p)))
-                                 (send! {:jsonrpc "2.0" :method "window/showMessage"
-                                         :params {:type 2
-                                                  :message (str "clojure-lite-lsp couldn't compute the classpath of " root
-                                                                " (indexing its src/ and test/ meanwhile): " e)}}))
+                                 ;; MessageType 2: warning
+                                 (notify! state "window/showMessage"
+                                          {:type 2
+                                           :message (str "clojure-lite-lsp couldn't compute the classpath of " root
+                                                         " (indexing its src/ and test/ meanwhile): " e)}))
                                (assoc told p e)))
                            told @projects)))))
-      (catch Exception e (log "classpath warnings stopped:" (ex-message e))))))
+      (catch Exception e (log/warn "classpath warnings stopped:" (ex-message e))))))
 
 (defn- report-progress!
   "While the server runs: report indexing as LSP work-done progress, from
   the queue's pending counts. Uses its own connection (JDBC connections are
   not shared between threads)."
-  [{:keys [send! projects running? opts]}]
+  [{:keys [projects running? opts] :as state}]
   (future
     (try
       (with-open [c (db/open-reader (:db (home/paths (:home opts))))]
@@ -440,63 +455,59 @@
               (cond
                 (and (pos? pending) (nil? token))
                 (let [token (str "clojure-lite-lsp-indexing-" n)]
-                  (send! {:jsonrpc "2.0" :id (str "clojure-lite-lsp-progress-" n) :method "window/workDoneProgress/create"
-                          :params {:token token}})
+                  (request! state (str "clojure-lite-lsp-progress-" n) "window/workDoneProgress/create" {:token token})
                   (recur (inc n) token false nil))
 
                 ;; begin a tick after asking for the token, so the client has it
                 (and token (not begun?))
-                (do (send! {:jsonrpc "2.0" :method "$/progress"
-                            :params {:token token :value {:kind "begin" :title "Indexing" :cancellable false
-                                                          :message (str pending " pending")}}})
+                (do (notify! state "$/progress" {:token token :value {:kind "begin" :title "Indexing" :cancellable false
+                                                                      :message (str pending " pending")}})
                     (recur n token true pending))
 
                 (and token (zero? pending))
-                (do (send! {:jsonrpc "2.0" :method "$/progress"
-                            :params {:token token :value {:kind "end" :message "Indexed"}}})
+                (do (notify! state "$/progress" {:token token :value {:kind "end" :message "Indexed"}})
                     (recur n nil false nil))
 
                 (and token (not= pending shown))
-                (do (send! {:jsonrpc "2.0" :method "$/progress"
-                            :params {:token token :value {:kind "report" :message (str pending " pending")}}})
+                (do (notify! state "$/progress" {:token token :value {:kind "report" :message (str pending " pending")}})
                     (recur n token true pending))
 
                 :else (recur n token begun? shown))))))
-      (catch Exception e (log "progress reporting stopped:" (ex-message e))))))
+      (catch Exception e (log/warn "progress reporting stopped:" (ex-message e))))))
 
 (defn- handle-notification [{:keys [buffers] :as state} {:keys [method params]}]
-  (let [doc-path #(client-path (get-in params [:textDocument :uri]))
-        ;; documents that aren't files (jar: entries) aren't tracked yet
-        method (if (and (str/starts-with? method "textDocument/") (nil? (doc-path))) ::ignored method)]
-    (case method
-      "initialized" (do (watch-files! state)
-                        (warn-of-classpath-errors! state)
-                        (when (:progress? (:opts state)) (report-progress! state)))
-      "textDocument/didOpen" (let [path (doc-path)]
-                               (buffers/open! buffers path (get-in params [:textDocument :text]))
-                               (when-let [{:keys [p]} (project-of state path)]
-                                 (enqueue! state p (if (dep-file? state path) :dep-file :file) path 0)))
-      "textDocument/didChange" (buffers/change! buffers (doc-path) (:contentChanges params))
-      "textDocument/didSave" (let [path (doc-path)]
-                               (buffers/saved! buffers path)
-                               (if (dep-file? state path)
-                                 (when-let [{:keys [p]} (project-of state path)]
-                                   (enqueue! state p :dep-file path 0))
-                                 (doseq [p (projects-with state path)]
-                                   (enqueue! state p :file path 0))))
-      "textDocument/didClose" (buffers/close! buffers (doc-path))
-      "workspace/didChangeWatchedFiles" (doseq [{:keys [uri type]} (:changes params)
-                                                :when (str/starts-with? uri "file:")]
-                                          ;; one failure mustn't lose the rest (a checkout
-                                          ;; reports many files at once)
-                                          (try (file-changed! state (client-path uri) (= 3 type))
-                                               (catch Exception e (log "watched file" uri "failed:" (ex-message e)))))
-      nil)))
+  (let [path (client-path (get-in params [:textDocument :uri]))]
+    ;; documents that aren't files (jar: entries) aren't tracked yet
+    (when-not (and (str/starts-with? method "textDocument/") (nil? path))
+      (case method
+        "initialized" (do (watch-files! state)
+                          (warn-of-classpath-errors! state)
+                          (when (:progress? (:opts state)) (report-progress! state)))
+        "textDocument/didOpen" (do (buffers/open! buffers path (get-in params [:textDocument :text]))
+                                   (when-let [{:keys [p]} (project-of state path)]
+                                     (enqueue! state p (if (dep-file? state path) :dep-file :file) path 0)))
+        "textDocument/didChange" (buffers/change! buffers path (:contentChanges params))
+        "textDocument/didSave" (do (buffers/saved! buffers path)
+                                   (let [own (project-of state path)]
+                                     (if (dep-file? state path)
+                                       (when own (enqueue! state (:p own) :dep-file path 0))
+                                       (doseq [p (projects-with state own path)]
+                                         (enqueue! state p :file path 0)))))
+        "textDocument/didClose" (buffers/close! buffers path)
+        "workspace/didChangeWatchedFiles" (doseq [{:keys [uri type]} (:changes params)
+                                                  :when (str/starts-with? uri "file:")]
+                                            ;; one failure mustn't lose the rest (a checkout
+                                            ;; reports many files at once); FileChangeType 3: deleted
+                                            (try (file-changed! state (client-path uri) (= 3 type))
+                                                 (catch Exception e (log/warn "watched file" uri "failed:" (ex-message e)))))
+        nil))))
 
 (defn serve!
   "Serve LSP on `in`/`out` until `exit`. Returns the exit code."
   [{:keys [in out home version spawn!] :or {version version/version}}]
-  (let [opts-atom (atom {:home home :version version :spawn! spawn!})
+  (let [;; set once more by initialize (the client's options); each message
+        ;; is handled with the options as they are then (`state-now`)
+        opts-atom (atom {:home home :version version :spawn! spawn!})
         state {:opts-atom opts-atom
                :projects (atom [])
                :client-c (atom nil)
@@ -519,7 +530,7 @@
             ;; a response to one of our requests
             (and id (nil? method)) (recur shutdown?)
             (nil? id) (do (try (handle-notification (state-now) msg)
-                               (catch Exception e (log method "failed:" (ex-message e))))
+                               (catch Exception e (log/warn method "failed:" (ex-message e))))
                           (recur shutdown?))
             (and shutdown? id)
             (do (reply! id {:error {:code -32600 :message "The server is shutting down"}})
@@ -534,11 +545,12 @@
                       (reply! id {:error {:code -32601 :message (str "Unsupported: " method)}})
                       (reply! id {:result result})))
                   (catch Exception e
-                    (log method "failed:" (ex-message e))
-                    (reply! id {:error {:code -32603 :message (str (ex-message e))}})))
+                    (let [message (or (ex-message e) (str e))]
+                      (log/warn method "failed:" message)
+                      (reply! id {:error {:code -32603 :message message}}))))
                 (recur (or shutdown? (= "shutdown" method)))))))
       (finally
         (some-> in-use lock/release!)
         (reset! (:running? state) false)
         (doseq [a [(:client-c state) (:reader state)]]
-          (some-> ^java.sql.Connection @a .close))))))
+          (some-> ^Connection @a .close))))))

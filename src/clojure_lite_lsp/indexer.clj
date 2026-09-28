@@ -25,6 +25,7 @@
    [clojure-lite-lsp.db :as db]
    [clojure-lite-lsp.digest :as digest]
    [clojure-lite-lsp.fingerprint :as fingerprint]
+   [clojure-lite-lsp.home :as home]
    [clojure-lite-lsp.kondo-config :as kc]
    [clojure-lite-lsp.kondo-hooks :as kondo-hooks]
    [clojure-lite-lsp.log :as log]
@@ -50,15 +51,12 @@
     (when (realized? reader) (.close ^Connection @reader))
     (.close ^Connection c)))
 
-(defn- default-cache-dir []
-  (io/file (System/getProperty "user.home") ".cache" "clojure-lite-lsp"))
-
 (defn indexer
   "An indexer writing to the index at `db-path`, keeping clj-kondo configs
   under `cache-dir`."
   [{:keys [db-path cache-dir shards batch-sizes] :or {shards analyze/default-shards}}]
   (let [c (db/open-writer db-path)
-        cache-dir (or cache-dir (default-cache-dir))]
+        cache-dir (or cache-dir (home/dir))]
     (map->Indexer {:c c :w (writer/writer c)
                    ;; for analysis, which runs beside the loop thread's writes
                    :reader (delay (db/open-reader db-path))

@@ -14,7 +14,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str])
   (:import
-   [java.io BufferedReader InputStream OutputStream]
+   [java.io InputStream OutputStream]
    [java.nio.charset StandardCharsets]))
 
 (set! *warn-on-reflection* true)
@@ -34,7 +34,7 @@
    :description (str doc " Argument: " usage ".")
    :inputSchema {:type "object"
                  :properties {:target {:type "string"
-                                       :description (if (= "<symbol | file:line:col>" usage)
+                                       :description (if (= commands/target-usage usage)
                                                       "ns/name (a var), ns (a namespace), or file:line:col (1-based)"
                                                       (subs usage 1 (dec (count usage))))}
                               :project {:type "string"
@@ -51,11 +51,10 @@
 
 (defn- call [{:keys [opts cwd]} {:keys [name arguments]}]
   (let [{:keys [target project limit]} arguments
-        {:keys [exit out]} (try
-                             (cli/query! opts (cond-> [name (str target) "--limit" (str (or limit 100))]
-                                                project (conj "--project" project))
-                                         {:cwd cwd :deadline-ms sync-deadline-ms})
-                             (catch Exception e {:exit 1 :out (str "Failed: " (ex-message e))}))]
+        ;; query! answers failures too, as text with a non-zero exit
+        {:keys [exit out]} (cli/query! opts (cond-> [name (str target) "--limit" (str (or limit 100))]
+                                              project (conj "--project" project))
+                                       {:cwd cwd :deadline-ms sync-deadline-ms})]
     {:content [{:type "text" :text out}] :isError (not= 0 exit)}))
 
 (defn- respond [ctx {:keys [method params]}]
@@ -74,30 +73,28 @@
   "The response to one message, or nil for a notification."
   [ctx {:keys [id method] :as msg}]
   (when (some? id)
-    (let [result (try (respond ctx msg)
-                      (catch Exception e {::error (ex-message e)}))]
-      (merge {:jsonrpc "2.0" :id id}
-             (cond
-               (= ::unknown result) {:error {:code -32601 :message (str "Unsupported: " method)}}
-               (::error result) {:error {:code -32603 :message (::error result)}}
-               :else {:result result})))))
+    (assoc (try
+             (let [result (respond ctx msg)]
+               (if (= ::unknown result)
+                 {:error {:code -32601 :message (str "Unsupported: " method)}}
+                 {:result result}))
+             (catch Exception e
+               {:error {:code -32603 :message (or (ex-message e) (str e))}}))
+           :jsonrpc "2.0" :id id)))
 
 (defn serve!
   "Serve MCP on `in`/`out` until the input ends. `opts` are
   clojure-lite-lsp.client/ensure-daemon!'s; `cwd` the default project dir."
   [{:keys [^InputStream in ^OutputStream out] :as ctx}]
-  (let [reader (BufferedReader. (io/reader in :encoding "UTF-8"))
-        send! (fn [msg]
+  (let [send! (fn [msg]
                 (.write out (.getBytes (str (json/generate-string msg) "\n") StandardCharsets/UTF_8))
                 (.flush out))]
-    (loop []
-      (when-let [line (.readLine reader)]
-        (when-not (str/blank? line)
-          (let [msg (try (json/parse-string line true) (catch Exception _ ::bad))]
-            (cond
-              (= ::bad msg) (send! {:jsonrpc "2.0" :id nil :error {:code -32700 :message "Parse error"}})
-              ;; a batch: answered as one, notifications left out
-              (sequential? msg) (let [answers (vec (keep #(answer ctx %) msg))]
-                                  (when (seq answers) (send! answers)))
-              :else (some-> (answer ctx msg) send!))))
-        (recur)))))
+    (doseq [line (line-seq (io/reader in :encoding "UTF-8"))
+            :when (not (str/blank? line))
+            :let [msg (try (json/parse-string line true) (catch Exception _ ::bad))]]
+      (cond
+        (= ::bad msg) (send! {:jsonrpc "2.0" :id nil :error {:code -32700 :message "Parse error"}})
+        ;; a batch: answered as one, notifications left out
+        (sequential? msg) (let [answers (into [] (keep #(answer ctx %)) msg)]
+                            (when (seq answers) (send! answers)))
+        :else (some-> (answer ctx msg) send!)))))

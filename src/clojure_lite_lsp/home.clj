@@ -5,6 +5,12 @@
    [clojure-lite-lsp.schema :as schema]
    [clojure.java.io :as io]))
 
+(defn dir
+  "The home dir: $CLOJURE_LITE_LSP_HOME, else ~/.cache/clojure-lite-lsp."
+  []
+  (or (System/getenv "CLOJURE_LITE_LSP_HOME")
+      (str (io/file (System/getProperty "user.home") ".cache" "clojure-lite-lsp"))))
+
 (defn paths
   "The files under home dir `home`. The index, its daemon's locks and log
   are per schema version (v<n>/): clojure-lite-lsp versions with different

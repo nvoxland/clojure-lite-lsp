@@ -10,12 +10,12 @@
   differs has the same analysis under both (clojure-lite-lsp.reuse)."
   (:require
    [clj-kondo.impl.core :as kondo-core]
+   [clojure-lite-lsp.digest :as sha]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.walk :as walk])
   (:import
-   [java.io File PushbackReader StringReader]
-   [java.security MessageDigest]))
+   [java.io File PushbackReader]))
 
 (set! *warn-on-reflection* true)
 
@@ -33,9 +33,7 @@
 (defn digest
   "SHA-256 hex of `x`, the same for equal values."
   [x]
-  (let [^String text (binding [*print-length* nil *print-level* nil] (pr-str (canonical x)))
-        bs (.digest (MessageDigest/getInstance "SHA-256") (.getBytes text "UTF-8"))]
-    (apply str (map #(format "%02x" %) bs))))
+  (sha/hex (sha/sha256 (binding [*print-length* nil *print-level* nil] (pr-str (canonical x))))))
 
 (defn- without-linters
   "A config section's analysis settings: nil when only linters are left.
@@ -57,23 +55,27 @@
 
 ;;;; hook code
 
-(defn- files-under [dir]
-  (let [base (count (str dir File/separator))]
-    (into {}
+(defn- files-under
+  "{relative-path file} of the files under `dir`, sorted by path."
+  [dir]
+  (let [base (.toPath (io/file dir))]
+    (into (sorted-map)
           (keep (fn [^File f]
                   (when (.isFile f)
-                    [(str/replace (subs (str f) base) File/separator "/") f])))
+                    [(str/replace (str (.relativize base (.toPath f))) File/separator "/") f])))
           (file-seq (io/file dir)))))
 
 (defn- ns-files
-  "The source files of hook namespace `ns-sym` in the config dir: all of
-  them, when it's in more than one place (the config's own and an
-  import): which one clj-kondo loads isn't for clojure-lite-lsp to guess."
+  "The source files of hook namespace `ns-sym` in the config dir (`files`,
+  from `files-under`): all of them, when it's in more than one place (the
+  config's own and an import): which one clj-kondo loads isn't for
+  clojure-lite-lsp to guess."
   [files ns-sym]
   (let [path (str/replace (munge (str ns-sym)) "." "/")]
     (or (some (fn [ext]
-                (not-empty (vec (keep (fn [[rel f]] (when (or (= rel (str path ext)) (str/ends-with? rel (str "/" path ext))) f))
-                                      (sort-by key files)))))
+                (let [p (str path ext)]
+                  (not-empty (into [] (keep (fn [[rel f]] (when (or (= rel p) (str/ends-with? rel (str "/" p))) f)))
+                                   files))))
               [".clj" ".cljc" ".bb" ".clj_kondo"])
         [])))
 
@@ -85,8 +87,7 @@
     (symbol? spec) [spec]
     (and (sequential? spec) (symbol? (first spec)))
     (let [[head & more] spec]
-      (if (and (seq more) (every? #(or (symbol? %) (sequential? %)) more)
-               (not (keyword? (first more))))
+      (if (and (seq more) (every? (some-fn symbol? sequential?) more))
         ;; a prefix list
         (for [m more
               lib (libs m)]
@@ -100,7 +101,7 @@
   [^File f]
   (try
     (let [forms (binding [*read-eval* false *reader-resolver* any-alias]
-                  (let [r (PushbackReader. (StringReader. (slurp f)))]
+                  (with-open [r (PushbackReader. (io/reader f))]
                     (doall (take-while #(not= ::eof %) (repeatedly #(read {:eof ::eof :read-cond :allow} r))))))
           unquote-spec #(if (and (seq? %) (= 'quote (first %))) (second %) %)]
       (distinct
@@ -131,80 +132,83 @@
               requires (map required-namespaces fs)]
           (if (some #{::unreadable} requires)
             ;; which code it uses can't be told: all of the config dir's
-            (sort-by (comp str first) (for [[rel f] files] [rel (slurp f)]))
-            (recur (into (vec more) (apply concat requires))
+            (for [[rel f] files] [rel (slurp f)])
+            (recur (into (vec more) cat requires)
                    (conj seen n)
                    (into code (map (fn [f] [n (slurp f)]) fs))))))
       (sort-by (comp str first) code))))
 
 ;;;; signature
 
+(defn- global-part
+  "What of config `cfg` applies to every file: the settings besides those
+  compared per symbol and namespace, and those keyed on namespace groups
+  (which apply to whatever namespaces match them)."
+  [cfg {:keys [custom hooks ns-groups analysis-groups group-syms group-cfgs sym-config]}]
+  (let [group-sym-nss (into #{} (map (comp symbol namespace)) group-syms)]
+    (-> (apply dissoc cfg (keys custom))
+        (dissoc :linters :lint-as :hooks :config-in-call :config-in-ns :ns-groups :output :analysis
+                ;; where things are, not what they say (hook code is
+                ;; hashed by content, per symbol)
+                :cfg-dir :classpath :use-import-dir :config-paths :auto-load-configs
+                :skip-lint)
+        (assoc :other-hooks (dissoc hooks :analyze-call :macroexpand)
+               ;; its findings are kept as elements
+               :unresolved-namespace (get-in cfg [:linters :unresolved-namespace])
+               :ns-groups (filterv (comp (some-fn analysis-groups group-sym-nss) :name) ns-groups)
+               :group-keyed (into {} (map (juxt identity sym-config)) group-syms)
+               :group-config (into {} (keep (fn [[g c]] (some->> (without-linters c) (vector g)))) group-cfgs))
+        (update :config-in-comment without-linters))))
+
 (defn signature
   "The analysis-relevant signature of the clj-kondo config dir `dir`:
-  {:global hash, :entries {\"ns/name\" hash, \"ns:name\" hash}}."
+  {:global hash, :entries {\"ns/name\" hash, \"ns:name\" hash}, :custom
+  {key hash}, :mentions {\"ns/name\" #{custom keys its hook code mentions}}}."
   [dir]
   (let [cfg (kondo-core/resolve-config (io/file dir) [] true false)
         files (files-under dir)
-        hook (fn [h] (cond
-                       (symbol? h) [h (when-let [n (namespace h)] (hook-code files (symbol n)))]
-                       :else h))
-        hook-text (fn [h] (pr-str (hook h)))
+        ;; a hook with its code: read once per hook
+        hook (memoize (fn [h] (if (symbol? h)
+                                [h (when-let [n (namespace h)] (hook-code files (symbol n)))]
+                                h)))
         {:keys [lint-as hooks config-in-call config-in-ns ns-groups]} cfg
         {:keys [analyze-call macroexpand]} hooks
+        sym-config (fn [s] [(get lint-as s)
+                            (some-> (get analyze-call s) hook)
+                            (some-> (get macroexpand s) hook)
+                            (without-linters (get config-in-call s))])
         groups (set (keep :name ns-groups))
         ;; entries keyed on a group (app-group/deft) apply to whatever
         ;; namespaces match it: no file references them by that name
         group-keyed? #(contains? groups (some-> (namespace %) symbol))
-        ;; a group only reaches analysis through config-in-ns for it
-        analysis-groups (into #{} (keep (fn [[g c]] (when (and (groups g) (without-linters c)) g))) config-in-ns)
         [group-syms syms] ((juxt filter remove) group-keyed?
-                           (into #{} (concat (keys lint-as) (keys analyze-call) (keys macroexpand) (keys config-in-call))))
-        sym-entries (into {}
-                          (keep (fn [s]
-                                  (let [entry [(get lint-as s)
-                                               (some-> (get analyze-call s) hook)
-                                               (some-> (get macroexpand s) hook)
-                                               (without-linters (get config-in-call s))]]
-                                    (when (some some? entry) [(str s) (digest entry)]))))
-                          syms)
-        [group-cfgs ns-cfgs] ((juxt filter remove) (fn [[k]] (groups k)) config-in-ns)
+                                                (into #{} (concat (keys lint-as) (keys analyze-call) (keys macroexpand) (keys config-in-call))))
+        [group-cfgs ns-cfgs] ((juxt filter remove) (comp groups key) config-in-ns)
         ;; top-level keys of no clj-kondo meaning (:metabase/modules): only
         ;; hooks read them
-        custom (into {} (filter (fn [[k]] (and (keyword? k) (namespace k)))) cfg)
-        ns-entries (into {}
-                         (keep (fn [[n c]] (when-let [c (without-linters c)] [(str "ns:" n) (digest c)])))
-                         ns-cfgs)]
+        custom (into {} (filter (comp qualified-keyword? key)) cfg)]
     {:custom (update-vals custom digest)
      ;; which custom keys each hooked macro's hook code mentions
      :mentions (into {}
                      (keep (fn [s]
-                             (let [text (str (some-> (get analyze-call s) hook-text)
-                                             (some-> (get macroexpand s) hook-text))]
+                             (let [text (str (some-> (get analyze-call s) hook pr-str)
+                                             (some-> (get macroexpand s) hook pr-str))]
                                (when (seq text)
-                                 [(str s) (into #{} (filter #(str/includes? text (subs (str %) 1))) (keys custom))]))))
+                                 [(str s) (into #{} (filter #(str/includes? text (str (symbol %)))) (keys custom))]))))
                      (concat (keys analyze-call) (keys macroexpand)))
-     :global (digest (-> (apply dissoc cfg (keys custom))
-                         (dissoc :linters :lint-as :hooks :config-in-call :config-in-ns :ns-groups :output :analysis
-                                 ;; where things are, not what they say (hook code is
-                                 ;; hashed by content, per symbol)
-                                 :cfg-dir :classpath :use-import-dir :config-paths :auto-load-configs
-                                 :skip-lint)
-                         (assoc :other-hooks (dissoc hooks :analyze-call :macroexpand)
-                                ;; its findings are kept as elements
-                                :unresolved-namespace (get-in cfg [:linters :unresolved-namespace])
-                                :ns-groups (filterv #(or (analysis-groups (:name %))
-                                                         (some (fn [s] (= (str (:name %)) (namespace s))) group-syms))
-                                                    ns-groups)
-                                :group-keyed (into {} (for [s group-syms]
-                                                        [s [(get lint-as s)
-                                                            (some-> (get analyze-call s) hook)
-                                                            (some-> (get macroexpand s) hook)
-                                                            (without-linters (get config-in-call s))]]))
-                                ;; config for a group of namespaces applies to whichever
-                                ;; namespaces match it: global
-                                :group-config (into {} (keep (fn [[g c]] (when-let [c (without-linters c)] [g c]))) group-cfgs))
-                         (update :config-in-comment without-linters)))
-     :entries (merge sym-entries ns-entries)}))
+     :global (digest (global-part cfg {:custom custom :hooks hooks :ns-groups ns-groups
+                                       ;; a group only reaches analysis through config-in-ns for it
+                                       :analysis-groups (into #{} (keep (fn [[g c]] (when (and (groups g) (without-linters c)) g)))
+                                                              config-in-ns)
+                                       :group-syms group-syms :group-cfgs group-cfgs :sym-config sym-config}))
+     :entries (merge (into {}
+                           (keep (fn [s]
+                                   (let [entry (sym-config s)]
+                                     (when (some some? entry) [(str s) (digest entry)]))))
+                           syms)
+                     (into {}
+                           (keep (fn [[n c]] (some->> (without-linters c) digest (vector (str "ns:" n)))))
+                           ns-cfgs))}))
 
 (defn diff
   "How two signatures differ: {:global-same? :changed #{entry keys}
@@ -213,7 +217,7 @@
   [a b]
   (let [differs (fn [k] (into #{}
                               (filter #(not= (get (k a) %) (get (k b) %)))
-                              (concat (keys (k a)) (keys (k b)))))
+                              (into (set (keys (k a))) (keys (k b)))))
         custom-changed (differs :custom)]
     {:global-same? (= (:global a) (:global b))
      :custom-changed custom-changed

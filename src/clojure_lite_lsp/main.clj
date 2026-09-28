@@ -1,8 +1,9 @@
 (ns clojure-lite-lsp.main
-  "The `clojure-lite-lsp` command: `clojure-lite-lsp lsp` is the language server an editor runs,
-  `clojure-lite-lsp index` the daemon it starts, `clojure-lite-lsp status` reports on them. For
-  humans: `clojure-lite-lsp index <dir>...` indexes projects and waits, `clojure-lite-lsp gc`
-  collects garbage now."
+  "The `clojure-lite-lsp` command. For editors and agents: `lsp`, the
+  language server, and `mcp`, the query commands as an MCP server. The
+  indexer: `index` without arguments (started by the others). For people
+  and scripts: `query`, `index <dir>...`, `setup`, `gc`, `stop`, `status`
+  and `version` (clojure-lite-lsp.cli)."
   (:require
    [clojure-lite-lsp.cli :as cli]
    [clojure-lite-lsp.daemon :as daemon]
@@ -16,15 +17,18 @@
    [clojure-lite-lsp.version :as version]
    [clojure.java.io :as io]
    [clojure.string :as str])
+  (:import
+   [clojure.lang ExceptionInfo]
+   [java.sql SQLException])
   (:gen-class))
 
-(defn home
-  "The clojure-lite-lsp home dir: $CLOJURE_LITE_LSP_HOME, else ~/.cache/clojure-lite-lsp."
-  []
-  (or (System/getenv "CLOJURE_LITE_LSP_HOME")
-      (str (io/file (System/getProperty "user.home") ".cache" "clojure-lite-lsp"))))
+(set! *warn-on-reflection* true)
 
-(defn- status [h]
+(defn- print-err [& xs]
+  (binding [*out* *err*]
+    (apply println xs)))
+
+(defn- print-status! [h]
   (let [{:keys [db daemon-lock]} (home/paths h)]
     (if-not (.isFile (io/file db))
       (println "No index at" db)
@@ -33,7 +37,7 @@
           ;; the WAL holds recent writes until they are checkpointed
           (status/print! (status/data c {:daemon-alive? (lock/held? daemon-lock)})
                          (quot (+ (.length (io/file db)) (.length (io/file (str db "-wal")))) 1048576))
-          (catch java.sql.SQLException _
+          (catch SQLException _
             (println "The index at" db "is still being created")))))))
 
 (def ^:private usage
@@ -50,70 +54,67 @@
        "  status                       the indexer, the index and its projects\n"
        "  version"))
 
-(defn- index-projects [dirs]
+(defn- index-projects!
+  "Index the projects at `dirs`, showing progress on stderr."
+  [dirs]
   (let [shown (atom nil)
-        {:keys [files]} (cli/index! {:home (home)} dirs
+        {:keys [files]} (cli/index! {:home (home/dir)} dirs
                                     (fn [pending]
                                       (let [line (str/join ", " (for [[root n] pending] (str root ": " n " to do")))]
                                         (when (not= line @shown)
                                           (reset! shown line)
-                                          (binding [*out* *err*] (println line))))))]
+                                          (print-err line)))))]
     (doseq [[root n] files] (println "Indexed" root (str "(" n " files)")))))
 
-(defn- gc []
-  (let [{:keys [projects jars units error]} (cli/gc! {:home (home)})]
+(defn- gc! []
+  (let [{:keys [projects jars units error]} (cli/gc! {:home (home/dir)})]
     (if error
-      (do (println "Garbage collection failed:" error) (System/exit 1))
-      (println "Dropped" projects "project(s)," jars "jar(s)," units "analyzed file(s)."))))
+      (do (print-err "Garbage collection failed:" error) 1)
+      (do (println "Dropped" projects "project(s)," jars "jar(s)," units "analyzed file(s).") 0))))
 
-(defn- setup-project [args]
+(defn- setup-project! [args]
   (let [{:keys [agents dir index?]} (setup/parse-args args)
         dir (or dir (System/getProperty "user.dir"))]
     (when (empty? agents)
       (throw (ex-info (str "Usage: clojure-lite-lsp setup --agent <" (str/join "|" (sort (keys setup/agents))) "> [dir] [--no-index]")
                       {:usage true})))
     (doseq [[i agent] (map-indexed vector agents)
-            :let [{:keys [wrote notes]} (setup/setup! {:agent agent :dir dir :home (home)
+            :let [{:keys [wrote notes]} (setup/setup! {:agent agent :dir dir :home (home/dir)
                                                        ;; once, after the last agent
                                                        :index! (when (and index? (= i (dec (count agents))))
-                                                                 #(index-projects [%]))})]]
+                                                                 #(index-projects! [%]))})]]
       (doseq [path wrote] (println "Wrote" path))
       (doseq [note notes] (println note)))))
 
+(defn- run-command
+  "Run `cmd` with `args`: its exit code."
+  [cmd args]
+  (try
+    (case cmd
+      ;; stdout is the LSP connection: nothing else may print there
+      "lsp" (server/serve! {:in System/in :out System/out :home (home/dir)})
+      "index" (do (if (seq args) (index-projects! args) (daemon/serve! {:home (home/dir)})) 0)
+      "gc" (gc!)
+      "stop" (do (println (case (cli/stop! {:home (home/dir)})
+                            :stopped "Stopped the indexer."
+                            :not-running "The indexer isn't running."))
+                 0)
+      "setup" (do (setup-project! args) 0)
+      "query" (let [{:keys [exit out]} (cli/query! {:home (home/dir)} args {:cwd (System/getProperty "user.dir")})]
+                (println out)
+                exit)
+      ;; stdout is the MCP connection
+      "mcp" (do (mcp/serve! {:in System/in :out System/out :opts {:home (home/dir)}
+                             :cwd (System/getProperty "user.dir")})
+                0)
+      "status" (do (print-status! (home/dir)) 0)
+      "version" (do (println version/version) 0)
+      (do (print-err usage) 1))
+    (catch ExceptionInfo e
+      (print-err (ex-message e))
+      (if (:usage (ex-data e)) 2 1))))
+
 (defn -main [& [cmd & args]]
-  (case cmd
-    ;; stdout is the LSP connection: nothing else may print there
-    "lsp" (let [code (server/serve! {:in System/in :out System/out :home (home)})]
-            (shutdown-agents)
-            (System/exit code))
-    "index" (do (if (seq args)
-                  (try (index-projects args)
-                       (catch clojure.lang.ExceptionInfo e
-                         (println (ex-message e))
-                         (System/exit 1)))
-                  (daemon/serve! {:home (home)}))
-                (shutdown-agents)
-                (System/exit 0))
-    "gc" (do (gc) (shutdown-agents) (System/exit 0))
-    "stop" (do (println (case (cli/stop! {:home (home)}) :stopped "Stopped the indexer." :not-running "The indexer isn't running."))
-               (shutdown-agents)
-               (System/exit 0))
-    "setup" (do (try (setup-project args)
-                     (catch clojure.lang.ExceptionInfo e
-                       (println (ex-message e))
-                       (System/exit (if (:usage (ex-data e)) 2 1))))
-                (shutdown-agents)
-                (System/exit 0))
-    "query" (let [{:keys [exit out]} (cli/query! {:home (home)} args {:cwd (System/getProperty "user.dir")})]
-              (println out)
-              (shutdown-agents)
-              (System/exit exit))
-    ;; stdout is the MCP connection
-    "mcp" (do (mcp/serve! {:in System/in :out System/out :opts {:home (home)}
-                         :cwd (System/getProperty "user.dir")})
-              (shutdown-agents)
-              (System/exit 0))
-    "status" (status (home))
-    "version" (println version/version)
-    (do (println usage)
-        (System/exit 1))))
+  (let [code (run-command cmd args)]
+    (shutdown-agents)
+    (System/exit code)))

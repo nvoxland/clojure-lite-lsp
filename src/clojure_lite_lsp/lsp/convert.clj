@@ -24,7 +24,7 @@
 
 (defn uri->path
   "The path of a file: URI; nil for other URIs (e.g. jar: entries)."
-  [uri]
+  ^String [uri]
   (when (and uri (str/starts-with? uri "file:"))
     (.getPath (URI. (str/replace uri #"^file:(?!//)" "file://")))))
 
@@ -36,23 +36,14 @@
     (= "zipfile" dependency-scheme) (str "zipfile://" (uri->path (path->uri path)) "::" entry)
     :else (str "jar:" (path->uri path) "!/" entry)))
 
-(defn uri->location
-  "A URI as {:path} for a file, or {:path jar :entry} inside a jar."
-  [uri]
-  (cond
-    (str/starts-with? uri "jar:")
-    (let [[_ jar entry] (re-matches #"jar:(.*)!/(.*)" uri)]
-      {:path (uri->path jar) :entry entry})
+(defn position
+  "clj-kondo's `row` and `col` as an LSP position."
+  [row col]
+  {:line (dec row) :character (dec col)})
 
-    (str/starts-with? uri "zipfile:")
-    (let [[_ jar entry] (re-matches #"zipfile://(.*)::(.*)" uri)]
-      {:path jar :entry entry})
-
-    :else {:path (uri->path uri)}))
-
-(defn position [row col] {:line (dec row) :character (dec col)})
-
-(defn range [[row col end-row end-col]]
+(defn range
+  "clj-kondo's [row col end-row end-col] as an LSP range."
+  [[row col end-row end-col]]
   {:start (position row col) :end (position end-row end-col)})
 
 (defn ->kondo
@@ -64,4 +55,5 @@
   "A clojure-lite-lsp location ({:path :entry :pos}) as an LSP Location."
   [{:keys [pos] :as loc} opts]
   {:uri (location-uri loc opts)
-   :range (if (every? some? pos) (range pos) (range [1 1 1 1]))})
+   ;; without a position (a Java class's file): its start
+   :range (range (if (and (seq pos) (every? some? pos)) pos [1 1 1 1]))})

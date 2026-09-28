@@ -11,12 +11,10 @@
 (deftest jar-entries
   (testing "jar: URIs by default"
     (is (= "jar:file:///m2/x.jar!/acme/core.clj"
-           (convert/location-uri {:path "/m2/x.jar" :entry "acme/core.clj"} {})))
-    (is (= {:path "/m2/x.jar" :entry "acme/core.clj"} (convert/uri->location "jar:file:///m2/x.jar!/acme/core.clj"))))
+           (convert/location-uri {:path "/m2/x.jar" :entry "acme/core.clj"} {}))))
   (testing "zipfile: URIs for clients that open those"
     (is (= "zipfile:///m2/x.jar::acme/core.clj"
-           (convert/location-uri {:path "/m2/x.jar" :entry "acme/core.clj"} {:dependency-scheme "zipfile"})))
-    (is (= {:path "/m2/x.jar" :entry "acme/core.clj"} (convert/uri->location "zipfile:///m2/x.jar::acme/core.clj")))))
+           (convert/location-uri {:path "/m2/x.jar" :entry "acme/core.clj"} {:dependency-scheme "zipfile"})))))
 
 (deftest positions
   ;; clj-kondo: 1-based rows and columns, end exclusive, columns in UTF-16
@@ -26,4 +24,7 @@
 
 (deftest locations
   (is (= {:uri "file:///p/src/a.clj" :range {:start {:line 1 :character 6} :end {:line 1 :character 7}}}
-         (convert/location {:path "/p/src/a.clj" :pos [2 7 2 8]} {}))))
+         (convert/location {:path "/p/src/a.clj" :pos [2 7 2 8]} {})))
+  (testing "without a position (a Java class's file): its start"
+    (is (= {:start {:line 0 :character 0} :end {:line 0 :character 0}}
+           (:range (convert/location {:path "/p/A.java"} {}))))))

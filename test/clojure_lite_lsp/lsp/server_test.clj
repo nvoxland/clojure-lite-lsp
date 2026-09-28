@@ -286,9 +286,9 @@
     (spit (io/file root "src/app/x.clj") "(ns app.x)\n(defn lost [] 1)\n")
     (spit (io/file root "src/app/y.clj") "(ns app.y)\n(defn kept [] 1)\n")
     (with-redefs [queue/enqueue! (fn [c p kind path priority]
-                                       (if (str/ends-with? path "x.clj")
-                                         (throw (ex-info "database is busy" {}))
-                                         (real c p kind path priority)))]
+                                   (if (str/ends-with? path "x.clj")
+                                     (throw (ex-info "database is busy" {}))
+                                     (real c p kind path priority)))]
       (notify! "workspace/didChangeWatchedFiles" {:changes [{:uri (uri root "src/app/x.clj") :type 1}
                                                             {:uri (uri root "src/app/y.clj") :type 1}]})
       (wait-indexed! client))
@@ -307,7 +307,7 @@
   [input]
   (let [out (java.io.ByteArrayOutputStream.)
         code (server/serve! {:in (java.io.ByteArrayInputStream. (.getBytes ^String input "UTF-8")) :out out
-                           :home (str (tu/temp-dir)) :version "test"})
+                             :home (str (tu/temp-dir)) :version "test"})
         in (java.io.ByteArrayInputStream. (.toByteArray out))]
     [code (vec (take-while some? (repeatedly #(rpc/read-message in))))]))
 
@@ -449,7 +449,7 @@
 
 (deftest signature-parameters-and-arities
   (testing "parameters are found as whole tokens, past a type hint"
-    (is (= [[9 10]] (map :label (:parameters (first (#'server/signature {:name "f" :arglists ["[^long n]"]} 0)))))))
+    (is (= [[9 10]] (map :label (:parameters (first (#'server/signature {:name "f" :arglists ["[^long n]"]} 0 1)))))))
   (let [a "(ns app.a)\n(defn bar ([a b] a) ([a b c] a))\n"
         root (project! {"deps.edn" "{:paths [\"src\"]}" "src/app/a.clj" a})
         {:keys [request! notify!] :as client} (start! (str (tu/temp-dir)))

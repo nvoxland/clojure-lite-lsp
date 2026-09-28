@@ -197,7 +197,7 @@
         (is (eventually #(not (lock/held? daemon-lock))))
         (is (eventually #(let [ph (java.lang.ProcessHandle/of pid)]
                                   ;; empty once the process is gone
-                                  (or (.isEmpty ph) (not (.isAlive ^java.lang.ProcessHandle (.get ph))))))
+                           (or (.isEmpty ph) (not (.isAlive ^java.lang.ProcessHandle (.get ph))))))
             (slurp log))))))
 
 (deftest the-daemon-log-is-rotated
@@ -249,9 +249,9 @@
         real indexer/step!
         once (atom true)]
     (with-redefs [indexer/step! (fn [ix]
-                                      (if (compare-and-set! once true false)
-                                        (throw (java.sql.SQLException. "database is locked"))
-                                        (real ix)))]
+                                  (if (compare-and-set! once true false)
+                                    (throw (java.sql.SQLException. "database is locked"))
+                                    (real ix)))]
       (let [d (start! h {:retry-ms 50})]
         (with-open [c (client-db h)]
           (queue/enqueue! c (snapshot/ensure-project! c root) :sync "" 1)

@@ -50,7 +50,7 @@
             p (sync-project! ix root)]
         (is (every? (visible-defs c p) ["app.a/fa" "app.b/fb" "acme.lib/from-jar" "ext.core/from-ext"
                                          ;; clojure itself is on the classpath
-                                         "clojure.core/map"]))
+                                        "clojure.core/map"]))
         (is (not (contains? (visible-defs c p) "acme.lib/hidden")) "dependencies' private vars are dropped")
         (is (zero? (queue/pending-count c p)))
 
@@ -115,13 +115,13 @@
           (spit (io/file root (str "src/app/" f ".clj")) (str "(ns app." f ") (defn changed [] 1)"))
           (queue/enqueue! c p :file (str root "/src/app/" f ".clj") 1))
         (with-redefs [analyze/analyze-files (fn [paths opts]
-                                                  (swap! events conj [:analyze (.getName (io/file (first paths))) (now)])
-                                                  (Thread/sleep 300)
-                                                  (real-analyze paths opts))
+                                              (swap! events conj [:analyze (.getName (io/file (first paths))) (now)])
+                                              (Thread/sleep 300)
+                                              (real-analyze paths opts))
                       writer/write-units! (fn [w units]
-                                                (let [r (real-write w units)]
-                                                  (swap! events conj [:written (count units) (now)])
-                                                  r))]
+                                            (let [r (real-write w units)]
+                                              (swap! events conj [:written (count units) (now)])
+                                              r))]
           (indexer/run-until-idle! ix))
         (let [at (fn [kind name] (some (fn [[k n t]] (when (and (= k kind) (= n name)) t)) @events))
               writes (map last (filter #(= :written (first %)) @events))]

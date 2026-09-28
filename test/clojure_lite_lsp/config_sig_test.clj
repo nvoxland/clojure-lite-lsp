@@ -51,10 +51,10 @@
   (let [group [{:pattern "app\\..*" :name 'app-group}]]
     (testing "a group only linters are configured for: nothing"
       (is (:global-same? (diff base-config (with-config #(assoc % :ns-groups group
-                                                                 :config-in-ns {'app-group {:linters {:unresolved-symbol {:level :off}}}}))))))
+                                                                :config-in-ns {'app-group {:linters {:unresolved-symbol {:level :off}}}}))))))
     (testing "a group with analysis settings: global"
       (let [with-group #(with-config (fn [c] (assoc c :ns-groups [{:pattern % :name 'app-group}]
-                                                     :config-in-ns {'app-group {:lint-as '{acme/x clojure.core/def}}})))]
+                                                    :config-in-ns {'app-group {:lint-as '{acme/x clojure.core/def}}})))]
         (is (false? (:global-same? (diff (with-group "app\\..*") (with-group "other\\..*")))))))))
 
 (deftest exported-configs-count-too

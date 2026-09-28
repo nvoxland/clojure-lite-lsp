@@ -197,24 +197,24 @@
                  ;; realized here, in the shard's future
                  (vec
                   (for [j part
-                       :let [cj (canonical j)
+                        :let [cj (canonical j)
                              ;; a jar's hooks are answered from the jar
                              ;; alone: its analysis is shared by every
                              ;; project using it
-                             results (settle (into {} (by-jar cj)) nil
-                                             (fn [_ serve'] (run-pass [cj] :dependency dir serve')))
-                             hashes (entry-hashes j (map (comp entry-of key) results))]]
-                   {:jar j
-                    :jar-key (jar-key (jar-hashes j) config)
-                    :entries (vec (for [[filename {:keys [elements lookups]}] (sort-by key results)
-                                        :let [entry (entry-of filename)
-                                              refs (dep-refs lookups)]
+                              results (settle (into {} (by-jar cj)) nil
+                                              (fn [_ serve'] (run-pass [cj] :dependency dir serve')))
+                              hashes (entry-hashes j (map (comp entry-of key) results))]]
+                    {:jar j
+                     :jar-key (jar-key (jar-hashes j) config)
+                     :entries (vec (for [[filename {:keys [elements lookups]}] (sort-by key results)
+                                         :let [entry (entry-of filename)
+                                               refs (dep-refs lookups)]
                                         ;; an entry that can't be read back isn't stored
-                                        :when (hashes entry)]
-                                    {:entry-path entry
-                                     :unit-key (cond-> (unit-key :dependency config (hashes entry) entry)
-                                                 (seq refs) (assoc :ns-deps (vec refs)))
-                                     :elements elements}))}))))))
+                                         :when (hashes entry)]
+                                     {:entry-path entry
+                                      :unit-key (cond-> (unit-key :dependency config (hashes entry) entry)
+                                                  (seq refs) (assoc :ns-deps (vec refs)))
+                                      :elements elements}))}))))))
 
 (defn analyze-jars
   "Analyze jars, each with its config from `configs` ({jar {:dir :hash}}).

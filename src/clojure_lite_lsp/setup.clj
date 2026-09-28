@@ -100,21 +100,19 @@
 
 (defn- depth-change
   "How many arrays `line` opens minus closes, outside strings and comments."
-  [^String line]
-  (loop [i 0 depth 0 in-string nil]
-    (if (>= i (count line))
-      depth
-      (let [c (.charAt line i)]
-        (cond
-          ;; only "..." has escapes: '...' is literal
-          in-string (cond (and (= \" in-string) (= \\ c)) (recur (+ i 2) depth in-string)
-                          (= in-string c) (recur (inc i) depth nil)
-                          :else (recur (inc i) depth in-string))
-          (#{\" \'} c) (recur (inc i) depth c)
-          (= \# c) depth
-          (= \[ c) (recur (inc i) (inc depth) nil)
-          (= \] c) (recur (inc i) (dec depth) nil)
-          :else (recur (inc i) depth nil))))))
+  [line]
+  (loop [[c & more] (seq line) depth 0 in-string nil]
+    (cond
+      (nil? c) depth
+      ;; only "..." has escapes: '...' is literal
+      in-string (cond (and (= \" in-string) (= \\ c)) (recur (next more) depth in-string)
+                      (= in-string c) (recur more depth nil)
+                      :else (recur more depth in-string))
+      (#{\" \'} c) (recur more depth c)
+      (= \# c) depth
+      (= \[ c) (recur more (inc depth) nil)
+      (= \] c) (recur more (dec depth) nil)
+      :else (recur more depth nil))))
 
 (def ^:private header-re #"\s*\[\[?\s*[^\[\]]+\]\]?\s*(#.*)?")
 
@@ -268,8 +266,8 @@
   runs agents' CLIs (run-command); `index!` indexes the project."
   [{:keys [agent dir home run index!] :or {run run-command}}]
   (let [configure! (or (agents agent)
-                      (throw (ex-info (str "Unknown agent: " agent ". Agents: " (str/join ", " (sort (keys agents))))
-                                      {:agent agent})))
+                       (throw (ex-info (str "Unknown agent: " agent ". Agents: " (str/join ", " (sort (keys agents))))
+                                       {:agent agent})))
         _ (when-not (.isDirectory (io/file dir))
             (throw (ex-info (str "Not a directory: " dir) {:dir dir})))
         dir (.getCanonicalPath (io/file dir))

@@ -83,7 +83,7 @@
 (defn hooks-fixture []
   (project! {"deps.edn" "{:paths [\"src\"]}"
              ".clj-kondo/config.edn" (config '{:hooks {:analyze-call {acme/checked hooks.lint/check acme/defx hooks.xform/expand
-                                                                     acme/defp hooks.plainx/expand}}
+                                                                      acme/defp hooks.plainx/expand}}
                                                :acme/strict true})
              ".clj-kondo/hooks/lint.clj" lint-hook
              ".clj-kondo/hooks/xform.clj" transform-hook
@@ -104,6 +104,6 @@
         (is (contains? (visible-defs (:c ix) p) "app.uses-defx/y") "the transforming hook ran")
         (is (= #{"uses_defx.clj" "uses_checked.clj"}
                (analyzed-files ix root #(set-config! root '{:hooks {:analyze-call {acme/checked hooks.lint/check
-                                                                                    acme/defx hooks.xform/expand
-                                                                                    acme/defp hooks.plainx/expand}}
+                                                                                   acme/defx hooks.xform/expand
+                                                                                   acme/defp hooks.plainx/expand}}
                                                             :acme/strict false}))))))))
