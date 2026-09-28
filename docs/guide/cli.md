@@ -65,12 +65,14 @@ start it again when they need it.
 
 ## `status`
 
-The indexer (running or not), the index's size, and each project's indexed
-files and jars, including how many jars it shares with other projects:
+The indexer (running or not), the index's size and where it is, and each
+project's indexed files and jars, including how many jars it shares with
+other projects:
 
 ```text
-Daemon:  pid 40510, version 0.1.0, heartbeat 4 s ago
+Daemon:  pid 40510, version 0.2.0, heartbeat 4 s ago
 Index:   221 MB, 5505 analyzed files, 479 jars
+         /Users/me/Library/Caches/clojure-lite-lsp/v7/index.db
 
 /Users/me/src/my-app
   files: 3312/3312 indexed
