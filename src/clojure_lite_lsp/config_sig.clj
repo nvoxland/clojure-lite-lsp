@@ -167,7 +167,7 @@
         [group-syms syms] ((juxt filter remove) group-keyed?
                                                 (into #{} (concat (keys lint-as) (keys analyze-call) (keys macroexpand) (keys config-in-call))))
         [group-cfgs ns-cfgs] ((juxt filter remove) (comp groups key) config-in-ns)
-        ;; top-level keys of no clj-kondo meaning (:metabase/modules): only
+        ;; top-level keys of no clj-kondo meaning (:acme/modules): only
         ;; hooks read them
         custom (into {} (filter (comp qualified-keyword? key)) cfg)]
     {:custom (update-vals custom digest/value-hex)

@@ -63,7 +63,7 @@
            (diff (with-import 'clojure.core/def) (with-import 'clojure.core/defn))))))
 
 (deftest custom-keys-are-their-own-part
-  ;; top-level keys clj-kondo doesn't know (:metabase/modules) are read only
+  ;; top-level keys clj-kondo doesn't know (:acme/modules) are read only
   ;; by hooks: kept apart from the global part
   (let [d (diff (with-config #(assoc % :acme/modules {:a 1})) (with-config #(assoc % :acme/modules {:a 2})))]
     (is (:global-same? d))

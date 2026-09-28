@@ -480,7 +480,8 @@
   usages in those languages.
 
   Joins project_file for the path directly, which is 6x faster than
-  locating units afterwards for clojure.core/let's 25k usages on Metabase.
+  locating units afterwards for clojure.core/let's 25k usages in a large
+  project.
   That is complete because only files have usages: dependencies are
   analyzed without them."
   ([c p ns name kinds] (usage-rows c p ns name kinds {}))

@@ -59,8 +59,9 @@
       (is (= 2 (db/query-value c "SELECT count(*) FROM unit"))))))
 
 (deftest jar-java-classes-are-recorded-per-jar
-  ;; 58% of Metabase's definitions are Java classes, one per .class file:
-  ;; they get no unit (nor unit, jar_entry and project_unit rows each).
+  ;; in a large project, most definitions can be Java classes (58% in one),
+  ;; one per .class file: they get no unit (nor unit, jar_entry and
+  ;; project_unit rows each).
   (with-writer [w c]
     (let [j (snapshot/write-jar! w {:jar-hash (.getBytes "jar") :config-hash (byte-array 1)
                                     :kondo-version "test" :options-hash (byte-array 1)}
