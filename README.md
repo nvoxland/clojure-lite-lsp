@@ -1,20 +1,30 @@
 # clojure-lite-lsp
 
-A low-memory, read-only Clojure language server, for editors and coding agents.
+A Clojure language server small enough to run in every project and worktree
+you have open.
 
-- **Navigation**: definitions, references, implementations, hover docs, file
-  outlines, symbol search and call hierarchy (callers and callees).
-- **While you type**: occurrence highlighting and argument hints.
-- **One shared index**: analysis comes from
-  [clj-kondo](https://github.com/clj-kondo/clj-kondo) and is stored in one
-  SQLite index for every project on the machine. A library is analyzed once;
-  another worktree of a project is ready after indexing only the files that
-  differ.
-- **Light**: each editor's server process is about 20 MB, and indexing
-  happens in a shared background process that exits when idle.
+Working with coding agents means many codebases open at once: several
+projects, several worktrees of each, with an editor or an agent in every one.
+clojure-lite-lsp keeps the cost of each one low:
 
-It doesn't edit code: no diagnostics, formatting, completion, renaming or
-refactoring.
+- **About 20 MB per editor**, whatever the project's size. Indexing happens
+  in one background process for the whole machine, which exits when idle.
+- **Libraries are indexed once** for the machine, and shared by every project
+  that uses them.
+- **A new worktree indexes only what differs** from what's already indexed:
+  a few seconds for a worktree of a large project.
+
+It stays that small by implementing only the reading side of the language
+server protocol. With an agent making the edits, your part is mostly reading
+and reviewing code, so it provides:
+
+- go to definition and declaration, find references, implementations
+- hover docs, file outlines, symbol search
+- call hierarchy (callers and callees)
+- occurrence highlighting and argument hints
+
+and leaves out the features for writing code by hand: completion,
+diagnostics, formatting, rename and refactorings.
 
 **Documentation: <https://nvoxland.github.io/clojure-lite-lsp/>** (sources in
 [`docs/`](docs/); preview with `poetry install --with docs && poetry run mkdocs serve`).
@@ -35,10 +45,10 @@ bin/install-server --rebuild  # after pulling changes
 
 ## Editors
 
-- **Zed**: [`zed/`](zed/README.md), an extension that provides the Clojure
-  language and this server (it replaces the Clojure extension).
 - **VS Code**: [`vscode/`](vscode/README.md), an extension that adds this
   server to VS Code's Clojure support (`vscode/install`).
+- **Zed**: [`zed/`](zed/README.md), an extension that provides the Clojure
+  language and this server (it replaces the Clojure extension).
 - **Others**: run `clojure-lite-lsp lsp` as the language server for Clojure
   files, over stdio.
 
@@ -60,7 +70,7 @@ clojure-lite-lsp setup --agent claude   # or codex, or claude,codex; in the proj
     the project).
   - Plus a section in `AGENTS.md`.
 
-Either way the project is indexed, so the first question is answered at once.
+Either way the project is indexed, so the first question doesn't wait for indexing.
 Run it again after upgrading; it replaces its own parts and keeps everything
 else.
 

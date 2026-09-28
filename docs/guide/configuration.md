@@ -7,7 +7,7 @@ build file, and the clj-kondo configuration from its `.clj-kondo` directory.
 
 | Build file | Classpath from |
 |---|---|
-| `deps.edn` | `clojure -Sforce -Spath` (clojure-lite-lsp decides when by the files' content), with the `:dev` and `:test` aliases the project defines |
+| `deps.edn` | `clojure -Spath`, with the `:dev` and `:test` aliases the project defines |
 | `project.clj` | `lein with-profile +dev,+test classpath` |
 | `bb.edn` | `bb`'s classpath; beside `deps.edn` or `project.clj`, added to theirs |
 | none | `src` and `test`, where they exist |
@@ -39,11 +39,10 @@ adds others.
 
 The project's `.clj-kondo/config.edn` (with its hooks, `:lint-as` and so on)
 applies to its own files, together with the configs its dependencies export.
-Each library is analyzed with its own exported config only, which is what
-lets its analysis be shared by every project that uses it.
+A library is analyzed with its own exported config only.
 
-Your personal `~/.config/clj-kondo` is deliberately not used: analysis is
-shared, so it has to depend only on the project.
+Your personal `~/.config/clj-kondo` isn't used: indexes are shared between
+projects, so they depend only on what's in each project.
 
 Edits to `.clj-kondo/` (config or hooks) take effect on the next save: the
 project's files are re-analyzed as needed.
@@ -52,10 +51,10 @@ project's files are re-analyzed as needed.
 
 | | |
 |---|---|
-| `~/.cache/clojure-lite-lsp/v<n>/index.db` | The index (SQLite), one per format version |
+| `~/.cache/clojure-lite-lsp/v<n>/index.db` | The index, one per format version |
 | `~/.cache/clojure-lite-lsp/v<n>/daemon.log` | The indexer's log |
 | `~/.cache/clojure-lite-lsp/sources/` | Library sources, extracted when you navigate to them |
-| `~/.cache/clojure-lite-lsp/configs/` | Private copies of clj-kondo configs |
+| `~/.cache/clojure-lite-lsp/configs/` | Copies of the clj-kondo configs in use |
 | `~/.cache/clojure-lite-lsp/claude-marketplace/` | The Claude Code plugin ([setup](../agents/claude-code.md)) |
 
 `CLOJURE_LITE_LSP_HOME` moves all of it, e.g. to try things out without

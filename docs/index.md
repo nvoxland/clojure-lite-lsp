@@ -1,6 +1,6 @@
 ---
 template: home.html
-title: clojure-lite-lsp — Clojure navigation for every worktree, editor and agent
+title: clojure-lite-lsp — a small Clojure language server for every worktree
 hide:
   - navigation
   - toc

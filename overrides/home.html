@@ -10,13 +10,16 @@
         <span>// clojure-lite-lsp</span>
       </div>
       <h1 class="cl-hero__title">
-        Clojure navigation for <em>every worktree</em>, every editor, every agent.
+        A Clojure language server small enough to run in every worktree.
       </h1>
       <p class="cl-hero__sub">
-        A read-only Clojure language server built for many checkouts at once.
-        Analysis from clj-kondo goes into one shared index: a library is
-        analyzed once for the whole machine, a new worktree is ready in
-        seconds, and each editor's server costs about 20 MB.
+        Working with coding agents means many codebases open at once: several
+        projects, several worktrees of each, an editor or an agent in every one.
+        clojure-lite-lsp uses about 20 MB per editor, and a new worktree indexes
+        only the files that differ from ones already indexed. It stays that
+        small by implementing only the parts of the language server protocol for
+        reading and reviewing code. With an agent making the edits, the features
+        for writing code by hand are left out.
       </p>
       <div class="cl-hero__cta">
         <a href="getting-started/install/" class="primary">Install &nbsp;→</a>
@@ -33,31 +36,31 @@ src/metabase/segments/api.clj:98:21: metabase.segments.api/write-check-and-updat
   </section>
 
   <section class="cl-section">
-    <h2>// what it gives you</h2>
+    <h2>// what it does</h2>
     <div class="cl-grid">
       <div class="cl-card">
-        <h3>Navigation</h3>
-        <p>Go to definition, find references, implementations of protocols and multimethods, hover docs, file outlines, symbol search, call hierarchy, highlights and argument hints.</p>
+        <h3>Small per project</h3>
+        <p>Each editor's server uses about 20 MB. Libraries are indexed once for the machine, and a new worktree only indexes the files that differ from ones already indexed.</p>
       </div>
       <div class="cl-card">
-        <h3>Built for worktrees</h3>
-        <p>Analysis is keyed by content: a second worktree of a project indexes only the files that differ, in about 3 seconds for Metabase.</p>
+        <h3>Reading and review</h3>
+        <p>Go to definition and declaration, find references, implementations of protocols and multimethods, hover docs, file outlines, symbol search, call hierarchy, occurrence highlighting and argument hints.</p>
       </div>
       <div class="cl-card">
-        <h3>Low memory</h3>
-        <p>Each editor's server is a small native process that reads the shared index. The indexer runs once for the machine and exits when idle.</p>
+        <h3>No editing features</h3>
+        <p>No completion, diagnostics, formatting, rename, refactorings or code actions. Editors see the server doesn't offer them and don't show them.</p>
       </div>
       <div class="cl-card">
-        <h3>For agents too</h3>
-        <p>Claude Code uses it through its LSP tool, Codex through MCP, and any agent through <code>clojure-lite-lsp query</code>. One command sets a project up.</p>
+        <h3>Agents</h3>
+        <p>Claude Code uses it through its LSP tool, Codex through MCP, and any agent through <code>clojure-lite-lsp query</code>. <code>clojure-lite-lsp setup</code> configures a project for them.</p>
       </div>
       <div class="cl-card">
-        <h3>Branch-aware</h3>
-        <p>Switching to a branch with a different clj-kondo config re-analyzes only the files that config change can affect.</p>
+        <h3>Editors</h3>
+        <p>Extensions for VS Code and Zed. Any other editor with an LSP client can run <code>clojure-lite-lsp lsp</code>.</p>
       </div>
       <div class="cl-card">
-        <h3>Zed, VS Code and more</h3>
-        <p>Extensions for Zed and VS Code; any editor with an LSP client can run <code>clojure-lite-lsp lsp</code>.</p>
+        <h3>Command line</h3>
+        <p><code>clojure-lite-lsp query</code> answers the same questions in a terminal or a script: definitions, references, callers, callees, docs.</p>
       </div>
     </div>
   </section>

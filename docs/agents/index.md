@@ -30,7 +30,7 @@ clojure-lite-lsp setup --agent claude        # or codex, or claude,codex
 
 It writes what the agent needs into the project, tells the agent's own CLI
 about the server where that's how the agent works, and indexes the project, so
-the first question is answered at once. It's safe to run again: it replaces its
+the first question doesn't wait for indexing. It's safe to run again: it replaces its
 own parts and keeps everything else. `--no-index` skips the indexing; a
 directory argument sets up another project.
 

@@ -4,7 +4,7 @@
 
 - Check `clojure-lite-lsp version` works in a terminal, and that its directory
   is on the `PATH` the editor sees. Otherwise, set the path in the editor's
-  settings ([Zed](../editors/zed.md#settings), [VS Code](../editors/vscode.md#settings)).
+  settings ([VS Code](../editors/vscode.md#settings), [Zed](../editors/zed.md#settings)).
 - In Zed, the language must come from the clojure-lite-lsp extension: uninstall
   other extensions that define Clojure.
 

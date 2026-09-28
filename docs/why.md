@@ -1,51 +1,55 @@
 # Why clojure-lite-lsp
 
-Clojure language servers usually run one analysis per project, in a JVM, in
-every editor window. That is fine for one checkout. It stops being fine when
-you work the way agent-assisted development encourages: many worktrees of the
-same project at once, each with an editor or an agent looking at it.
+## Small per project and worktree
 
-clojure-lite-lsp is built for that.
+Working with coding agents means more codebases open at once: several
+projects, several worktrees of each, with an editor window or an agent session
+in every one. What a language server costs for one project adds up quickly
+across a dozen.
 
-## Analysis is shared
+clojure-lite-lsp keeps the cost of each one low:
 
-Every analyzed file is stored once in a single index for the machine, keyed by
-its content:
+- Each editor's server uses about 20 MB of memory, whatever the project's size.
+- Indexing happens in one background process for the whole machine, which
+  exits when it's been idle for a while.
+- A library is indexed once, and every project that uses it shares that.
+- A new worktree only indexes the files that differ from what's already
+  indexed. For a large project like Metabase, a worktree of a branch you
+  already have takes a few seconds.
 
-- A library jar is analyzed once, ever. Every project that uses it links to
-  the same analysis.
-- A new worktree of a project you already indexed is ready after analyzing
-  only the files that differ from what's already there. For Metabase, a
-  second worktree is ready in about 3 seconds and adds about 2.5 MB to the
-  index.
-- A branch with a slightly different clj-kondo config re-analyzes only the
-  files that config change can affect.
+## Reading, not writing
 
-## Memory stays small
+It stays that small by doing less. With an agent making the edits, less of
+your time goes into typing code and more into reading it: following what a
+change touches, checking who calls a function, reviewing a diff. Much of what
+language servers do (completion, diagnostics as you type, refactorings) is
+there to help you write code by hand, and keeping the analysis ready for it
+is much of what makes them large.
 
-The server an editor runs (`clojure-lite-lsp lsp`) is a native binary that only
-reads the index: about 20 MB per editor, with Metabase's full classpath open.
-Analysis happens in one background indexer for the whole machine, which exits
-after ten idle minutes.
+So clojure-lite-lsp implements the reading side of the Language Server
+Protocol:
 
-## It reads, and does that well
+- go to definition and declaration
+- find references, including through aliases and refers
+- implementations of protocols and multimethods
+- hover: arglists and docstrings
+- file outlines and symbol search
+- call hierarchy: callers and callees
+- occurrence highlighting and argument hints
 
-clojure-lite-lsp navigates: definitions, references, implementations, docs,
-outlines, symbol search and call hierarchy, plus occurrence highlighting and
-argument hints while you type. It doesn't edit code (no diagnostics,
-formatting, completion, renaming or refactoring), so it has
-none of that work to keep up with.
+It leaves out the writing side: completion, diagnostics, formatting, rename,
+refactorings and code actions. Editors see that the server doesn't offer these
+and don't show them. See [Language server](reference/lsp.md) for the details.
 
-## Agents are first-class
+## The same answers for agents
 
-Agents mostly read code: where is this defined, who calls it. clojure-lite-lsp
-gives them that through Claude Code's LSP tool, an MCP server for Codex, and a
-`query` command any agent can run. `clojure-lite-lsp setup --agent …` sets a
-project up in one step. See [Agents](agents/index.md).
+Agents ask the same questions you do: where is this defined, what calls it.
+Claude Code gets the answers through its LSP tool, Codex through an MCP server,
+and any agent through the `clojure-lite-lsp query` command.
+`clojure-lite-lsp setup --agent …` configures a project for them. See
+[Agents](agents/index.md).
 
-## What it isn't
+## What it doesn't do
 
-- **Not a full IDE backend.** Use a REPL-based tool (Calva, CIDER, Conjure) for
-  evaluation, and clojure-lsp if you want diagnostics and refactorings.
-- **Not a clojure-lsp fork.** It's an independent project with its own design,
-  though it builds on clj-kondo's analysis just as clojure-lsp does.
+It doesn't evaluate code: keep your REPL tooling (Calva, CIDER, Conjure) for
+that.

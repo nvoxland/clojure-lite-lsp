@@ -1,5 +1,5 @@
 site_name: clojure-lite-lsp
-site_description: A low-memory, read-only Clojure language server for editors and coding agents
+site_description: A Clojure language server small enough to run in every project and worktree, for reading and reviewing code
 site_author: Nathan Voxland
 site_url: https://nvoxland.github.io/clojure-lite-lsp/
 repo_name: nvoxland/clojure-lite-lsp
@@ -55,8 +55,8 @@ nav:
       - Install: getting-started/install.md
       - First steps: getting-started/first-steps.md
   - Editors:
-      - Zed: editors/zed.md
       - VS Code: editors/vscode.md
+      - Zed: editors/zed.md
       - Other editors: editors/other.md
   - Agents:
       - Overview: agents/index.md
@@ -65,7 +65,6 @@ nav:
   - Guide:
       - Query commands: guide/query.md
       - Configuration: guide/configuration.md
-      - How it works: guide/how-it-works.md
   - Reference:
       - Command line: reference/cli.md
       - Language server: reference/lsp.md

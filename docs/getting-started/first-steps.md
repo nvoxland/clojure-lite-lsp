@@ -45,5 +45,5 @@ Index:   221 MB, 5505 analyzed files, 479 jars
 
 ## Hook it into your editor or agent
 
-- [Zed](../editors/zed.md) · [VS Code](../editors/vscode.md) · [others](../editors/other.md)
+- [VS Code](../editors/vscode.md) · [Zed](../editors/zed.md) · [others](../editors/other.md)
 - [Claude Code](../agents/claude-code.md) · [Codex](../agents/codex.md)

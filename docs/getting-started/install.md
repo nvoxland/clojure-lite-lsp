@@ -52,6 +52,6 @@ clojure-lite-lsp version
 ## Next
 
 - [First steps](first-steps.md): index a project and ask it something.
-- Set up your editor: [Zed](../editors/zed.md), [VS Code](../editors/vscode.md)
+- Set up your editor: [VS Code](../editors/vscode.md), [Zed](../editors/zed.md)
   or [another editor](../editors/other.md).
 - Set up an agent: [Claude Code or Codex](../agents/index.md).
